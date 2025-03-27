@@ -1,0 +1,12 @@
+﻿<Window x:Class="DesktopPlus.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Desktop+" Height="450" Width="800">
+    <Grid Background="LightGray">
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+            <Button Content="Neues DesktopPanel" Padding="10" Margin="10" Width="200" Height="40" Click="OpenDesktopPanel_Click"/>
+            <Button Content="Speichern" Padding="10" Width="200" Margin="10" Height="40" Click="SaveSettings_Click"/>
+            <Button Content="Beenden" Padding="10" Width="200" Margin="10" Height="40" Click="ExitApplication_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>
