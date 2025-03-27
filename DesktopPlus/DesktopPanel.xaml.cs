@@ -83,9 +83,6 @@ namespace DesktopPlus
             }
         }
 
-
-
-
         // Schließen des Fensters
         private void Close_Click(object sender, RoutedEventArgs e)
         {
