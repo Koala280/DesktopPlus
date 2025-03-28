@@ -19,6 +19,9 @@ namespace DesktopPlus
             public double Width { get; set; }
             public double Height { get; set; }
             public double Zoom { get; set; }
+            public bool IsCollapsed { get; set; }
+            public double CollapsedTop { get; set; }
+            public double BaseTop { get; set; }
         }
 
         private static List<WindowData> openWindows = new List<WindowData>();
@@ -110,12 +113,13 @@ namespace DesktopPlus
                             panel.Show();
                             panel.LoadFolder(winData.FolderPath);
 
-                            panel.Left = Math.Max(0, Math.Min(SystemParameters.PrimaryScreenWidth - 300, winData.Left));
-                            panel.Top = Math.Max(0, Math.Min(SystemParameters.PrimaryScreenHeight - 300, winData.Top));
-                            panel.Width = Math.Max(300, Math.Min(winData.Width, SystemParameters.PrimaryScreenWidth - 100));
-                            panel.Height = Math.Max(300, Math.Min(winData.Height, SystemParameters.PrimaryScreenHeight - 100));
-
+                            panel.baseTopPosition = winData.BaseTop;
+                            panel.Left = winData.Left;
+                            panel.Width = winData.Width;
+                            panel.Height = winData.Height;
                             panel.SetZoom(winData.Zoom);
+                            panel.ForceCollapseState(winData.IsCollapsed);
+
                         });
                     }
                 }
@@ -131,24 +135,29 @@ namespace DesktopPlus
             try
             {
                 openWindows = Application.Current.Windows.OfType<DesktopPanel>()
-                                .Where(win => !string.IsNullOrEmpty(win.currentFolderPath))
-                                .Select(win => new WindowData
-                                {
-                                    FolderPath = win.currentFolderPath,
-                                    Left = win.Left,
-                                    Top = win.Top,
-                                    Width = win.Width,
-                                    Height = win.Height,
-                                    Zoom = win.zoomFactor
-                                })
-                                .ToList();
+                    .Where(win => !string.IsNullOrEmpty(win.currentFolderPath))
+                    .Select(win => new WindowData
+                    {
+                        FolderPath = win.currentFolderPath,
+                        Left = win.Left,
+                        Top = win.Top,
+                        Width = win.Width,
+                        Height = win.Height,
+                        Zoom = win.zoomFactor,
+                        IsCollapsed = !win.isContentVisible,
+                        BaseTop = win.baseTopPosition
+                    })
+                    .ToList();
 
                 if (openWindows.Any())
                 {
-                    string json = JsonSerializer.Serialize(openWindows, new JsonSerializerOptions { WriteIndented = true });
+                    string json = JsonSerializer.Serialize(openWindows, new JsonSerializerOptions
+                    {
+                        WriteIndented = true,
+                        NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals
+                    });
                     File.WriteAllText(settingsFilePath, json);
                 }
-
             }
             catch (Exception ex)
             {

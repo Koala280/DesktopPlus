@@ -181,11 +181,35 @@
                          Foreground="White"
                          SelectionMode="Single"
                          MouseDoubleClick="FileList_MouseDoubleClick"
+                         PreviewMouseLeftButtonDown="FileList_PreviewMouseLeftButtonDown"
+                         MouseMove="FileList_MouseMove"
+                         Drop="FileList_Drop"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <ListBox.Resources>
+                        <!-- Stil für ListBoxItem ohne sichtbare Auswahl -->
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Setter Property="Foreground" Value="White"/>
+                            <Setter Property="BorderThickness" Value="0"/>
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="Margin" Value="0"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <ContentPresenter />
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.Resources>
                     <ListBox.ItemsPanel>
                         <ItemsPanelTemplate>
-                            <WrapPanel Orientation="Horizontal" IsItemsHost="True"/>
+                            <WrapPanel Orientation="Horizontal"
+                                       IsItemsHost="True"
+                                       MinWidth="0"
+                                       MinHeight="0"
+                                       />
                         </ItemsPanelTemplate>
                     </ListBox.ItemsPanel>
                 </ListBox>

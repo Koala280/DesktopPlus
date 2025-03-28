@@ -18,21 +18,114 @@ using System.Runtime.InteropServices;
 using System.Text.Json; // JSON-Handling hinzufügen
 using DesktopPlus;
 using System.Printing;
+using System.Windows.Interop;
+using System.Runtime.InteropServices.ComTypes;
 
 namespace DesktopPlus
 {
     public partial class DesktopPanel : Window
     {
-        private bool isContentVisible = true; // Default: Content is visible
-        private double expandedHeight; // Store the full height before collapse
+        public bool isContentVisible = true; // Default: Content is visible
+        public double expandedHeight; // Store the full height before collapse
         public string currentFolderPath = ""; // Speichert den aktuellen Ordnerpfad
-        private double collapsedTopPosition;
+        public double collapsedTopPosition;
         private bool wasAdjustedOnExpand = false;
+        public double baseTopPosition; // ← immer die echte Wunschposition (manuell gesetzt)
+        private System.Windows.Point _dragStartPoint;
+        public static bool StartCollapsedByDefault = true;
+        public static bool ExpandOnHover = true;
+
 
         public DesktopPanel()
         {
             InitializeComponent();
-            expandedHeight = this.Height; // Store initial height
+            expandedHeight = this.Height;
+            collapsedTopPosition = this.Top;
+
+            this.LocationChanged += (s, e) => MainWindow.SaveSettings();
+            this.SizeChanged += (s, e) => MainWindow.SaveSettings();
+        }
+        private void FileList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            _dragStartPoint = e.GetPosition(null);
+        }
+
+        private void FileList_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            if (e.LeftButton == MouseButtonState.Pressed)
+            {
+                System.Windows.Point currentPosition = e.GetPosition(null);
+                Vector diff = _dragStartPoint - currentPosition;
+
+                if (Math.Abs(diff.X) > SystemParameters.MinimumHorizontalDragDistance ||
+                    Math.Abs(diff.Y) > SystemParameters.MinimumVerticalDragDistance)
+                {
+                    if (sender is System.Windows.Controls.ListBox listBox && listBox.SelectedItem is ListBoxItem sourceItem)
+                    {
+                        if (sourceItem.Content is StackPanel panel)
+                        {
+                            panel.Opacity = 0.8; // beim Start sichtbar ändern
+                        }
+
+                        DragDrop.DoDragDrop(listBox, sourceItem, System.Windows.DragDropEffects.Move);
+
+                        // 🧼 Opacity zurücksetzen NACH Drag
+                        if (sourceItem.Content is StackPanel releasedPanel)
+                        {
+                            releasedPanel.Opacity = 1.0;
+                        }
+                    }
+                }
+            }
+        }
+
+        private void FileList_Drop(object sender, System.Windows.DragEventArgs e)
+        {
+            if (e.Data.GetDataPresent(typeof(ListBoxItem)))
+            {
+                var sourceItem = e.Data.GetData(typeof(ListBoxItem)) as ListBoxItem;
+                var target = e.OriginalSource as FrameworkElement;
+
+                while (target != null && !(target.DataContext is ListBoxItem) && !(target is ListBoxItem))
+                    target = VisualTreeHelper.GetParent(target) as FrameworkElement;
+
+                var targetItem = target as ListBoxItem ?? (target?.DataContext as ListBoxItem);
+
+                if (sourceItem != null && targetItem != null && !ReferenceEquals(sourceItem, targetItem))
+                {
+                    int sourceIndex = FileList.Items.IndexOf(sourceItem);
+                    int targetIndex = FileList.Items.IndexOf(targetItem);
+
+                    FileList.Items.Remove(sourceItem);
+                    FileList.Items.Insert(targetIndex, sourceItem);
+
+                    FileList.SelectedItem = sourceItem;
+                    MainWindow.SaveSettings(); // Nach Sortierung speichern
+                }
+            }
+        }
+
+        public void ForceCollapseState(bool isCollapsed)
+        {
+            if (isCollapsed)
+            {
+                this.Top = baseTopPosition;
+                this.Height = 40;
+                ContentContainer.Visibility = Visibility.Collapsed;
+                isContentVisible = false;
+            }
+            else
+            {
+                double screenBottom = SystemParameters.WorkArea.Bottom;
+                if (baseTopPosition + expandedHeight > screenBottom)
+                    this.Top = Math.Max(0, screenBottom - expandedHeight);
+                else
+                    this.Top = baseTopPosition;
+
+                this.Height = expandedHeight;
+                ContentContainer.Visibility = Visibility.Visible;
+                isContentVisible = true;
+            }
         }
 
         private void MoveButton_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -40,6 +133,9 @@ namespace DesktopPlus
             if (e.ButtonState == MouseButtonState.Pressed)
             {
                 this.DragMove();
+                baseTopPosition = this.Top; // ← speichert neue "manuelle" Position
+                collapsedTopPosition = baseTopPosition;
+                MainWindow.SaveSettings();
             }
         }
 
@@ -47,33 +143,26 @@ namespace DesktopPlus
         {
             if (isContentVisible)
             {
-                // Fenster wird eingeklappt → zurück zur alten Position
-                if (wasAdjustedOnExpand)
-                {
-                    this.Top = collapsedTopPosition;
-                }
-
                 expandedHeight = this.Height;
+                this.Top = baseTopPosition;
                 this.Height = 40;
                 ContentContainer.Visibility = Visibility.Collapsed;
                 isContentVisible = false;
             }
             else
             {
-                // Fenster wird ausgeklappt → evtl. nach oben verschieben
-
-                collapsedTopPosition = this.Top; // 🔥 Hier merken, wo es vorher war
-
                 double newHeight = expandedHeight;
-                double screenBottom = SystemParameters.WorkArea.Bottom; // berücksichtigt Taskleiste
+                double screenBottom = SystemParameters.WorkArea.Bottom;
 
-                if (this.Top + newHeight > screenBottom)
+                // Bei Bedarf visuell nach oben verschieben
+                if (baseTopPosition + newHeight > screenBottom)
                 {
                     this.Top = Math.Max(0, screenBottom - newHeight);
                     wasAdjustedOnExpand = true;
                 }
                 else
                 {
+                    this.Top = baseTopPosition;
                     wasAdjustedOnExpand = false;
                 }
 
@@ -81,6 +170,7 @@ namespace DesktopPlus
                 ContentContainer.Visibility = Visibility.Visible;
                 isContentVisible = true;
             }
+            MainWindow.SaveSettings();
         }
 
         // Schließen des Fensters
@@ -215,7 +305,7 @@ namespace DesktopPlus
 
             System.Windows.Controls.Image icon = new System.Windows.Controls.Image
             {
-                Source = GetFileIcon(path, isBackButton),
+                Source = LoadExplorerStyleIcon(path, (int)(48 * zoomFactor)),
                 Width = iconSize,
                 Height = iconSize,
                 Margin = new Thickness(0, 0, 0, 5),
@@ -231,76 +321,96 @@ namespace DesktopPlus
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
                 TextWrapping = TextWrapping.Wrap,
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                Width = panelWidth - 10,
-                MaxHeight = textSize * 2.4  // für 2 Zeilen
+                Width = panelWidth - 10
             };
 
             panel.Children.Add(icon);
             panel.Children.Add(text);
+            panel.PreviewMouseLeftButtonDown += (s, e) =>
+            {
+                panel.Opacity = 0.8;
+            };
+
+            panel.MouseLeftButtonUp += (s, e) =>
+            {
+                panel.Opacity = 1.0;
+            };
             return panel;
         }
 
-        private ImageSource GetFileIcon(string path, bool isBackButton)
+
+        [ComImport]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        [Guid("BCC18B79-BA16-442F-80C4-8A59C30C463B")]
+        interface IShellItemImageFactory
         {
-            if (isBackButton || Directory.Exists(path))
-            {
-                // Spezielles Ordner-Icon laden
-                return GetStockIcon(0x3); // 0x3 = Ordner-Icon von Windows
-            }
+            void GetImage(SIZE size, SIIGBF flags, out IntPtr phbm);
+        }
 
-            // Prüfen, ob die Datei existiert
-            if (!File.Exists(path))
-                return null;
+        [StructLayout(LayoutKind.Sequential)]
+        struct SIZE
+        {
+            public int cx;
+            public int cy;
 
-            using (Icon sysIcon = System.Drawing.Icon.ExtractAssociatedIcon(path))
+            public SIZE(int width, int height)
             {
-                return System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(
-                    sysIcon.Handle,
-                    System.Windows.Int32Rect.Empty,
-                    BitmapSizeOptions.FromEmptyOptions());
+                cx = width;
+                cy = height;
             }
         }
 
-        // Windows-API-Aufruf zum Abrufen von System-Icons
-        [DllImport("Shell32.dll", CharSet = CharSet.Unicode)]
-        private static extern int SHGetStockIconInfo(int siid, uint uFlags, ref SHSTOCKICONINFO psii);
-
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-        private struct SHSTOCKICONINFO
+        enum SIIGBF
         {
-            public uint cbSize;
-            public IntPtr hIcon;
-            public int iSysImageIndex;
-            public int iIcon;
-            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
-            public string szPath;
+            SIIGBF_RESIZETOFIT = 0x00,
+            SIIGBF_BIGGERSIZEOK = 0x01,
+            SIIGBF_MEMORYONLY = 0x02,
+            SIIGBF_ICONONLY = 0x04,
+            SIIGBF_THUMBNAILONLY = 0x08,
+            SIIGBF_INCACHEONLY = 0x10,
         }
 
-        // Methode zum Abrufen des Windows-Standardordnersymbols
-        private ImageSource GetStockIcon(int iconType)
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+        private static extern void SHCreateItemFromParsingName(
+            [MarshalAs(UnmanagedType.LPWStr)] string pszPath,
+            IBindCtx pbc,
+            [MarshalAs(UnmanagedType.LPStruct)] Guid riid,
+            [MarshalAs(UnmanagedType.Interface)] out IShellItemImageFactory ppv);
+
+        private ImageSource LoadExplorerStyleIcon(string filePath, int size = 256)
         {
-            SHSTOCKICONINFO sii = new SHSTOCKICONINFO();
-            sii.cbSize = (uint)Marshal.SizeOf(typeof(SHSTOCKICONINFO));
-
-            int result = SHGetStockIconInfo(iconType, 0x100, ref sii); // 0x100 = Large Icon
-
-            if (result == 0 && sii.hIcon != IntPtr.Zero)
+            try
             {
-                ImageSource imgSource = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(
-                    sii.hIcon,
-                    System.Windows.Int32Rect.Empty,
-                    BitmapSizeOptions.FromEmptyOptions());
+                Guid iidImageFactory = typeof(IShellItemImageFactory).GUID;
+                SHCreateItemFromParsingName(filePath, null, iidImageFactory, out IShellItemImageFactory imageFactory);
 
-                // HICON-Handle freigeben, um Speicherlecks zu vermeiden
-                DestroyIcon(sii.hIcon);
+                SIZE iconSize = new SIZE(size, size);
 
-                return imgSource;
+                imageFactory.GetImage(iconSize, SIIGBF.SIIGBF_RESIZETOFIT | SIIGBF.SIIGBF_BIGGERSIZEOK, out IntPtr hBitmap);
+
+                if (hBitmap != IntPtr.Zero)
+                {
+                    var bitmapSource = Imaging.CreateBitmapSourceFromHBitmap(
+                        hBitmap,
+                        IntPtr.Zero,
+                        Int32Rect.Empty,
+                        BitmapSizeOptions.FromWidthAndHeight(size, size));
+
+                    DeleteObject(hBitmap); // Speicher freigeben
+                    return bitmapSource;
+                }
             }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Icon konnte nicht geladen werden: {ex.Message}");
+            }
+
             return null;
         }
 
-        [DllImport("User32.dll", SetLastError = true)]
-        private static extern bool DestroyIcon(IntPtr hIcon);
+        [DllImport("gdi32.dll")]
+        private static extern bool DeleteObject(IntPtr hObject);
+
 
         public double zoomFactor = 1.0; // Standard-Zoom-Wert
 
@@ -308,6 +418,7 @@ namespace DesktopPlus
         {
             zoomFactor = Math.Max(0.7, Math.Min(1.5, newZoom));
             ApplyZoom();
+            MainWindow.SaveSettings(); // Zoom speichern
         }
 
         private void ApplyZoom()
@@ -317,7 +428,6 @@ namespace DesktopPlus
                 if (item is ListBoxItem listBoxItem && listBoxItem.Content is StackPanel panel)
                 {
                     panel.Width = 90 * zoomFactor;
-                    panel.Height = (48 * zoomFactor) + 25;
 
                     foreach (var child in panel.Children)
                     {
@@ -330,6 +440,9 @@ namespace DesktopPlus
                         {
                             text.FontSize = 12 * zoomFactor;
                             text.Width = 85 * zoomFactor;
+
+                            // Wichtig: entferne MaxHeight, falls irgendwo gesetzt
+                            text.MaxHeight = double.PositiveInfinity;
                         }
                     }
                 }
