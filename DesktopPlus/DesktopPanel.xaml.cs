@@ -289,6 +289,38 @@ namespace DesktopPlus
             }
         }
 
+        private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            string filter = SearchBox.Text.Trim();
+
+            foreach (var item in FileList.Items.OfType<ListBoxItem>())
+            {
+                if (item.Content is StackPanel panel && panel.Children.OfType<TextBlock>().FirstOrDefault() is TextBlock text)
+                {
+                    if (string.IsNullOrWhiteSpace(filter))
+                    {
+                        item.Visibility = Visibility.Visible;
+                    }
+                    else
+                    {
+                        item.Visibility = text.Text.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0
+                            ? Visibility.Visible
+                            : Visibility.Collapsed;
+                    }
+                }
+            }
+        }
+
+        private void MinimizeWindow_Click(object sender, RoutedEventArgs e)
+        {
+            this.WindowState = WindowState.Minimized;
+        }
+
+        private void CloseWindow_Click(object sender, RoutedEventArgs e)
+        {
+            this.Close();
+        }
+
         private StackPanel CreateListBoxItem(string displayName, string path, bool isBackButton)
         {
             double iconSize = 48 * zoomFactor;
