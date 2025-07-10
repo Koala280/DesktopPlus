@@ -33,7 +33,8 @@ namespace DesktopPlus
         public double baseTopPosition; // ← immer die echte Wunschposition (manuell gesetzt)
         private System.Windows.Point _dragStartPoint;
         public static bool StartCollapsedByDefault = true;
-        public static bool ExpandOnHover = true;
+        public bool ExpandOnHoverSetting = true;
+        public bool ShowMinimizeButton = true;
 
 
         public DesktopPanel()
@@ -41,6 +42,8 @@ namespace DesktopPlus
             InitializeComponent();
             expandedHeight = this.Height;
             collapsedTopPosition = this.Top;
+
+            MinimizeButton.Visibility = ShowMinimizeButton ? Visibility.Visible : Visibility.Collapsed;
 
             this.LocationChanged += (s, e) => MainWindow.SaveSettings();
             this.SizeChanged += (s, e) => MainWindow.SaveSettings();
@@ -193,6 +196,30 @@ namespace DesktopPlus
             }
         }
 
+        private void HeaderBar_MouseEnter(object sender, MouseEventArgs e)
+        {
+            if (ExpandOnHoverSetting && !isContentVisible)
+            {
+                Collapse_Click(sender, e);
+            }
+        }
+
+        private void HeaderBar_MouseLeave(object sender, MouseEventArgs e)
+        {
+            if (ExpandOnHoverSetting && isContentVisible && !IsMouseOver)
+            {
+                Collapse_Click(sender, e);
+            }
+        }
+
+        private void Window_MouseLeave(object sender, MouseEventArgs e)
+        {
+            if (ExpandOnHoverSetting && isContentVisible)
+            {
+                Collapse_Click(sender, e);
+            }
+        }
+
         private void Window_MouseWheel(object sender, MouseWheelEventArgs e)
         {
             if (Keyboard.IsKeyDown(Key.LeftCtrl) || Keyboard.IsKeyDown(Key.RightCtrl))
@@ -320,6 +347,23 @@ namespace DesktopPlus
         private void CloseWindow_Click(object sender, RoutedEventArgs e)
         {
             this.Close();
+        }
+
+        private void SettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            PanelSettingsWindow dlg = new PanelSettingsWindow(PanelTitle.Text, ExpandOnHoverSetting, ShowMinimizeButton)
+            {
+                Owner = this
+            };
+            if (dlg.ShowDialog() == true)
+            {
+                PanelTitle.Text = dlg.PanelName;
+                this.Title = dlg.PanelName;
+                ExpandOnHoverSetting = dlg.ExpandOnHover;
+                ShowMinimizeButton = dlg.ShowMinimizeButton;
+                MinimizeButton.Visibility = ShowMinimizeButton ? Visibility.Visible : Visibility.Collapsed;
+                MainWindow.SaveSettings();
+            }
         }
 
         private StackPanel CreateListBoxItem(string displayName, string path, bool isBackButton)

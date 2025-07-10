@@ -22,6 +22,9 @@ namespace DesktopPlus
             public bool IsCollapsed { get; set; }
             public double CollapsedTop { get; set; }
             public double BaseTop { get; set; }
+            public string PanelName { get; set; }
+            public bool ExpandOnHover { get; set; }
+            public bool ShowMinimizeButton { get; set; }
         }
 
         private static List<WindowData> openWindows = new List<WindowData>();
@@ -113,12 +116,21 @@ namespace DesktopPlus
                             panel.Show();
                             panel.LoadFolder(winData.FolderPath);
 
+                            if (!string.IsNullOrWhiteSpace(winData.PanelName))
+                            {
+                                panel.PanelTitle.Text = winData.PanelName;
+                                panel.Title = winData.PanelName;
+                            }
+
                             panel.baseTopPosition = winData.BaseTop;
                             panel.Left = winData.Left;
                             panel.Width = winData.Width;
                             panel.Height = winData.Height;
                             panel.SetZoom(winData.Zoom);
                             panel.ForceCollapseState(winData.IsCollapsed);
+                            panel.ExpandOnHoverSetting = winData.ExpandOnHover;
+                            panel.ShowMinimizeButton = winData.ShowMinimizeButton;
+                            panel.MinimizeButton.Visibility = panel.ShowMinimizeButton ? Visibility.Visible : Visibility.Collapsed;
 
                         });
                     }
@@ -145,7 +157,10 @@ namespace DesktopPlus
                         Height = win.Height,
                         Zoom = win.zoomFactor,
                         IsCollapsed = !win.isContentVisible,
-                        BaseTop = win.baseTopPosition
+                        BaseTop = win.baseTopPosition,
+                        PanelName = win.PanelTitle.Text,
+                        ExpandOnHover = win.ExpandOnHoverSetting,
+                        ShowMinimizeButton = win.ShowMinimizeButton
                     })
                     .ToList();
 
