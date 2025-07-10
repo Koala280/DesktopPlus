@@ -42,9 +42,6 @@ namespace DesktopPlus
             this.Closing += OnWindowClosing;
             this.StateChanged += OnWindowStateChanged;
 
-            this.ShowInTaskbar = false;
-            this.WindowState = WindowState.Minimized;
-            this.Hide();
         }
 
         private void InitNotifyIcon()
@@ -88,8 +85,8 @@ namespace DesktopPlus
 
         private void OnWindowStateChanged(object sender, EventArgs e)
         {
-            if (this.WindowState == WindowState.Minimized)
-                this.Hide();
+            // Früher wurde das Fenster bei Minimierung ausgeblendet, was zu
+            // Verwirrung führte. Jetzt bleibt es normal minimiert sichtbar.
         }
 
         private void LoadSettings()
