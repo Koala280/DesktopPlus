@@ -92,8 +92,51 @@
                            HorizontalAlignment="Center"
                            FontWeight="Bold"/>
                 <!-- Suchleiste für Filterung -->
-                <TextBox x:Name="SearchBox" Grid.Column="4" Margin="5" VerticalAlignment="Center" 
-                         TextChanged="SearchBox_TextChanged"/> <!-- NEU: Suchleiste -->
+                <TextBox x:Name="SearchBox"
+                         Grid.Column="4"
+                         Margin="5"
+                         VerticalAlignment="Center"
+                         TextChanged="SearchBox_TextChanged"
+                         FontSize="12"
+                         Padding="10,4">
+                    <TextBox.Style>
+                        <Style TargetType="TextBox">
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="TextBox">
+                                        <Border CornerRadius="6"
+                                                Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}">
+                                            <ScrollViewer x:Name="PART_ContentHost"
+                                                          Margin="0"
+                                                          Background="Transparent"/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                            <Setter Property="Foreground" Value="#CCFFFFFF"/>
+                            <Setter Property="BorderBrush" Value="#55FFFFFF"/>
+                            <Setter Property="Background" Value="#10FFFFFF"/>
+                            <Setter Property="CaretBrush" Value="#F0F0F0"/>
+                            <Setter Property="BorderThickness" Value="1.5"/>
+                            <Style.Triggers>
+                                <Trigger Property="IsKeyboardFocused" Value="True">
+                                    <Setter Property="BorderBrush" Value="#88FFFFFF"/>
+                                    <Setter Property="Background" Value="#22FFFFFF"/>
+                                    <Setter Property="Foreground" Value="#FFFFFFFF"/>
+                                </Trigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="BorderBrush" Value="#77FFFFFF"/>
+                                    <Setter Property="Background" Value="#18FFFFFF"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Opacity" Value="0.4"/>
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBox.Style>
+                </TextBox> <!-- NEU: Suchleiste -->
                 <!-- Ein-/Ausklappen-Button -->
                 <Button Grid.Column="5"
                         Content="–"
@@ -157,34 +200,50 @@
             </Grid>
         </Border>
         <!-- Unterer Bereich: Inhalt des Ordners -->
-        <ScrollViewer Name="ContentContainer" Grid.Row="1" Margin="5"
-                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <!-- Darstellungsfläche für Dateien/Ordner als WrapPanel -->
-            <ListBox Name="FileList"
-                     Background="Transparent"
-                     BorderThickness="0"
-                     Foreground="White"
-                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                     ScrollViewer.VerticalScrollBarVisibility="Disabled"
-                     ScrollViewer.CanContentScroll="False"
-                     MouseDoubleClick="FileList_MouseDoubleClick">
-                <ListBox.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <WrapPanel Orientation="Horizontal"
-                                   IsItemsHost="True"
-                                   Margin="5"/>
-                    </ItemsPanelTemplate>
-                </ListBox.ItemsPanel>
-                <!-- Darstellung eines Eintrags (Datei/Ordner) -->
-                <ListBox.ItemTemplate>
-                    <DataTemplate>
-                        <StackPanel Margin="10" Width="80" Cursor="Hand">
-                            <Image Source="{Binding Icon}" Width="{Binding IconWidth}" Height="{Binding IconHeight}"/>
-                            <TextBlock Text="{Binding Name}" TextAlignment="Center" TextWrapping="Wrap" Margin="0,5,0,0"/>
-                        </StackPanel>
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
-        </ScrollViewer>
+        <Border Grid.Row="1" Margin="5" CornerRadius="16" Padding="5">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="#1AFFFFFF" Offset="0"/>
+                    <GradientStop Color="#0DFFFFFF" Offset="1"/>
+                </LinearGradientBrush>
+            </Border.Background>
+            <Border.BorderBrush>
+                <SolidColorBrush Color="#25FFFFFF"/>
+            </Border.BorderBrush>
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="25" ShadowDepth="0" Opacity="0.25"/>
+            </Border.Effect>
+            <ScrollViewer Name="ContentContainer"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Background="Transparent">
+                <!-- Darstellungsfläche für Dateien/Ordner als WrapPanel -->
+                <ListBox Name="FileList"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         Foreground="White"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                         ScrollViewer.CanContentScroll="False"
+                         MouseDoubleClick="FileList_MouseDoubleClick">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal"
+                                       IsItemsHost="True"
+                                       Margin="5"/>
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <!-- Darstellung eines Eintrags (Datei/Ordner) -->
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="10" Width="80" Cursor="Hand">
+                                <Image Source="{Binding Icon}" Width="{Binding IconWidth}" Height="{Binding IconHeight}"/>
+                                <TextBlock Text="{Binding Name}" TextAlignment="Center" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </ScrollViewer>
+        </Border>
     </Grid>
 </Window>
