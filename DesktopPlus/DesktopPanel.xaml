@@ -158,7 +158,7 @@
         </Border>
         <!-- Unterer Bereich: Inhalt des Ordners -->
         <ScrollViewer Name="ContentContainer" Grid.Row="1" Margin="5"
-                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
             <!-- Darstellungsfläche für Dateien/Ordner als WrapPanel -->
             <ListBox Name="FileList"
                      Background="Transparent"
