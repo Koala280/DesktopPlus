@@ -19,7 +19,7 @@ namespace DesktopPlus
     /// </summary>
     public partial class InputBox : Window
     {
-        public string ResultText { get; private set; }
+        public string ResultText { get; private set; } = string.Empty;
 
         public InputBox(string message, string defaultText = "")
         {

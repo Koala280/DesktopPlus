@@ -31,7 +31,19 @@ namespace DesktopPlus
             FolderPathLabel.Text = string.IsNullOrWhiteSpace(_panel.currentFolderPath) ? "(nicht gesetzt)" : _panel.currentFolderPath;
             HoverToggle.IsChecked = _panel.expandOnHover;
             HiddenToggle.IsChecked = _panel.showHiddenItems;
+            SettingsButtonToggle.IsChecked = _panel.showSettingsButton;
             FolderActionSelect.SelectedIndex = _panel.openFoldersExternally ? 1 : 0;
+
+            foreach (ComboBoxItem item in MovementModeSelect.Items)
+            {
+                if (item.Tag?.ToString() == _panel.movementMode)
+                {
+                    MovementModeSelect.SelectedItem = item;
+                    break;
+                }
+            }
+            if (MovementModeSelect.SelectedItem == null)
+                MovementModeSelect.SelectedIndex = 0;
         }
 
         private void ChangeFolder_Click(object sender, RoutedEventArgs e)
@@ -46,18 +58,39 @@ namespace DesktopPlus
             }
         }
 
+        private void PresetSelect_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (PresetSelect.SelectedItem is AppearancePreset preset)
+            {
+                _panel.ApplyAppearance(preset.Settings);
+            }
+        }
+
         private void Save_Click(object sender, RoutedEventArgs e)
         {
             _panel.PanelTitle.Text = NameInput.Text;
             _panel.Title = NameInput.Text;
             _panel.expandOnHover = HoverToggle.IsChecked == true;
+            bool hiddenChanged = _panel.showHiddenItems != (HiddenToggle.IsChecked == true);
             _panel.showHiddenItems = HiddenToggle.IsChecked == true;
+            _panel.showSettingsButton = SettingsButtonToggle.IsChecked != false;
+            _panel.ApplySettingsButtonVisibility();
             _panel.openFoldersExternally = FolderActionSelect.SelectedIndex == 1;
 
-            if (PresetSelect.SelectedItem is MainWindow.AppearancePreset preset)
+            if (MovementModeSelect.SelectedItem is ComboBoxItem modeItem)
+            {
+                _panel.ApplyMovementMode(modeItem.Tag?.ToString() ?? "titlebar");
+            }
+
+            if (PresetSelect.SelectedItem is AppearancePreset preset)
             {
                 _panel.assignedPresetName = preset.Name;
                 _panel.ApplyAppearance(preset.Settings);
+            }
+
+            if (hiddenChanged && !string.IsNullOrWhiteSpace(_panel.currentFolderPath))
+            {
+                _panel.LoadFolder(_panel.currentFolderPath, false);
             }
 
             MainWindow.SaveSettings();

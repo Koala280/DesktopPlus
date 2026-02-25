@@ -1,54 +1,18 @@
 ﻿<Window x:Class="DesktopPlus.InputBox"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="{DynamicResource Loc.InputDialogTitle}" Width="300" Height="150"
+        Title="{DynamicResource Loc.InputDialogTitle}" Width="320" Height="180"
         WindowStartupLocation="CenterOwner"
         WindowStyle="None" ResizeMode="NoResize"
         Background="#1A1D23"
         FontFamily="Segoe UI">
 
     <Window.Resources>
-        <SolidColorBrush x:Key="DialogSurface" Color="#242833"/>
-        <SolidColorBrush x:Key="DialogBorder" Color="#323844"/>
-        <SolidColorBrush x:Key="DialogInput" Color="#1F242E"/>
-        <SolidColorBrush x:Key="DialogInputBorder" Color="#2D3442"/>
-        <SolidColorBrush x:Key="DialogText" Color="#F2F5FA"/>
-        <SolidColorBrush x:Key="DialogMuted" Color="#A7B0C0"/>
-        <SolidColorBrush x:Key="DialogButton" Color="#2A303A"/>
-        <SolidColorBrush x:Key="DialogButtonBorder" Color="#353C49"/>
-
-        <Style x:Key="DialogButtonStyle" TargetType="Button">
-            <Setter Property="Foreground" Value="{StaticResource DialogText}"/>
-            <Setter Property="Background" Value="{StaticResource DialogButton}"/>
-            <Setter Property="BorderBrush" Value="{StaticResource DialogButtonBorder}"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="10,6"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="8">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#2E3440"/>
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#465064"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#353C48"/>
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Bd" Property="Opacity" Value="0.6"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="InputBoxResources.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
     </Window.Resources>
 
     <Grid>
@@ -57,20 +21,35 @@
                 BorderThickness="1"
                 CornerRadius="10"
                 Padding="12">
-            <StackPanel>
-                <TextBlock x:Name="LblMessage" Foreground="{StaticResource DialogText}" FontSize="14" Margin="0,0,0,10"/>
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock x:Name="LblMessage"
+                           Grid.Row="0"
+                           Foreground="{StaticResource DialogText}"
+                           FontSize="14"
+                           Margin="0,0,0,10"/>
                 <TextBox x:Name="TxtInput"
+                         Grid.Row="1"
                          Background="{StaticResource DialogInput}"
                          BorderBrush="{StaticResource DialogInputBorder}"
                          BorderThickness="1"
                          Foreground="{StaticResource DialogText}"
                          FontSize="14"
-                         Padding="6"/>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
-                    <Button Content="{DynamicResource Loc.InputDialogOk}" Width="70" Style="{StaticResource DialogButtonStyle}" Click="BtnOK_Click"/>
-                    <Button Content="{DynamicResource Loc.InputDialogCancel}" Width="90" Margin="10,0,0,0" Style="{StaticResource DialogButtonStyle}" Click="BtnCancel_Click"/>
+                         Padding="8,6"/>
+                <StackPanel Grid.Row="3"
+                            Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            Margin="0,12,0,0">
+                    <Button Content="{DynamicResource Loc.InputDialogOk}" Width="74" Style="{StaticResource DialogButtonStyle}" Click="BtnOK_Click"/>
+                    <Button Content="{DynamicResource Loc.InputDialogCancel}" Width="94" Margin="10,0,0,0" Style="{StaticResource DialogButtonStyle}" Click="BtnCancel_Click"/>
                 </StackPanel>
-            </StackPanel>
+            </Grid>
         </Border>
     </Grid>
 </Window>
