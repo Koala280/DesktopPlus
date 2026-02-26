@@ -140,7 +140,7 @@ namespace DesktopPlus
             }
 
             panel.assignedPresetName = string.IsNullOrWhiteSpace(data.PresetName) ? DefaultPresetName : data.PresetName;
-            panel.expandOnHover = data.ExpandOnHover;
+            panel.SetExpandOnHover(data.ExpandOnHover);
             panel.openFoldersExternally = data.OpenFoldersExternally;
             panel.showSettingsButton = data.ShowSettingsButton;
             panel.ApplyMovementMode(string.IsNullOrWhiteSpace(data.MovementMode) ? "titlebar" : data.MovementMode);
@@ -156,8 +156,17 @@ namespace DesktopPlus
             panel.Left = data.Left;
             panel.Top = data.IsCollapsed ? storedCollapsedTop : storedTop;
             panel.Width = data.Width;
-            panel.Height = data.Height;
-            panel.expandedHeight = data.Height;
+            double storedHeight = data.Height > 0 ? data.Height : panel.Height;
+            panel.Height = storedHeight;
+            double restoredExpandedHeight = data.ExpandedHeight;
+            if (restoredExpandedHeight <= 0)
+            {
+                restoredExpandedHeight = data.IsCollapsed
+                    ? Math.Max(panel.expandedHeight, storedHeight)
+                    : storedHeight;
+            }
+            panel.expandedHeight = Math.Max(storedHeight, restoredExpandedHeight);
+            panel.IsBottomAnchored = false;
             panel.SetZoom(data.Zoom);
             var assigned = GetPresetSettings(data.PresetName);
             panel.ApplyAppearance(assigned);

@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using WinForms = System.Windows.Forms;
@@ -15,6 +15,63 @@ namespace DesktopPlus
 {
     public partial class MainWindow : Window
     {
+        private DesktopPanel? _appearancePreviewPanel;
+        private FrameworkElement? _appearancePreviewRoot;
+        private string? _appearancePreviewFolderPath;
+        private const int PatternEditorResolution = 16;
+        private readonly bool[,] _patternEditorMask = new bool[PatternEditorResolution, PatternEditorResolution];
+        private readonly List<Border> _patternEditorCells = new List<Border>(PatternEditorResolution * PatternEditorResolution);
+        private bool _patternEditorInitialized;
+        private bool _patternEditorIsDragging;
+        private bool _patternEditorDragValue;
+        private bool _suppressPatternEditorApply;
+        private readonly List<string> _fontFamilyChoices = new List<string>();
+        private bool _fontFamilyChoicesInitialized;
+
+        private void EnsureFontFamilyChoices()
+        {
+            if (_fontFamilyChoicesInitialized) return;
+            if (FontFamilyCombo == null) return;
+
+            _fontFamilyChoices.Clear();
+            foreach (string familyName in Fonts.SystemFontFamilies
+                .Select(family => family.Source)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.CurrentCultureIgnoreCase)
+                .OrderBy(name => name, StringComparer.CurrentCultureIgnoreCase))
+            {
+                _fontFamilyChoices.Add(familyName);
+            }
+
+            if (!_fontFamilyChoices.Any(name => string.Equals(name, "Segoe UI", StringComparison.OrdinalIgnoreCase)))
+            {
+                _fontFamilyChoices.Insert(0, "Segoe UI");
+            }
+
+            FontFamilyCombo.ItemsSource = _fontFamilyChoices;
+            _fontFamilyChoicesInitialized = true;
+        }
+
+        private string ResolveFontFamilySelection(string? requestedFontFamily)
+        {
+            EnsureFontFamilyChoices();
+
+            string resolved = string.IsNullOrWhiteSpace(requestedFontFamily)
+                ? "Segoe UI"
+                : requestedFontFamily.Trim();
+
+            string? existing = _fontFamilyChoices.FirstOrDefault(name =>
+                string.Equals(name, resolved, StringComparison.OrdinalIgnoreCase));
+
+            if (existing == null)
+            {
+                _fontFamilyChoices.Add(resolved);
+                existing = resolved;
+            }
+
+            return existing;
+        }
+
         private void PopulateAppearanceInputs(AppearanceSettings appearance)
         {
             if (appearance == null) return;
@@ -29,13 +86,19 @@ namespace DesktopPlus
                     ? appearance.AccentColor
                     : appearance.FolderTextColor;
             }
-            if (FontFamilyInput != null) FontFamilyInput.Text = appearance.FontFamily;
+            if (FontFamilyCombo != null)
+            {
+                string selectedFontFamily = ResolveFontFamilySelection(appearance.FontFamily);
+                FontFamilyCombo.SelectedItem = selectedFontFamily;
+            }
             if (TitleFontSizeInput != null) TitleFontSizeInput.Text = appearance.TitleFontSize.ToString(CultureInfo.CurrentCulture);
             if (ItemFontSizeInput != null) ItemFontSizeInput.Text = appearance.ItemFontSize.ToString(CultureInfo.CurrentCulture);
             OpacitySlider.Value = appearance.BackgroundOpacity;
             CornerRadiusSlider.Value = appearance.CornerRadius;
-            ShadowOpacitySlider.Value = appearance.ShadowOpacity;
-            ShadowBlurSlider.Value = appearance.ShadowBlur;
+            if (HeaderShadowOpacitySlider != null) HeaderShadowOpacitySlider.Value = ResolveHeaderShadowOpacity(appearance);
+            if (HeaderShadowBlurSlider != null) HeaderShadowBlurSlider.Value = ResolveHeaderShadowBlur(appearance);
+            if (BodyShadowOpacitySlider != null) BodyShadowOpacitySlider.Value = ResolveBodyShadowOpacity(appearance);
+            if (BodyShadowBlurSlider != null) BodyShadowBlurSlider.Value = ResolveBodyShadowBlur(appearance);
             if (BackgroundModeCombo != null)
             {
                 foreach (ComboBoxItem item in BackgroundModeCombo.Items)
@@ -58,6 +121,37 @@ namespace DesktopPlus
                     }
                 }
             }
+            _suppressPatternEditorApply = true;
+            try
+            {
+                string patternColor = string.IsNullOrWhiteSpace(appearance.PatternColor)
+                    ? appearance.AccentColor
+                    : appearance.PatternColor;
+                if (PatternColorInput != null) PatternColorInput.Text = patternColor;
+                if (PatternColorSwatch != null)
+                {
+                    PatternColorSwatch.Background = BuildBrush(patternColor, 1.0, MediaColor.FromRgb(110, 139, 255));
+                }
+                if (PatternOpacitySlider != null)
+                {
+                    PatternOpacitySlider.Value = Math.Max(0.05, Math.Min(1.0, appearance.PatternOpacity > 0 ? appearance.PatternOpacity : 0.25));
+                }
+                if (PatternTileSizeSlider != null)
+                {
+                    PatternTileSizeSlider.Value = Math.Max(6, Math.Min(64, appearance.PatternTileSize > 0 ? appearance.PatternTileSize : 8));
+                }
+                if (PatternStrokeSlider != null)
+                {
+                    PatternStrokeSlider.Value = Math.Max(0.5, Math.Min(8, appearance.PatternStrokeThickness > 0 ? appearance.PatternStrokeThickness : 1));
+                }
+                InitializePatternEditorGrid();
+                LoadPatternEditorMask(appearance.PatternCustomData);
+                RefreshPatternEditorVisuals();
+            }
+            finally
+            {
+                _suppressPatternEditorApply = false;
+            }
             if (ImageOpacitySlider != null) ImageOpacitySlider.Value = appearance.BackgroundImageOpacity;
             if (GlassToggle != null) GlassToggle.IsChecked = appearance.GlassEnabled;
             if (ImageFitToggle != null) ImageFitToggle.IsChecked = appearance.ImageStretchFill;
@@ -68,11 +162,60 @@ namespace DesktopPlus
         private void AppearanceInputChanged(object sender, RoutedEventArgs e)
         {
             if (!_isUiReady) return;
+            if (_suppressPatternEditorApply) return;
 
             UpdateBackgroundEditorVisibility();
+            RefreshPatternEditorVisuals();
+            if (PatternColorSwatch != null)
+            {
+                string swatchColor = (PatternColorInput?.Text ?? AccentColorInput?.Text ?? "#6E8BFF").Trim();
+                PatternColorSwatch.Background = BuildBrush(swatchColor, 1.0, MediaColor.FromRgb(110, 139, 255));
+            }
             var appearance = BuildAppearanceFromUi();
             UpdatePreview(appearance);
             UpdateAppearance(appearance);
+        }
+
+        private System.Windows.Controls.TextBox? _activeColorTextBox;
+
+        private void Swatch_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (sender is not System.Windows.Controls.Border swatch) return;
+
+            System.Windows.Controls.TextBox? targetInput = null;
+            if (swatch == BackgroundSwatch) targetInput = BackgroundColorInput;
+            else if (swatch == HeaderSwatch) targetInput = HeaderColorInput;
+            else if (swatch == AccentSwatch) targetInput = AccentColorInput;
+            else if (swatch == TextColorSwatch) targetInput = TextColorInput;
+            else if (swatch == FolderColorSwatch) targetInput = FolderColorInput;
+            else if (swatch == PatternColorSwatch) targetInput = PatternColorInput;
+
+            if (targetInput == null) return;
+            _activeColorTextBox = targetInput;
+
+            // Parse current color
+            MediaColor currentColor;
+            try
+            {
+                currentColor = (MediaColor)System.Windows.Media.ColorConverter.ConvertFromString(targetInput.Text.Trim());
+            }
+            catch
+            {
+                currentColor = MediaColor.FromRgb(110, 139, 255);
+            }
+
+            ColorPicker.ColorChanged -= OnColorPickerChanged;
+            ColorPicker.SetColor(currentColor);
+            ColorPicker.ColorChanged += OnColorPickerChanged;
+
+            ColorPickerPopup.PlacementTarget = swatch;
+            ColorPickerPopup.IsOpen = true;
+        }
+
+        private void OnColorPickerChanged(MediaColor color)
+        {
+            if (_activeColorTextBox == null) return;
+            _activeColorTextBox.Text = $"#{color.R:X2}{color.G:X2}{color.B:X2}";
         }
 
         private void UpdateBackgroundEditorVisibility(string? selectedMode = null)
@@ -83,10 +226,21 @@ namespace DesktopPlus
 
             bool isImage = string.Equals(mode, "Image", StringComparison.OrdinalIgnoreCase);
             bool isPattern = string.Equals(mode, "Pattern", StringComparison.OrdinalIgnoreCase);
+            string selectedPattern = (PatternCombo?.SelectedItem as ComboBoxItem)?.Tag as string ?? "None";
+            bool isCustomPattern = isPattern && string.Equals(selectedPattern, "Custom", StringComparison.OrdinalIgnoreCase);
 
             if (PatternSection != null)
             {
                 PatternSection.Visibility = isPattern ? Visibility.Visible : Visibility.Collapsed;
+            }
+            if (PatternEditorSection != null)
+            {
+                PatternEditorSection.Visibility = isCustomPattern ? Visibility.Visible : Visibility.Collapsed;
+            }
+            if (isCustomPattern)
+            {
+                InitializePatternEditorGrid();
+                RefreshPatternEditorVisuals();
             }
 
             if (ImageSection != null)
@@ -105,40 +259,227 @@ namespace DesktopPlus
             }
         }
 
-        private void SavePreset_Click(object sender, RoutedEventArgs e)
+        private void InitializePatternEditorGrid()
         {
-            var name = (PresetNameInput.Text ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(name))
+            if (_patternEditorInitialized || PatternEditorGrid == null) return;
+
+            PatternEditorGrid.Children.Clear();
+            _patternEditorCells.Clear();
+
+            for (int y = 0; y < PatternEditorResolution; y++)
             {
-                System.Windows.MessageBox.Show(
-                    GetString("Loc.MsgPresetNameRequired"),
-                    GetString("Loc.MsgInfo"),
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
+                for (int x = 0; x < PatternEditorResolution; x++)
+                {
+                    int index = (y * PatternEditorResolution) + x;
+                    var cell = new Border
+                    {
+                        Tag = index,
+                        Margin = new Thickness(0.5),
+                        CornerRadius = new CornerRadius(1),
+                        BorderThickness = new Thickness(0.5)
+                    };
+                    cell.MouseLeftButtonDown += PatternCell_MouseLeftButtonDown;
+                    cell.MouseRightButtonDown += PatternCell_MouseRightButtonDown;
+                    cell.MouseEnter += PatternCell_MouseEnter;
+
+                    _patternEditorCells.Add(cell);
+                    PatternEditorGrid.Children.Add(cell);
+                }
+            }
+
+            PatternEditorGrid.MouseLeftButtonUp += PatternEditorGrid_MouseLeftButtonUp;
+            PatternEditorGrid.MouseRightButtonUp += PatternEditorGrid_MouseRightButtonUp;
+            PatternEditorGrid.MouseLeave += PatternEditorGrid_MouseLeave;
+            _patternEditorInitialized = true;
+        }
+
+        private void PatternCell_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (sender is not Border cell) return;
+            _patternEditorIsDragging = true;
+            _patternEditorDragValue = true;
+            PatternEditorGrid?.CaptureMouse();
+            ApplyPatternCellFromBorder(cell, _patternEditorDragValue);
+            e.Handled = true;
+        }
+
+        private void PatternCell_MouseRightButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (sender is not Border cell) return;
+            _patternEditorIsDragging = true;
+            _patternEditorDragValue = false;
+            PatternEditorGrid?.CaptureMouse();
+            ApplyPatternCellFromBorder(cell, _patternEditorDragValue);
+            e.Handled = true;
+        }
+
+        private void PatternCell_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            if (!_patternEditorIsDragging) return;
+            if (sender is not Border cell) return;
+            ApplyPatternCellFromBorder(cell, _patternEditorDragValue);
+        }
+
+        private void PatternEditorGrid_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            StopPatternEditorDrag();
+        }
+
+        private void PatternEditorGrid_MouseRightButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            StopPatternEditorDrag();
+        }
+
+        private void PatternEditorGrid_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            if (e.LeftButton == System.Windows.Input.MouseButtonState.Released &&
+                e.RightButton == System.Windows.Input.MouseButtonState.Released)
+            {
+                StopPatternEditorDrag();
+            }
+        }
+
+        private void StopPatternEditorDrag()
+        {
+            if (!_patternEditorIsDragging) return;
+            _patternEditorIsDragging = false;
+            if (PatternEditorGrid?.IsMouseCaptured == true)
+            {
+                PatternEditorGrid.ReleaseMouseCapture();
+            }
+        }
+
+        private static bool TryGetPatternCellCoordinates(Border cell, out int x, out int y)
+        {
+            x = 0;
+            y = 0;
+            if (cell.Tag is not int index) return false;
+            if (index < 0 || index >= PatternEditorResolution * PatternEditorResolution) return false;
+            y = index / PatternEditorResolution;
+            x = index % PatternEditorResolution;
+            return true;
+        }
+
+        private void ApplyPatternCellFromBorder(Border cell, bool value)
+        {
+            if (!TryGetPatternCellCoordinates(cell, out int x, out int y)) return;
+            if (_patternEditorMask[x, y] == value) return;
+
+            _patternEditorMask[x, y] = value;
+            RefreshPatternEditorVisuals();
+            ApplyPatternEditorToAppearance();
+        }
+
+        private void LoadPatternEditorMask(string? serializedData)
+        {
+            for (int y = 0; y < PatternEditorResolution; y++)
+            {
+                for (int x = 0; x < PatternEditorResolution; x++)
+                {
+                    _patternEditorMask[x, y] = false;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(serializedData))
+            {
                 return;
             }
+
+            int expectedLength = PatternEditorResolution * PatternEditorResolution;
+            int max = Math.Min(expectedLength, serializedData.Length);
+            for (int i = 0; i < max; i++)
+            {
+                char ch = serializedData[i];
+                if (ch == '1' || ch == 'x' || ch == 'X' || ch == '#')
+                {
+                    int y = i / PatternEditorResolution;
+                    int x = i % PatternEditorResolution;
+                    _patternEditorMask[x, y] = true;
+                }
+            }
+        }
+
+        private string SerializePatternEditorMask()
+        {
+            var sb = new StringBuilder(PatternEditorResolution * PatternEditorResolution);
+            for (int y = 0; y < PatternEditorResolution; y++)
+            {
+                for (int x = 0; x < PatternEditorResolution; x++)
+                {
+                    sb.Append(_patternEditorMask[x, y] ? '1' : '0');
+                }
+            }
+            return sb.ToString();
+        }
+
+        private void RefreshPatternEditorVisuals()
+        {
+            if (!_patternEditorInitialized) return;
+
+            string colorValue = (PatternColorInput?.Text ?? AccentColorInput?.Text ?? "#6E8BFF").Trim();
+            double fillOpacity = PatternOpacitySlider?.Value ?? 0.25;
+            fillOpacity = Math.Max(0.05, Math.Min(1.0, fillOpacity));
+            var onBrush = BuildBrush(colorValue, fillOpacity, MediaColor.FromRgb(110, 139, 255));
+            var offBrush = new SolidColorBrush(MediaColor.FromArgb(35, 58, 70, 89));
+            var offBorder = new SolidColorBrush(MediaColor.FromArgb(90, 72, 84, 102));
+            var onBorder = new SolidColorBrush(MediaColor.FromArgb(200, onBrush.Color.R, onBrush.Color.G, onBrush.Color.B));
+
+            for (int i = 0; i < _patternEditorCells.Count; i++)
+            {
+                int y = i / PatternEditorResolution;
+                int x = i % PatternEditorResolution;
+                bool isOn = _patternEditorMask[x, y];
+                var cell = _patternEditorCells[i];
+                cell.Background = isOn ? onBrush : offBrush;
+                cell.BorderBrush = isOn ? onBorder : offBorder;
+            }
+        }
+
+        private void ApplyPatternEditorToAppearance()
+        {
+            if (!_isUiReady || _suppressPatternEditorApply) return;
 
             var appearance = BuildAppearanceFromUi();
+            UpdatePreview(appearance);
+            UpdateAppearance(appearance);
+        }
+
+        private void PatternClear_Click(object sender, RoutedEventArgs e)
+        {
+            for (int y = 0; y < PatternEditorResolution; y++)
+            {
+                for (int x = 0; x < PatternEditorResolution; x++)
+                {
+                    _patternEditorMask[x, y] = false;
+                }
+            }
+            RefreshPatternEditorVisuals();
+            ApplyPatternEditorToAppearance();
+        }
+
+        private void CreatePreset_Click(object sender, RoutedEventArgs e)
+        {
+            string defaultName = GetString("Loc.ThemesPresetDefaultName");
+            string? enteredName = PromptName(GetString("Loc.PromptPresetName"), defaultName);
+            if (string.IsNullOrWhiteSpace(enteredName))
+            {
+                return;
+            }
+
+            string name = enteredName.Trim();
+            var appearance = BuildAppearanceFromUi();
             var existing = Presets.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
-            if (existing != null && existing.IsBuiltIn)
+            if (existing != null)
             {
                 System.Windows.MessageBox.Show(
-                    GetString("Loc.MsgPresetBuiltIn"),
+                    GetString(existing.IsBuiltIn ? "Loc.MsgPresetBuiltIn" : "Loc.MsgPresetNameExists"),
                     GetString("Loc.MsgInfo"),
                     MessageBoxButton.OK,
                     MessageBoxImage.Information);
                 return;
             }
 
-            if (existing != null)
-            {
-                existing.Settings = appearance;
-                existing.IsBuiltIn = false;
-            }
-            else
-            {
-                Presets.Add(new AppearancePreset { Name = name, Settings = appearance, IsBuiltIn = false });
-            }
+            Presets.Add(new AppearancePreset { Name = name, Settings = CloneAppearance(appearance), IsBuiltIn = false });
 
             RefreshPresetSelectors(name);
             SaveSettings();
@@ -223,28 +564,6 @@ namespace DesktopPlus
                 MessageBoxImage.Information);
         }
 
-        private void ApplyPresetAll_Click(object sender, RoutedEventArgs e)
-        {
-            if (PresetComboTop.SelectedItem is AppearancePreset preset)
-            {
-                UpdateAppearance(preset.Settings);
-
-                foreach (var panel in System.Windows.Application.Current.Windows.OfType<DesktopPanel>())
-                {
-                    panel.assignedPresetName = preset.Name;
-                    panel.ApplyAppearance(preset.Settings);
-                }
-
-                foreach (var w in savedWindows)
-                {
-                    w.PresetName = preset.Name;
-                }
-
-                SaveSettings();
-                NotifyPanelsChanged();
-            }
-        }
-
         private void RefreshPresetSelectors(string? preferredName = null)
         {
             var ordered = Presets.OrderBy(p => p.IsBuiltIn ? 0 : 1).ThenBy(p => p.Name).ToList();
@@ -325,80 +644,153 @@ namespace DesktopPlus
             return Math.Max(min, Math.Min(max, value));
         }
 
+        private void EnsurePreviewPanel()
+        {
+            if (PreviewPanelHost == null) return;
+
+            if (_appearancePreviewPanel == null || _appearancePreviewRoot == null)
+            {
+                var previewPanel = new DesktopPanel();
+                previewPanel.expandOnHover = false;
+                previewPanel.SetExpandOnHover(false);
+                previewPanel.ApplyMovementMode("locked");
+
+                if (previewPanel.Content is not FrameworkElement previewRoot)
+                {
+                    return;
+                }
+
+                previewPanel.Content = null;
+                previewRoot.Width = 820;
+                previewRoot.Height = 480;
+                previewRoot.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
+                previewRoot.VerticalAlignment = System.Windows.VerticalAlignment.Stretch;
+                previewRoot.Margin = new Thickness(0);
+                previewRoot.IsHitTestVisible = false;
+
+                _appearancePreviewPanel = previewPanel;
+                _appearancePreviewRoot = previewRoot;
+            }
+
+            if (_appearancePreviewRoot != null && !PreviewPanelHost.Children.Contains(_appearancePreviewRoot))
+            {
+                PreviewPanelHost.Children.Clear();
+                PreviewPanelHost.Children.Add(_appearancePreviewRoot);
+            }
+
+            if (_appearancePreviewPanel == null) return;
+
+            if (string.IsNullOrWhiteSpace(_appearancePreviewFolderPath) || !Directory.Exists(_appearancePreviewFolderPath))
+            {
+                _appearancePreviewFolderPath = EnsurePreviewSampleFolder();
+            }
+
+            if (!string.Equals(_appearancePreviewPanel.currentFolderPath, _appearancePreviewFolderPath, StringComparison.OrdinalIgnoreCase))
+            {
+                _appearancePreviewPanel.LoadFolder(_appearancePreviewFolderPath, saveSettings: false);
+            }
+        }
+
+        private string EnsurePreviewSampleFolder()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "DesktopPlus", "PreviewPanelSample");
+            Directory.CreateDirectory(root);
+
+            string docsFolder = Path.Combine(root, SanitizePreviewEntryName(GetString("Loc.PreviewFolderDocs"), "Documents"));
+            string photosFolder = Path.Combine(root, SanitizePreviewEntryName(GetString("Loc.PreviewFolderPhotos"), "Pictures"));
+            string projectsFolder = Path.Combine(root, SanitizePreviewEntryName(GetString("Loc.PreviewFolderProjects"), "Projects"));
+
+            Directory.CreateDirectory(docsFolder);
+            Directory.CreateDirectory(photosFolder);
+            Directory.CreateDirectory(projectsFolder);
+
+            EnsurePreviewFile(
+                Path.Combine(root, SanitizePreviewEntryName(GetString("Loc.PreviewFileReadme"), "readme.md")),
+                "# DesktopPlus Preview" + Environment.NewLine + Environment.NewLine + "Sample content for panel preview.");
+            EnsurePreviewFile(
+                Path.Combine(root, SanitizePreviewEntryName(GetString("Loc.PreviewFileTodo"), "todo.txt")),
+                "- Sync panel colors" + Environment.NewLine + "- Check spacing" + Environment.NewLine + "- Validate contrast");
+            EnsurePreviewFile(
+                Path.Combine(root, SanitizePreviewEntryName(GetString("Loc.PreviewFileBudget"), "Budget.xlsx")),
+                "Sample preview file placeholder");
+
+            return root;
+        }
+
+        private static string SanitizePreviewEntryName(string value, string fallback)
+        {
+            string entry = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+
+            foreach (char invalid in Path.GetInvalidFileNameChars())
+            {
+                entry = entry.Replace(invalid, '_');
+            }
+
+            return string.IsNullOrWhiteSpace(entry) ? fallback : entry;
+        }
+
+        private static void EnsurePreviewFile(string path, string content)
+        {
+            if (File.Exists(path)) return;
+            File.WriteAllText(path, content);
+        }
+
         private void UpdatePreview(AppearanceSettings appearance)
         {
             if (appearance == null) return;
 
-            var headerBrush = BuildPanelHeaderBrush(appearance);
-            var contentBrush = BuildPanelContentBrush(appearance);
-            var borderBrush = BuildPanelBorderBrush(appearance);
+            EnsurePreviewPanel();
+            if (_appearancePreviewPanel != null)
+            {
+                _appearancePreviewPanel.ApplyAppearance(appearance);
+            }
+
             var headerSwatchBrush = BuildBrush(appearance.HeaderColor, 1.0, MediaColor.FromRgb(34, 37, 42));
             var accentBrush = BuildBrush(appearance.AccentColor, 1.0, MediaColor.FromRgb(90, 200, 250));
             var textBrush = BuildBrush(appearance.TextColor, 1.0, MediaColor.FromRgb(242, 245, 250));
-            var mutedBrush = BuildBrush(appearance.MutedTextColor, 1.0, MediaColor.FromRgb(167, 176, 192));
-            var insetBrush = BuildDarkerBrush(appearance.BackgroundColor, 0.15, MediaColor.FromRgb(30, 35, 43));
             string folderColor = string.IsNullOrWhiteSpace(appearance.FolderTextColor)
                 ? appearance.AccentColor
                 : appearance.FolderTextColor;
             var folderBrush = BuildBrush(folderColor, 1.0, MediaColor.FromRgb(110, 139, 255));
-            double outerRadius = Math.Max(10, appearance.CornerRadius + 2);
-            double innerRadius = Math.Max(6, outerRadius - 2);
-
-            PreviewPanel.Background = System.Windows.Media.Brushes.Transparent;
-            PreviewPanel.BorderBrush = borderBrush;
-            PreviewPanel.BorderThickness = new Thickness(1);
-            PreviewPanel.CornerRadius = new CornerRadius(outerRadius);
-            PreviewHeader.Background = headerBrush;
-            PreviewHeader.CornerRadius = new CornerRadius(innerRadius, innerRadius, 0, 0);
-            if (PreviewContent != null)
-            {
-                PreviewContent.CornerRadius = new CornerRadius(0, 0, innerRadius, innerRadius);
-                PreviewContent.Background = contentBrush;
-            }
-            PreviewTitleText.Foreground = accentBrush;
-            if (PreviewSearchText != null)
-            {
-                PreviewSearchText.FontSize = Math.Max(10, appearance.ItemFontSize - 1);
-            }
-
-            if (PreviewPanel.Resources != null)
-            {
-                PreviewPanel.Resources["PreviewTextBrush"] = textBrush;
-                PreviewPanel.Resources["PreviewMutedBrush"] = mutedBrush;
-                PreviewPanel.Resources["PreviewFolderBrush"] = folderBrush;
-                PreviewPanel.Resources["PreviewBorderBrush"] = borderBrush;
-                PreviewPanel.Resources["PreviewInsetBrush"] = insetBrush;
-                PreviewPanel.Resources["PreviewTitleFontSize"] = appearance.TitleFontSize;
-                PreviewPanel.Resources["PreviewItemFontSize"] = appearance.ItemFontSize;
-            }
-
-            if (!string.IsNullOrWhiteSpace(appearance.FontFamily))
-            {
-                try
-                {
-                    PreviewPanel.SetValue(TextElement.FontFamilyProperty, new System.Windows.Media.FontFamily(appearance.FontFamily));
-                }
-                catch
-                {
-                    PreviewPanel.SetValue(TextElement.FontFamilyProperty, new System.Windows.Media.FontFamily("Segoe UI"));
-                }
-            }
-            else
-            {
-                PreviewPanel.SetValue(TextElement.FontFamilyProperty, new System.Windows.Media.FontFamily("Segoe UI"));
-            }
-
-            if (PreviewShadow != null)
-            {
-                PreviewShadow.BlurRadius = Math.Max(0, appearance.ShadowBlur);
-                PreviewShadow.Opacity = Math.Max(0, Math.Min(1, appearance.ShadowOpacity));
-            }
 
             BackgroundSwatch.Background = BuildBrush(appearance.BackgroundColor, 1.0, MediaColor.FromRgb(30, 30, 30));
             HeaderSwatch.Background = headerSwatchBrush;
             AccentSwatch.Background = accentBrush;
             if (TextColorSwatch != null) TextColorSwatch.Background = textBrush;
             if (FolderColorSwatch != null) FolderColorSwatch.Background = folderBrush;
+            if (PatternColorSwatch != null)
+            {
+                string previewPatternColor = string.IsNullOrWhiteSpace(appearance.PatternColor) ? appearance.AccentColor : appearance.PatternColor;
+                PatternColorSwatch.Background = BuildBrush(previewPatternColor, 1.0, MediaColor.FromRgb(110, 139, 255));
+            }
+        }
+
+        public static double ResolveHeaderShadowOpacity(AppearanceSettings appearance)
+        {
+            if (appearance == null) return 0.3;
+            if (appearance.HeaderShadowOpacity >= 0) return Math.Max(0, Math.Min(0.8, appearance.HeaderShadowOpacity));
+            return Math.Max(0, Math.Min(0.8, appearance.ShadowOpacity));
+        }
+
+        public static double ResolveHeaderShadowBlur(AppearanceSettings appearance)
+        {
+            if (appearance == null) return 20;
+            if (appearance.HeaderShadowBlur >= 0) return Math.Max(0, appearance.HeaderShadowBlur);
+            return Math.Max(0, appearance.ShadowBlur);
+        }
+
+        public static double ResolveBodyShadowOpacity(AppearanceSettings appearance)
+        {
+            if (appearance == null) return 0.3;
+            if (appearance.BodyShadowOpacity >= 0) return Math.Max(0, Math.Min(0.8, appearance.BodyShadowOpacity));
+            return Math.Max(0, Math.Min(0.8, appearance.ShadowOpacity));
+        }
+
+        public static double ResolveBodyShadowBlur(AppearanceSettings appearance)
+        {
+            if (appearance == null) return 20;
+            if (appearance.BodyShadowBlur >= 0) return Math.Max(0, appearance.BodyShadowBlur);
+            return Math.Max(0, appearance.ShadowBlur);
         }
 
         private AppearanceSettings BuildAppearanceFromUi()
@@ -410,14 +802,31 @@ namespace DesktopPlus
             bool glass = GlassToggle?.IsChecked == true;
             bool fit = ImageFitToggle?.IsChecked != false;
             string imagePath = (ImagePathInput?.Text ?? current.BackgroundImagePath ?? "").Trim();
-            string fontFamily = (FontFamilyInput?.Text ?? current.FontFamily ?? "").Trim();
+            string fontFamily = ((FontFamilyCombo?.SelectedItem as string) ?? FontFamilyCombo?.Text ?? current.FontFamily ?? "").Trim();
             double titleSize = SanitizeDouble(TitleFontSizeInput?.Text, current.TitleFontSize, 10, 28);
             double itemSize = SanitizeDouble(ItemFontSizeInput?.Text, current.ItemFontSize, 9, 24);
             string textColor = SanitizeColor(TextColorInput?.Text ?? "", current.TextColor);
+            string patternColorFallback = !string.IsNullOrWhiteSpace(current.PatternColor)
+                ? current.PatternColor
+                : (string.IsNullOrWhiteSpace(current.AccentColor) ? "#6E8BFF" : current.AccentColor);
+            string patternColor = SanitizeColor(PatternColorInput?.Text ?? "", patternColorFallback);
+            double patternOpacity = PatternOpacitySlider != null
+                ? Math.Round(PatternOpacitySlider.Value, 2)
+                : (current.PatternOpacity > 0 ? current.PatternOpacity : 0.25);
+            double patternTileSize = PatternTileSizeSlider != null
+                ? Math.Round(PatternTileSizeSlider.Value, 1)
+                : (current.PatternTileSize > 0 ? current.PatternTileSize : 8);
+            double patternStroke = PatternStrokeSlider != null
+                ? Math.Round(PatternStrokeSlider.Value, 1)
+                : (current.PatternStrokeThickness > 0 ? current.PatternStrokeThickness : 1);
             string folderColorFallback = string.IsNullOrWhiteSpace(current.FolderTextColor)
                 ? current.AccentColor
                 : current.FolderTextColor;
             string folderColor = SanitizeColor(FolderColorInput?.Text ?? "", folderColorFallback);
+            double headerShadowOpacity = HeaderShadowOpacitySlider != null ? HeaderShadowOpacitySlider.Value : ResolveHeaderShadowOpacity(current);
+            double headerShadowBlur = HeaderShadowBlurSlider != null ? HeaderShadowBlurSlider.Value : ResolveHeaderShadowBlur(current);
+            double bodyShadowOpacity = BodyShadowOpacitySlider != null ? BodyShadowOpacitySlider.Value : ResolveBodyShadowOpacity(current);
+            double bodyShadowBlur = BodyShadowBlurSlider != null ? BodyShadowBlurSlider.Value : ResolveBodyShadowBlur(current);
 
             return new AppearanceSettings
             {
@@ -432,8 +841,17 @@ namespace DesktopPlus
                 ItemFontSize = Math.Round(itemSize, 0),
                 BackgroundOpacity = Math.Round(OpacitySlider.Value, 2),
                 CornerRadius = Math.Round(CornerRadiusSlider.Value, 0),
-                ShadowOpacity = Math.Round(ShadowOpacitySlider.Value, 2),
-                ShadowBlur = Math.Round(ShadowBlurSlider.Value, 1),
+                ShadowOpacity = Math.Round(bodyShadowOpacity, 2),
+                ShadowBlur = Math.Round(bodyShadowBlur, 1),
+                HeaderShadowOpacity = Math.Round(headerShadowOpacity, 2),
+                HeaderShadowBlur = Math.Round(headerShadowBlur, 1),
+                BodyShadowOpacity = Math.Round(bodyShadowOpacity, 2),
+                BodyShadowBlur = Math.Round(bodyShadowBlur, 1),
+                PatternColor = patternColor,
+                PatternOpacity = Math.Max(0.05, Math.Min(1.0, patternOpacity)),
+                PatternTileSize = Math.Max(6, Math.Min(64, patternTileSize)),
+                PatternStrokeThickness = Math.Max(0.5, Math.Min(8, patternStroke)),
+                PatternCustomData = SerializePatternEditorMask(),
                 BackgroundMode = mode,
                 BackgroundImagePath = imagePath,
                 BackgroundImageOpacity = imageOpacity,
@@ -700,24 +1118,57 @@ namespace DesktopPlus
         private static System.Windows.Media.Brush BuildPatternBrush(AppearanceSettings appearance)
         {
             var baseColor = BuildBrush(appearance.BackgroundColor, appearance.BackgroundOpacity, MediaColor.FromRgb(30, 30, 30)).Color;
-            var accent = BuildBrush(appearance.AccentColor, 0.25, MediaColor.FromRgb(90, 200, 250)).Color;
+            string patternColorValue = string.IsNullOrWhiteSpace(appearance.PatternColor)
+                ? appearance.AccentColor
+                : appearance.PatternColor;
+            double patternOpacity = appearance.PatternOpacity > 0 ? appearance.PatternOpacity : 0.25;
+            patternOpacity = Math.Max(0.05, Math.Min(1.0, patternOpacity));
+            var accent = BuildBrush(patternColorValue, patternOpacity, MediaColor.FromRgb(90, 200, 250)).Color;
+            double tileSize = appearance.PatternTileSize > 0 ? appearance.PatternTileSize : 8;
+            tileSize = Math.Max(6, Math.Min(64, tileSize));
+            double stroke = appearance.PatternStrokeThickness > 0 ? appearance.PatternStrokeThickness : 1;
+            stroke = Math.Max(0.5, Math.Min(8, stroke));
 
             DrawingGroup group = new DrawingGroup();
-            group.Children.Add(new GeometryDrawing(new SolidColorBrush(baseColor), null, new RectangleGeometry(new Rect(0, 0, 8, 8))));
+            group.Children.Add(new GeometryDrawing(new SolidColorBrush(baseColor), null, new RectangleGeometry(new Rect(0, 0, tileSize, tileSize))));
+            var pen = new System.Windows.Media.Pen(new SolidColorBrush(accent), stroke);
 
             switch (appearance.Pattern?.ToLowerInvariant())
             {
                 case "diagonal":
-                    group.Children.Add(new GeometryDrawing(null, new System.Windows.Media.Pen(new SolidColorBrush(accent), 1), new LineGeometry(new System.Windows.Point(0, 8), new System.Windows.Point(8, 0))));
-                    group.Children.Add(new GeometryDrawing(null, new System.Windows.Media.Pen(new SolidColorBrush(accent), 1), new LineGeometry(new System.Windows.Point(-4, 8), new System.Windows.Point(4, 0))));
+                    group.Children.Add(new GeometryDrawing(null, pen, new LineGeometry(new System.Windows.Point(0, tileSize), new System.Windows.Point(tileSize, 0))));
+                    group.Children.Add(new GeometryDrawing(null, pen, new LineGeometry(new System.Windows.Point(-tileSize * 0.5, tileSize), new System.Windows.Point(tileSize * 0.5, 0))));
+                    group.Children.Add(new GeometryDrawing(null, pen, new LineGeometry(new System.Windows.Point(tileSize * 0.5, tileSize), new System.Windows.Point(tileSize * 1.5, 0))));
                     break;
                 case "grid":
-                    group.Children.Add(new GeometryDrawing(null, new System.Windows.Media.Pen(new SolidColorBrush(accent), 0.8), new RectangleGeometry(new Rect(0, 0, 8, 8))));
-                    group.Children.Add(new GeometryDrawing(null, new System.Windows.Media.Pen(new SolidColorBrush(accent), 0.8), new RectangleGeometry(new Rect(0, 0, 4, 4))));
+                    double half = tileSize * 0.5;
+                    group.Children.Add(new GeometryDrawing(null, pen, new RectangleGeometry(new Rect(0, 0, tileSize, tileSize))));
+                    group.Children.Add(new GeometryDrawing(null, pen, new LineGeometry(new System.Windows.Point(half, 0), new System.Windows.Point(half, tileSize))));
+                    group.Children.Add(new GeometryDrawing(null, pen, new LineGeometry(new System.Windows.Point(0, half), new System.Windows.Point(tileSize, half))));
                     break;
                 case "dots":
-                    group.Children.Add(new GeometryDrawing(new SolidColorBrush(accent), null, new EllipseGeometry(new System.Windows.Point(2, 2), 1, 1)));
-                    group.Children.Add(new GeometryDrawing(new SolidColorBrush(accent), null, new EllipseGeometry(new System.Windows.Point(6, 6), 1, 1)));
+                    double radius = Math.Max(0.8, stroke * 0.9);
+                    group.Children.Add(new GeometryDrawing(new SolidColorBrush(accent), null, new EllipseGeometry(new System.Windows.Point(tileSize * 0.25, tileSize * 0.25), radius, radius)));
+                    group.Children.Add(new GeometryDrawing(new SolidColorBrush(accent), null, new EllipseGeometry(new System.Windows.Point(tileSize * 0.75, tileSize * 0.75), radius, radius)));
+                    break;
+                case "custom":
+                    string data = appearance.PatternCustomData ?? string.Empty;
+                    int expected = PatternEditorResolution * PatternEditorResolution;
+                    if (data.Length >= expected)
+                    {
+                        double pixel = tileSize / PatternEditorResolution;
+                        var fill = new SolidColorBrush(accent);
+                        for (int i = 0; i < expected; i++)
+                        {
+                            char ch = data[i];
+                            if (ch != '1' && ch != 'x' && ch != 'X' && ch != '#') continue;
+
+                            int y = i / PatternEditorResolution;
+                            int x = i % PatternEditorResolution;
+                            var rect = new Rect(x * pixel, y * pixel, pixel, pixel);
+                            group.Children.Add(new GeometryDrawing(fill, null, new RectangleGeometry(rect)));
+                        }
+                    }
                     break;
                 default:
                     break;
@@ -726,7 +1177,7 @@ namespace DesktopPlus
             return new DrawingBrush(group)
             {
                 TileMode = TileMode.Tile,
-                Viewport = new Rect(0, 0, 8, 8),
+                Viewport = new Rect(0, 0, tileSize, tileSize),
                 ViewportUnits = BrushMappingMode.Absolute,
                 Stretch = Stretch.None
             };

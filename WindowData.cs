@@ -12,11 +12,13 @@ namespace DesktopPlus
         public double Top { get; set; }
         public double Width { get; set; }
         public double Height { get; set; }
+        public double ExpandedHeight { get; set; }
         public double Zoom { get; set; }
         public bool IsCollapsed { get; set; }
         public bool IsHidden { get; set; }
         public double CollapsedTop { get; set; }
         public double BaseTop { get; set; }
+        public bool IsBottomAnchored { get; set; }
         public string PanelTitle { get; set; } = "";
         public string PresetName { get; set; } = "";
         public bool ShowHidden { get; set; }

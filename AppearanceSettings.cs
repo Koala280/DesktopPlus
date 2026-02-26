@@ -15,6 +15,15 @@ namespace DesktopPlus
         public double CornerRadius { get; set; } = 14;
         public double ShadowOpacity { get; set; } = 0.3;
         public double ShadowBlur { get; set; } = 20;
+        public double HeaderShadowOpacity { get; set; } = -1;
+        public double HeaderShadowBlur { get; set; } = -1;
+        public double BodyShadowOpacity { get; set; } = -1;
+        public double BodyShadowBlur { get; set; } = -1;
+        public string PatternColor { get; set; } = "#6E8BFF";
+        public double PatternOpacity { get; set; } = 0.25;
+        public double PatternTileSize { get; set; } = 8;
+        public double PatternStrokeThickness { get; set; } = 1;
+        public string PatternCustomData { get; set; } = "";
         public string BackgroundMode { get; set; } = "Solid"; // Solid, Image, Pattern
         public string BackgroundImagePath { get; set; } = "";
         public double BackgroundImageOpacity { get; set; } = 0.8;

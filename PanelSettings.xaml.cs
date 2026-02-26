@@ -1,3 +1,5 @@
+using System;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -8,6 +10,7 @@ namespace DesktopPlus
     public partial class PanelSettings : Window
     {
         private readonly DesktopPanel _panel;
+        private string _layoutStandardPresetName = "";
 
         public PanelSettings(DesktopPanel panel)
         {
@@ -15,14 +18,24 @@ namespace DesktopPlus
             _panel = panel;
             LoadPresets();
             Populate();
+            UpdateResetPresetToStandardButtonState();
         }
 
         private void LoadPresets()
         {
             PresetSelect.ItemsSource = MainWindow.Presets;
-            PresetSelect.SelectedValue = string.IsNullOrWhiteSpace(_panel.assignedPresetName)
-                ? MainWindow.Presets.Find(p => p.Name == "Noir")?.Name
+            _layoutStandardPresetName = MainWindow.GetCurrentStandardPresetName();
+
+            string selectedPresetName = string.IsNullOrWhiteSpace(_panel.assignedPresetName)
+                ? _layoutStandardPresetName
                 : _panel.assignedPresetName;
+            if (string.IsNullOrWhiteSpace(selectedPresetName) ||
+                !MainWindow.Presets.Any(p => string.Equals(p.Name, selectedPresetName, StringComparison.OrdinalIgnoreCase)))
+            {
+                selectedPresetName = MainWindow.Presets.FirstOrDefault()?.Name ?? "Graphite";
+            }
+
+            PresetSelect.SelectedValue = selectedPresetName;
         }
 
         private void Populate()
@@ -64,13 +77,45 @@ namespace DesktopPlus
             {
                 _panel.ApplyAppearance(preset.Settings);
             }
+            UpdateResetPresetToStandardButtonState();
+        }
+
+        private void ResetPresetToStandardButton_Click(object sender, RoutedEventArgs e)
+        {
+            _layoutStandardPresetName = MainWindow.GetCurrentStandardPresetName();
+            if (string.IsNullOrWhiteSpace(_layoutStandardPresetName))
+            {
+                return;
+            }
+
+            PresetSelect.SelectedValue = _layoutStandardPresetName;
+            UpdateResetPresetToStandardButtonState();
+        }
+
+        private void UpdateResetPresetToStandardButtonState()
+        {
+            if (ResetPresetToStandardButton == null) return;
+
+            if (string.IsNullOrWhiteSpace(_layoutStandardPresetName))
+            {
+                ResetPresetToStandardButton.IsEnabled = false;
+                return;
+            }
+
+            string selectedPresetName = (PresetSelect.SelectedItem as AppearancePreset)?.Name
+                ?? PresetSelect.SelectedValue as string
+                ?? _panel.assignedPresetName
+                ?? string.Empty;
+
+            ResetPresetToStandardButton.IsEnabled =
+                !string.Equals(selectedPresetName, _layoutStandardPresetName, StringComparison.OrdinalIgnoreCase);
         }
 
         private void Save_Click(object sender, RoutedEventArgs e)
         {
             _panel.PanelTitle.Text = NameInput.Text;
             _panel.Title = NameInput.Text;
-            _panel.expandOnHover = HoverToggle.IsChecked == true;
+            _panel.SetExpandOnHover(HoverToggle.IsChecked == true);
             bool hiddenChanged = _panel.showHiddenItems != (HiddenToggle.IsChecked == true);
             _panel.showHiddenItems = HiddenToggle.IsChecked == true;
             _panel.showSettingsButton = SettingsButtonToggle.IsChecked != false;

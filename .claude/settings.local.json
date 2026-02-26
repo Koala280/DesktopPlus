@@ -7,7 +7,8 @@
       "Bash(for file in MainWindow.xaml.cs MainWindow.Panels.cs MainWindow.Layouts.cs MainWindow.Appearance.cs MainWindow.Settings.cs MainWindow.Localization.cs DesktopPanel.xaml.cs DesktopPanel.Appearance.cs DesktopPanel.FileOperations.cs DesktopPanel.DragDrop.cs DesktopPanel.Icons.cs)",
       "Bash(for file in *.cs)",
       "Bash(done)",
-      "Bash(sort:*)"
+      "Bash(sort:*)",
+      "Bash(dotnet run)"
     ]
   }
 }

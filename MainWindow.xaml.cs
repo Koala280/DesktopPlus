@@ -32,7 +32,11 @@ namespace DesktopPlus
         private bool _suspendPresetSelection = false;
         private bool _suspendLayoutPresetSelection = false;
         private bool _suspendGeneralHandlers = false;
-        private const string DefaultPresetName = "Noir";
+        private bool _isMainWindowDragActive = false;
+        private UIElement? _mainWindowDragHandle;
+        private System.Windows.Point _mainWindowDragStartMouseScreen;
+        private System.Windows.Point _mainWindowDragStartWindowPosition;
+        private const string DefaultPresetName = "Graphite";
         private const string DefaultLanguageCode = "de";
         private const string CloseBehaviorMinimize = "Minimize";
         private const string CloseBehaviorExit = "Exit";
@@ -42,6 +46,7 @@ namespace DesktopPlus
 
         private string _languageCode = DefaultLanguageCode;
         private string _layoutDefaultPresetName = DefaultPresetName;
+        private string _activeLayoutName = "";
         private bool _startWithWindows = false;
         private string _closeBehavior = CloseBehaviorMinimize;
 
@@ -152,6 +157,17 @@ namespace DesktopPlus
         {
             if (data == null) return;
             data.PinnedItems ??= new List<string>();
+            if (!data.IsCollapsed)
+            {
+                if (data.ExpandedHeight <= 0 || data.ExpandedHeight < data.Height)
+                {
+                    data.ExpandedHeight = data.Height;
+                }
+            }
+            else if (data.ExpandedHeight > 0 && data.ExpandedHeight < data.Height)
+            {
+                data.ExpandedHeight = data.Height;
+            }
             var kind = ResolvePanelKind(data);
             if (string.IsNullOrWhiteSpace(data.PanelType))
             {
@@ -167,6 +183,9 @@ namespace DesktopPlus
             var pinnedItems = kind == PanelKind.List
                 ? panel.PinnedItems.ToList()
                 : new List<string>();
+            double currentHeight = panel.ActualHeight > 0 ? panel.ActualHeight : panel.Height;
+            double expandedHeight = panel.isContentVisible ? currentHeight : panel.expandedHeight;
+            double persistedExpandedHeight = Math.Max(currentHeight, expandedHeight);
 
             return new WindowData
             {
@@ -177,12 +196,14 @@ namespace DesktopPlus
                 Left = panel.Left,
                 Top = panel.Top,
                 Width = panel.Width,
-                Height = panel.Height,
+                Height = currentHeight,
+                ExpandedHeight = persistedExpandedHeight,
                 Zoom = panel.zoomFactor,
                 IsCollapsed = !panel.isContentVisible,
                 IsHidden = false,
                 CollapsedTop = panel.collapsedTopPosition,
                 BaseTop = panel.baseTopPosition,
+                IsBottomAnchored = false,
                 PanelTitle = panel.PanelTitle.Text,
                 PresetName = string.IsNullOrWhiteSpace(panel.assignedPresetName) ? DefaultPresetName : panel.assignedPresetName,
                 ShowHidden = panel.showHiddenItems,
@@ -385,37 +406,10 @@ namespace DesktopPlus
         {
             if (e.ChangedButton != MouseButton.Left) return;
             if (IsSourceInsideButton(e.OriginalSource as DependencyObject)) return;
-
-            if (e.ClickCount == 2)
+            if (sender is UIElement dragHandle)
             {
-                MaximizeRestore_Click(sender, new RoutedEventArgs());
-                return;
-            }
-
-            try
-            {
-                if (WindowState == WindowState.Maximized)
-                {
-                    var mouseInWindow = e.GetPosition(this);
-                    var screenPoint = PointToScreen(mouseInWindow);
-
-                    double ratioX = ActualWidth > 0 ? mouseInWindow.X / ActualWidth : 0.5;
-                    var restore = RestoreBounds;
-                    double targetWidth = restore.Width > 0 ? restore.Width : Width;
-                    double targetHeight = restore.Height > 0 ? restore.Height : Height;
-
-                    WindowState = WindowState.Normal;
-                    Width = targetWidth;
-                    Height = targetHeight;
-                    Left = screenPoint.X - (targetWidth * ratioX);
-                    Top = Math.Max(SystemParameters.WorkArea.Top, screenPoint.Y - 12);
-                }
-
-                DragMove();
-            }
-            catch
-            {
-                // Ignore invalid drag transitions.
+                BeginMainWindowDrag(dragHandle);
+                e.Handled = true;
             }
         }
 
@@ -465,6 +459,79 @@ namespace DesktopPlus
             }
 
             return false;
+        }
+
+        private System.Windows.Point GetMouseScreenPositionDip()
+        {
+            var raw = WinForms.Control.MousePosition;
+            var source = PresentationSource.FromVisual(this);
+            if (source?.CompositionTarget != null)
+            {
+                return source.CompositionTarget.TransformFromDevice.Transform(new System.Windows.Point(raw.X, raw.Y));
+            }
+
+            return new System.Windows.Point(raw.X, raw.Y);
+        }
+
+        private void BeginMainWindowDrag(UIElement dragHandle)
+        {
+            if (_isMainWindowDragActive || WindowState != WindowState.Normal) return;
+
+            _mainWindowDragHandle = dragHandle;
+            _mainWindowDragStartMouseScreen = GetMouseScreenPositionDip();
+            _mainWindowDragStartWindowPosition = new System.Windows.Point(Left, Top);
+            _isMainWindowDragActive = true;
+
+            dragHandle.MouseMove += MainWindowDragHandle_MouseMove;
+            dragHandle.MouseLeftButtonUp += MainWindowDragHandle_MouseLeftButtonUp;
+            dragHandle.LostMouseCapture += MainWindowDragHandle_LostMouseCapture;
+            dragHandle.CaptureMouse();
+        }
+
+        private void EndMainWindowDrag()
+        {
+            var handle = _mainWindowDragHandle;
+            if (handle != null)
+            {
+                handle.MouseMove -= MainWindowDragHandle_MouseMove;
+                handle.MouseLeftButtonUp -= MainWindowDragHandle_MouseLeftButtonUp;
+                handle.LostMouseCapture -= MainWindowDragHandle_LostMouseCapture;
+                if (handle.IsMouseCaptured)
+                {
+                    handle.ReleaseMouseCapture();
+                }
+                _mainWindowDragHandle = null;
+            }
+
+            _isMainWindowDragActive = false;
+        }
+
+        private void MainWindowDragHandle_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            if (!_isMainWindowDragActive) return;
+
+            if (e.LeftButton != MouseButtonState.Pressed)
+            {
+                EndMainWindowDrag();
+                return;
+            }
+
+            System.Windows.Point current = GetMouseScreenPositionDip();
+            double deltaX = current.X - _mainWindowDragStartMouseScreen.X;
+            double deltaY = current.Y - _mainWindowDragStartMouseScreen.Y;
+            Left = _mainWindowDragStartWindowPosition.X + deltaX;
+            Top = _mainWindowDragStartWindowPosition.Y + deltaY;
+        }
+
+        private void MainWindowDragHandle_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            EndMainWindowDrag();
+            e.Handled = true;
+        }
+
+        private void MainWindowDragHandle_LostMouseCapture(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            EndMainWindowDrag();
         }
 
         private void MaximizeRestore_Click(object sender, RoutedEventArgs e)
@@ -616,40 +683,64 @@ namespace DesktopPlus
 
             if (MainTabs != null)
             {
-                AnimateTabContent(MainTabs);
+                AnimateSlidingIndicator(MainTabs, instant: true);
             }
         }
+
+        private bool _indicatorInitialized;
 
         private void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (sender is not System.Windows.Controls.TabControl tabControl) return;
             if (!ReferenceEquals(e.OriginalSource, tabControl)) return;
-            AnimateTabContent(tabControl);
+            AnimateSlidingIndicator(tabControl, !_indicatorInitialized);
         }
 
-        private static void AnimateTabContent(System.Windows.Controls.TabControl tabControl)
+        private void AnimateSlidingIndicator(System.Windows.Controls.TabControl tabControl, bool instant = false)
         {
-            if (tabControl.Template.FindName("TabContentHost", tabControl) is not FrameworkElement host) return;
-
-            host.BeginAnimation(UIElement.OpacityProperty, null);
-            var shift = new TranslateTransform();
-            host.RenderTransform = shift;
-
-            host.Opacity = 0;
-            shift.Y = 8;
-
-            var easing = new QuadraticEase { EasingMode = EasingMode.EaseOut };
-            var fade = new DoubleAnimation(1, TimeSpan.FromMilliseconds(170))
+            if (tabControl.Template.FindName("SlidingIndicator", tabControl) is not Border indicator) return;
+            if (tabControl.SelectedItem is not TabItem selectedTab) return;
+            if (!selectedTab.IsLoaded)
             {
-                EasingFunction = easing
-            };
-            var slide = new DoubleAnimation(0, TimeSpan.FromMilliseconds(170))
-            {
-                EasingFunction = easing
-            };
+                selectedTab.Loaded += (_, _) => AnimateSlidingIndicator(tabControl, instant);
+                return;
+            }
 
-            host.BeginAnimation(UIElement.OpacityProperty, fade);
-            shift.BeginAnimation(TranslateTransform.YProperty, slide);
+            var tabPanel = tabControl.Template.FindName("HeaderPanel", tabControl) as System.Windows.Controls.Primitives.TabPanel;
+            if (tabPanel == null) return;
+
+            var transform = selectedTab.TransformToAncestor(tabPanel);
+            var position = transform.Transform(new System.Windows.Point(0, 0));
+            var targetX = position.X + 2;
+            var targetWidth = selectedTab.ActualWidth;
+
+            var duration = instant ? TimeSpan.Zero : TimeSpan.FromMilliseconds(300);
+            var easing = new CubicEase { EasingMode = EasingMode.EaseInOut };
+
+            var translateTransform = indicator.RenderTransform as TranslateTransform;
+            if (translateTransform == null || translateTransform.IsFrozen)
+            {
+                translateTransform = new TranslateTransform();
+                indicator.RenderTransform = translateTransform;
+            }
+
+            if (instant)
+            {
+                translateTransform.BeginAnimation(TranslateTransform.XProperty, null);
+                indicator.BeginAnimation(Border.WidthProperty, null);
+                translateTransform.X = targetX;
+                indicator.Width = targetWidth;
+            }
+            else
+            {
+                var slideAnim = new DoubleAnimation(targetX, duration) { EasingFunction = easing };
+                translateTransform.BeginAnimation(TranslateTransform.XProperty, slideAnim);
+
+                var widthAnim = new DoubleAnimation(targetWidth, duration) { EasingFunction = easing };
+                indicator.BeginAnimation(Border.WidthProperty, widthAnim);
+            }
+
+            _indicatorInitialized = true;
         }
 
         private static T? FindChild<T>(DependencyObject parent, string childName) where T : FrameworkElement
@@ -681,11 +772,13 @@ namespace DesktopPlus
                 Top = source.Top,
                 Width = source.Width,
                 Height = source.Height,
+                ExpandedHeight = source.ExpandedHeight,
                 Zoom = source.Zoom,
                 IsCollapsed = source.IsCollapsed,
                 IsHidden = source.IsHidden,
                 CollapsedTop = source.CollapsedTop,
                 BaseTop = source.BaseTop,
+                IsBottomAnchored = source.IsBottomAnchored,
                 PanelTitle = source.PanelTitle ?? "",
                 PresetName = source.PresetName ?? "",
                 ShowHidden = source.ShowHidden,
@@ -706,11 +799,13 @@ namespace DesktopPlus
             target.Top = source.Top;
             target.Width = source.Width;
             target.Height = source.Height;
+            target.ExpandedHeight = source.ExpandedHeight;
             target.Zoom = source.Zoom;
             target.IsCollapsed = source.IsCollapsed;
             target.IsHidden = source.IsHidden;
             target.CollapsedTop = source.CollapsedTop;
             target.BaseTop = source.BaseTop;
+            target.IsBottomAnchored = source.IsBottomAnchored;
             target.PanelTitle = source.PanelTitle ?? "";
             target.PresetName = source.PresetName ?? "";
             target.ShowHidden = source.ShowHidden;
@@ -737,6 +832,15 @@ namespace DesktopPlus
                 CornerRadius = source.CornerRadius,
                 ShadowOpacity = source.ShadowOpacity,
                 ShadowBlur = source.ShadowBlur,
+                HeaderShadowOpacity = source.HeaderShadowOpacity,
+                HeaderShadowBlur = source.HeaderShadowBlur,
+                BodyShadowOpacity = source.BodyShadowOpacity,
+                BodyShadowBlur = source.BodyShadowBlur,
+                PatternColor = source.PatternColor,
+                PatternOpacity = source.PatternOpacity,
+                PatternTileSize = source.PatternTileSize,
+                PatternStrokeThickness = source.PatternStrokeThickness,
+                PatternCustomData = source.PatternCustomData,
                 BackgroundMode = source.BackgroundMode,
                 BackgroundImagePath = source.BackgroundImagePath,
                 BackgroundImageOpacity = source.BackgroundImageOpacity,

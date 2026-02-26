@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -284,7 +286,7 @@ namespace DesktopPlus
                     if (!string.IsNullOrWhiteSpace(initialFolder))
                     {
                         defaultFolderPath = initialFolder;
-                        LoadFolder(initialFolder);
+                        LoadFolder(initialFolder, renamePanelTitle: true);
                         effectiveType = PanelKind.Folder;
                     }
                     else
@@ -308,7 +310,7 @@ namespace DesktopPlus
                         {
                             if (string.IsNullOrWhiteSpace(currentFolderPath))
                             {
-                                LoadFolder(item);
+                                LoadFolder(item, renamePanelTitle: true);
                             }
                             else
                             {
@@ -359,23 +361,62 @@ namespace DesktopPlus
 
         private void Window_MouseEnter(object sender, MouseEventArgs e)
         {
-            if (_isCollapseAnimationRunning) return;
-            if (!expandOnHover) return;
-            if (!isContentVisible)
-            {
-                ForceCollapseState(false);
-                _hoverExpanded = true;
-            }
+            RequestHoverExpandAnimated();
         }
 
-        private void Window_MouseLeave(object sender, MouseEventArgs e)
+        private void Window_MouseMoveHoverProbe(object sender, MouseEventArgs e)
         {
+            if (!IsHoverBehaviorEnabled) return;
+            if (isContentVisible) return;
             if (_isCollapseAnimationRunning) return;
-            if (_hoverExpanded && expandOnHover)
+
+            RequestHoverExpandAnimated();
+        }
+
+        private bool IsCursorWithinPanelBounds(double tolerance = 0.0)
+        {
+            Point cursor = GetMouseScreenPositionDip();
+            double width = ActualWidth > 0 ? ActualWidth : Width;
+            double height = ActualHeight > 0 ? ActualHeight : Height;
+            double left = Left - tolerance;
+            double top = Top - tolerance;
+            double right = Left + width + tolerance;
+            double bottom = Top + height + tolerance;
+
+            return cursor.X >= left &&
+                   cursor.X <= right &&
+                   cursor.Y >= top &&
+                   cursor.Y <= bottom;
+        }
+
+        private async void Window_MouseLeave(object sender, MouseEventArgs e)
+        {
+            if (!IsHoverBehaviorEnabled || !_hoverExpanded) return;
+
+            var leaveCts = new CancellationTokenSource();
+            var previous = Interlocked.Exchange(ref _hoverLeaveCts, leaveCts);
+            previous?.Cancel();
+            previous?.Dispose();
+
+            try
             {
-                ForceCollapseState(true);
-                _hoverExpanded = false;
+                await Task.Delay(90, leaveCts.Token);
             }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            finally
+            {
+                if (ReferenceEquals(_hoverLeaveCts, leaveCts))
+                {
+                    _hoverLeaveCts = null;
+                }
+                leaveCts.Dispose();
+            }
+
+            if (!IsHoverBehaviorEnabled || !_hoverExpanded) return;
+            RequestHoverCollapseAnimated();
         }
     }
 }

@@ -114,6 +114,73 @@ namespace DesktopPlus
             };
         }
 
+        public static string GetCurrentStandardPresetName()
+        {
+            var mainWindow = Application.Current?.MainWindow as MainWindow;
+            string candidate = mainWindow?._layoutDefaultPresetName ?? DefaultPresetName;
+
+            if (mainWindow != null && !string.IsNullOrWhiteSpace(mainWindow._activeLayoutName))
+            {
+                var activeLayout = Layouts.FirstOrDefault(l =>
+                    string.Equals(l.Name, mainWindow._activeLayoutName, StringComparison.OrdinalIgnoreCase));
+                if (activeLayout != null && !string.IsNullOrWhiteSpace(activeLayout.DefaultPanelPresetName))
+                {
+                    candidate = activeLayout.DefaultPanelPresetName;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(candidate) ||
+                !Presets.Any(p => string.Equals(p.Name, candidate, StringComparison.OrdinalIgnoreCase)))
+            {
+                candidate = Presets.FirstOrDefault(p => string.Equals(p.Name, DefaultPresetName, StringComparison.OrdinalIgnoreCase))?.Name
+                    ?? Presets.FirstOrDefault()?.Name
+                    ?? DefaultPresetName;
+            }
+
+            return candidate;
+        }
+
+        private void SyncActiveLayoutFromCurrentState()
+        {
+            if (string.IsNullOrWhiteSpace(_activeLayoutName))
+            {
+                return;
+            }
+
+            var activeLayout = Layouts.FirstOrDefault(l =>
+                string.Equals(l.Name, _activeLayoutName, StringComparison.OrdinalIgnoreCase));
+            if (activeLayout == null)
+            {
+                _activeLayoutName = "";
+                return;
+            }
+
+            string layoutDefaultPresetName = ResolveLayoutDefaultPresetName(activeLayout);
+            activeLayout.DefaultPanelPresetName = layoutDefaultPresetName;
+            string selectedThemePreset = GetSelectedPresetName();
+            if (!string.IsNullOrWhiteSpace(selectedThemePreset))
+            {
+                activeLayout.ThemePresetName = selectedThemePreset;
+            }
+            activeLayout.Appearance = CloneAppearance(Appearance);
+
+            var normalizedPanels = savedWindows
+                .Select(CloneWindowData)
+                .Where(HasPersistableLayoutContent)
+                .ToList();
+
+            foreach (var panel in normalizedPanels)
+            {
+                NormalizeWindowData(panel);
+                panel.PresetName = EncodeLayoutPanelPreset(panel.PresetName, layoutDefaultPresetName);
+            }
+
+            activeLayout.Panels = CreateWindowDataMap(normalizedPanels, rewriteDuplicates: true)
+                .Values
+                .Select(CloneWindowData)
+                .ToList();
+        }
+
         private List<WindowData> CaptureOpenPanelsForLayout(string layoutDefaultPresetName)
         {
             var panels = Application.Current.Windows.OfType<DesktopPanel>()
@@ -141,14 +208,55 @@ namespace DesktopPlus
             if (combo.Tag is not LayoutOverviewItem item) return;
             if (!combo.IsKeyboardFocusWithin && !combo.IsDropDownOpen) return;
             if (combo.SelectedItem is not AppearancePreset preset) return;
+            if (item.Layout == null) return;
 
-            item.DefaultPresetName = preset.Name;
-            if (item.Layout != null)
+            string previousDefault = ResolveLayoutDefaultPresetName(item.Layout);
+            string nextDefault = preset.Name;
+            item.Layout.DefaultPanelPresetName = nextDefault;
+            item.DefaultPresetName = nextDefault;
+            _layoutDefaultPresetName = nextDefault;
+
+            var standardPanelKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var layoutPanel in item.Layout.Panels ?? new List<WindowData>())
             {
-                item.Layout.DefaultPanelPresetName = preset.Name;
+                NormalizeWindowData(layoutPanel);
+                bool usesLayoutStandard = string.IsNullOrWhiteSpace(layoutPanel.PresetName) ||
+                                          string.Equals(layoutPanel.PresetName, previousDefault, StringComparison.OrdinalIgnoreCase);
+                if (!usesLayoutStandard) continue;
+
+                standardPanelKeys.Add(GetPanelKey(layoutPanel));
+                layoutPanel.PresetName = "";
             }
-            _layoutDefaultPresetName = preset.Name;
+
+            if (!string.Equals(previousDefault, nextDefault, StringComparison.OrdinalIgnoreCase))
+            {
+                var appearance = GetPresetSettings(nextDefault);
+                foreach (var panel in Application.Current.Windows.OfType<DesktopPanel>())
+                {
+                    bool matchesStandardKey = standardPanelKeys.Contains(GetPanelKey(panel));
+                    bool matchesStandardPreset = string.Equals(panel.assignedPresetName, previousDefault, StringComparison.OrdinalIgnoreCase) ||
+                                                string.IsNullOrWhiteSpace(panel.assignedPresetName);
+                    if (!matchesStandardKey && !matchesStandardPreset) continue;
+
+                    panel.assignedPresetName = nextDefault;
+                    panel.ApplyAppearance(appearance);
+                }
+
+                foreach (var saved in savedWindows)
+                {
+                    NormalizeWindowData(saved);
+                    bool matchesStandardKey = standardPanelKeys.Contains(GetPanelKey(saved));
+                    bool matchesStandardPreset = string.Equals(saved.PresetName, previousDefault, StringComparison.OrdinalIgnoreCase) ||
+                                                string.IsNullOrWhiteSpace(saved.PresetName);
+                    if (!matchesStandardKey && !matchesStandardPreset) continue;
+
+                    saved.PresetName = nextDefault;
+                }
+            }
+
             SaveSettings();
+            RefreshLayoutList();
+            NotifyPanelsChanged();
         }
 
         private void CreateLayoutFromCurrent_Click(object sender, RoutedEventArgs e)
@@ -252,6 +360,11 @@ namespace DesktopPlus
         {
             if (sender is FrameworkElement fe && fe.Tag is LayoutDefinition layout)
             {
+                if (!string.IsNullOrWhiteSpace(_activeLayoutName) &&
+                    string.Equals(_activeLayoutName, layout.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    _activeLayoutName = "";
+                }
                 Layouts.Remove(layout);
                 SaveSettings();
                 RefreshLayoutList();
@@ -265,6 +378,7 @@ namespace DesktopPlus
             string layoutDefaultPresetName = ResolveLayoutDefaultPresetName(layout);
             layout.DefaultPanelPresetName = layoutDefaultPresetName;
             _layoutDefaultPresetName = layoutDefaultPresetName;
+            _activeLayoutName = layout.Name;
 
             var layoutPanels = (layout.Panels ?? new List<WindowData>())
                 .Select(CloneWindowData)

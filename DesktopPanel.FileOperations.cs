@@ -95,7 +95,47 @@ namespace DesktopPlus
             return true;
         }
 
-        public void LoadFolder(string folderPath, bool saveSettings = true)
+        private static string GetFolderDisplayName(string folderPath)
+        {
+            if (string.IsNullOrWhiteSpace(folderPath))
+            {
+                return string.Empty;
+            }
+
+            string trimmedPath = folderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string folderName = Path.GetFileName(trimmedPath);
+            if (!string.IsNullOrWhiteSpace(folderName))
+            {
+                return folderName;
+            }
+
+            try
+            {
+                string fallback = new DirectoryInfo(folderPath).Name;
+                return string.IsNullOrWhiteSpace(fallback) ? folderPath : fallback;
+            }
+            catch
+            {
+                return folderPath;
+            }
+        }
+
+        private void SetPanelTitleFromFolderPath(string folderPath)
+        {
+            string folderName = GetFolderDisplayName(folderPath);
+            if (string.IsNullOrWhiteSpace(folderName))
+            {
+                return;
+            }
+
+            Title = folderName;
+            if (PanelTitle != null)
+            {
+                PanelTitle.Text = folderName;
+            }
+        }
+
+        public void LoadFolder(string folderPath, bool saveSettings = true, bool renamePanelTitle = false)
         {
             if (!Directory.Exists(folderPath)) return;
 
@@ -104,7 +144,11 @@ namespace DesktopPlus
             PinnedItems.Clear();
 
             string? parentFolderPath = Path.GetDirectoryName(folderPath);
-            this.Title = $"{Path.GetFileName(folderPath)}";
+            this.Title = $"{GetFolderDisplayName(folderPath)}";
+            if (renamePanelTitle)
+            {
+                SetPanelTitleFromFolderPath(folderPath);
+            }
 
             FileList.Items.Clear();
 

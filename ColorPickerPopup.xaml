@@ -1,0 +1,280 @@
+<UserControl x:Class="DesktopPlus.ColorPickerPopup"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Width="320" Height="370"
+             FontFamily="Segoe UI">
+    <Border Background="#1A2230"
+            BorderBrush="#42536D"
+            BorderThickness="1"
+            CornerRadius="12"
+            Padding="14">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="20" ShadowDepth="2" Direction="270" Opacity="0.4"/>
+        </Border.Effect>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="12"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="12"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="10"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Saturation/Value canvas + Hue slider -->
+            <Grid Grid.Row="0" Height="180">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="10"/>
+                    <ColumnDefinition Width="22"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- SV Canvas -->
+                <Border Grid.Column="0" CornerRadius="8" ClipToBounds="True">
+                    <Canvas x:Name="SvCanvas"
+                            Background="Red"
+                            MouseLeftButtonDown="SvCanvas_MouseDown"
+                            MouseMove="SvCanvas_MouseMove"
+                            MouseLeftButtonUp="SvCanvas_MouseUp">
+                        <Canvas.OpacityMask>
+                            <DrawingBrush>
+                                <DrawingBrush.Drawing>
+                                    <DrawingGroup>
+                                        <GeometryDrawing Brush="White">
+                                            <GeometryDrawing.Geometry>
+                                                <RectangleGeometry Rect="0,0,1,1"/>
+                                            </GeometryDrawing.Geometry>
+                                        </GeometryDrawing>
+                                    </DrawingGroup>
+                                </DrawingBrush.Drawing>
+                            </DrawingBrush>
+                        </Canvas.OpacityMask>
+                        <!-- White to Hue horizontal gradient -->
+                        <Rectangle x:Name="SvWhiteOverlay" Canvas.Left="0" Canvas.Top="0">
+                            <Rectangle.Fill>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                    <GradientStop Color="White" Offset="0"/>
+                                    <GradientStop Color="Transparent" Offset="1"/>
+                                </LinearGradientBrush>
+                            </Rectangle.Fill>
+                        </Rectangle>
+                        <!-- Black bottom gradient -->
+                        <Rectangle x:Name="SvBlackOverlay" Canvas.Left="0" Canvas.Top="0">
+                            <Rectangle.Fill>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Color="Transparent" Offset="0"/>
+                                    <GradientStop Color="Black" Offset="1"/>
+                                </LinearGradientBrush>
+                            </Rectangle.Fill>
+                        </Rectangle>
+                        <!-- Cursor -->
+                        <Ellipse x:Name="SvCursor"
+                                 Width="14" Height="14"
+                                 Stroke="White" StrokeThickness="2"
+                                 Fill="Transparent"
+                                 IsHitTestVisible="False">
+                            <Ellipse.Effect>
+                                <DropShadowEffect BlurRadius="4" ShadowDepth="0" Opacity="0.6"/>
+                            </Ellipse.Effect>
+                        </Ellipse>
+                    </Canvas>
+                </Border>
+
+                <!-- Hue slider -->
+                <Border Grid.Column="2" CornerRadius="6" ClipToBounds="True">
+                    <Canvas x:Name="HueCanvas"
+                            MouseLeftButtonDown="HueCanvas_MouseDown"
+                            MouseMove="HueCanvas_MouseMove"
+                            MouseLeftButtonUp="HueCanvas_MouseUp">
+                        <Canvas.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                <GradientStop Color="#FF0000" Offset="0"/>
+                                <GradientStop Color="#FFFF00" Offset="0.167"/>
+                                <GradientStop Color="#00FF00" Offset="0.333"/>
+                                <GradientStop Color="#00FFFF" Offset="0.5"/>
+                                <GradientStop Color="#0000FF" Offset="0.667"/>
+                                <GradientStop Color="#FF00FF" Offset="0.833"/>
+                                <GradientStop Color="#FF0000" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Canvas.Background>
+                        <!-- Hue indicator -->
+                        <Border x:Name="HueCursor"
+                                Height="4"
+                                Background="Transparent"
+                                BorderBrush="White"
+                                BorderThickness="2"
+                                CornerRadius="2"
+                                IsHitTestVisible="False"/>
+                    </Canvas>
+                </Border>
+            </Grid>
+
+            <!-- Preview + Hex input -->
+            <Grid Grid.Row="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="10"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Color preview -->
+                <Grid Grid.Column="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Border x:Name="PreviewNew"
+                            Grid.Column="0"
+                            Width="32" Height="32"
+                            CornerRadius="6,0,0,6"
+                            Background="Red"/>
+                    <Border x:Name="PreviewOriginal"
+                            Grid.Column="1"
+                            Width="32" Height="32"
+                            CornerRadius="0,6,6,0"
+                            Background="Red"
+                            Opacity="0.6"/>
+                </Grid>
+
+                <!-- Hex input -->
+                <Grid Grid.Column="2" VerticalAlignment="Center">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="4"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Hex" Foreground="#A7B0C0" FontSize="10"/>
+                    <TextBox x:Name="HexInput"
+                             Grid.Row="2"
+                             Background="#1F242E"
+                             BorderBrush="#2D3442"
+                             BorderThickness="1"
+                             Foreground="#F2F5FA"
+                             CaretBrush="#F2F5FA"
+                             FontSize="13"
+                             FontFamily="Consolas"
+                             Padding="8,5"
+                             MaxLength="7"
+                             TextChanged="HexInput_TextChanged">
+                        <TextBox.Template>
+                            <ControlTemplate TargetType="TextBox">
+                                <Border Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        CornerRadius="8"
+                                        Padding="{TemplateBinding Padding}">
+                                    <ScrollViewer x:Name="PART_ContentHost" Margin="0"/>
+                                </Border>
+                            </ControlTemplate>
+                        </TextBox.Template>
+                    </TextBox>
+                </Grid>
+            </Grid>
+
+            <!-- RGB inputs -->
+            <Grid Grid.Row="4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="R" Foreground="#A7B0C0" FontSize="10" Margin="0,0,0,4"/>
+                    <TextBox x:Name="RInput"
+                             Background="#1F242E"
+                             BorderBrush="#2D3442"
+                             BorderThickness="1"
+                             Foreground="#F2F5FA"
+                             CaretBrush="#F2F5FA"
+                             FontSize="13"
+                             Padding="8,5"
+                             MaxLength="3"
+                             TextChanged="RgbInput_TextChanged">
+                        <TextBox.Template>
+                            <ControlTemplate TargetType="TextBox">
+                                <Border Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        CornerRadius="8"
+                                        Padding="{TemplateBinding Padding}">
+                                    <ScrollViewer x:Name="PART_ContentHost" Margin="0"/>
+                                </Border>
+                            </ControlTemplate>
+                        </TextBox.Template>
+                    </TextBox>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2">
+                    <TextBlock Text="G" Foreground="#A7B0C0" FontSize="10" Margin="0,0,0,4"/>
+                    <TextBox x:Name="GInput"
+                             Background="#1F242E"
+                             BorderBrush="#2D3442"
+                             BorderThickness="1"
+                             Foreground="#F2F5FA"
+                             CaretBrush="#F2F5FA"
+                             FontSize="13"
+                             Padding="8,5"
+                             MaxLength="3"
+                             TextChanged="RgbInput_TextChanged">
+                        <TextBox.Template>
+                            <ControlTemplate TargetType="TextBox">
+                                <Border Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        CornerRadius="8"
+                                        Padding="{TemplateBinding Padding}">
+                                    <ScrollViewer x:Name="PART_ContentHost" Margin="0"/>
+                                </Border>
+                            </ControlTemplate>
+                        </TextBox.Template>
+                    </TextBox>
+                </StackPanel>
+
+                <StackPanel Grid.Column="4">
+                    <TextBlock Text="B" Foreground="#A7B0C0" FontSize="10" Margin="0,0,0,4"/>
+                    <TextBox x:Name="BInput"
+                             Background="#1F242E"
+                             BorderBrush="#2D3442"
+                             BorderThickness="1"
+                             Foreground="#F2F5FA"
+                             CaretBrush="#F2F5FA"
+                             FontSize="13"
+                             Padding="8,5"
+                             MaxLength="3"
+                             TextChanged="RgbInput_TextChanged">
+                        <TextBox.Template>
+                            <ControlTemplate TargetType="TextBox">
+                                <Border Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        CornerRadius="8"
+                                        Padding="{TemplateBinding Padding}">
+                                    <ScrollViewer x:Name="PART_ContentHost" Margin="0"/>
+                                </Border>
+                            </ControlTemplate>
+                        </TextBox.Template>
+                    </TextBox>
+                </StackPanel>
+            </Grid>
+
+            <!-- Preset colors -->
+            <WrapPanel Grid.Row="6" HorizontalAlignment="Left">
+                <Border Background="#FF0000" Width="22" Height="22" CornerRadius="4" Margin="0,0,5,0" Cursor="Hand" MouseLeftButtonDown="Preset_Click"/>
+                <Border Background="#FF6B00" Width="22" Height="22" CornerRadius="4" Margin="0,0,5,0" Cursor="Hand" MouseLeftButtonDown="Preset_Click"/>
+                <Border Background="#FFD600" Width="22" Height="22" CornerRadius="4" Margin="0,0,5,0" Cursor="Hand" MouseLeftButtonDown="Preset_Click"/>
+                <Border Background="#4CAF50" Width="22" Height="22" CornerRadius="4" Margin="0,0,5,0" Cursor="Hand" MouseLeftButtonDown="Preset_Click"/>
+                <Border Background="#00BCD4" Width="22" Height="22" CornerRadius="4" Margin="0,0,5,0" Cursor="Hand" MouseLeftButtonDown="Preset_Click"/>
+                <Border Background="#6E8BFF" Width="22" Height="22" CornerRadius="4" Margin="0,0,5,0" Cursor="Hand" MouseLeftButtonDown="Preset_Click"/>
+                <Border Background="#9C27B0" Width="22" Height="22" CornerRadius="4" Margin="0,0,5,0" Cursor="Hand" MouseLeftButtonDown="Preset_Click"/>
+                <Border Background="#E91E63" Width="22" Height="22" CornerRadius="4" Margin="0,0,5,0" Cursor="Hand" MouseLeftButtonDown="Preset_Click"/>
+                <Border Background="#F2F5FA" Width="22" Height="22" CornerRadius="4" Margin="0,0,5,0" Cursor="Hand" MouseLeftButtonDown="Preset_Click" BorderBrush="#42536D" BorderThickness="1"/>
+                <Border Background="#A7B0C0" Width="22" Height="22" CornerRadius="4" Margin="0,0,5,0" Cursor="Hand" MouseLeftButtonDown="Preset_Click"/>
+                <Border Background="#242833" Width="22" Height="22" CornerRadius="4" Margin="0,0,5,0" Cursor="Hand" MouseLeftButtonDown="Preset_Click" BorderBrush="#42536D" BorderThickness="1"/>
+            </WrapPanel>
+        </Grid>
+    </Border>
+</UserControl>

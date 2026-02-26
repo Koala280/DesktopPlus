@@ -27,16 +27,29 @@ namespace DesktopPlus
             PanelChrome.Background = System.Windows.Media.Brushes.Transparent;
             PanelChrome.BorderBrush = panelBorderBrush;
             PanelChrome.BorderThickness = new Thickness(1);
+            if (HeaderShadowHost != null)
+            {
+                HeaderShadowHost.CornerRadius = new CornerRadius(outerRadius, outerRadius, 0, 0);
+            }
+            if (BodyShadowHost != null)
+            {
+                BodyShadowHost.CornerRadius = new CornerRadius(0, 0, outerRadius, outerRadius);
+            }
 
             SetHeaderCornerBaseRadius(innerRadius);
             if (ContentFrame != null)
             {
                 ContentFrame.CornerRadius = new CornerRadius(0, 0, innerRadius, innerRadius);
             }
-            if (PanelShadow != null)
+            if (HeaderShadow != null)
             {
-                PanelShadow.BlurRadius = Math.Max(0, appearance.ShadowBlur);
-                PanelShadow.Opacity = Math.Max(0, Math.Min(1, appearance.ShadowOpacity));
+                HeaderShadow.BlurRadius = MainWindow.ResolveHeaderShadowBlur(appearance);
+                HeaderShadow.Opacity = MainWindow.ResolveHeaderShadowOpacity(appearance);
+            }
+            if (BodyShadow != null)
+            {
+                BodyShadow.BlurRadius = MainWindow.ResolveBodyShadowBlur(appearance);
+                BodyShadow.Opacity = MainWindow.ResolveBodyShadowOpacity(appearance);
             }
 
             HeaderBar.Background = MainWindow.BuildPanelHeaderBrush(appearance);

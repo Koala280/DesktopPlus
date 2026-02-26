@@ -6,7 +6,7 @@
         Width="820"
         FontFamily="Segoe UI"
         WindowStyle="None"
-        ResizeMode="CanResizeWithGrip"
+        ResizeMode="NoResize"
         Background="Transparent"
         AllowsTransparency="True"
         AllowDrop="True"
@@ -21,21 +21,47 @@
         </ResourceDictionary>
     </Window.Resources>
 
-    <Border x:Name="PanelChrome"
-            Background="Transparent"
-            BorderBrush="{StaticResource PanelBorder}"
-            BorderThickness="1"
-            CornerRadius="16"
-            Padding="1"
-            SnapsToDevicePixels="True">
-        <Border.Effect>
-            <DropShadowEffect x:Name="PanelShadow"
-                              BlurRadius="18"
-                              ShadowDepth="0"
-                              Opacity="0.35"/>
-        </Border.Effect>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="46"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
 
-        <Grid ClipToBounds="True">
+        <Border x:Name="HeaderShadowHost"
+                Grid.Row="0"
+                Background="#01000000"
+                CornerRadius="16,16,0,0"
+                IsHitTestVisible="False">
+            <Border.Effect>
+                <DropShadowEffect x:Name="HeaderShadow"
+                                  BlurRadius="16"
+                                  ShadowDepth="0"
+                                  Opacity="0.3"/>
+            </Border.Effect>
+        </Border>
+
+        <Border x:Name="BodyShadowHost"
+                Grid.Row="1"
+                Background="#01000000"
+                CornerRadius="0,0,16,16"
+                IsHitTestVisible="False">
+            <Border.Effect>
+                <DropShadowEffect x:Name="BodyShadow"
+                                  BlurRadius="18"
+                                  ShadowDepth="0"
+                                  Opacity="0.35"/>
+            </Border.Effect>
+        </Border>
+
+        <Border x:Name="PanelChrome"
+                Grid.RowSpan="2"
+                Background="Transparent"
+                BorderBrush="{StaticResource PanelBorder}"
+                BorderThickness="1"
+                CornerRadius="16"
+                Padding="1"
+                SnapsToDevicePixels="True">
+            <Grid ClipToBounds="True">
             <Grid.RowDefinitions>
                 <RowDefinition x:Name="HeaderRow" Height="46"/>
                 <RowDefinition Height="*"/>
@@ -95,14 +121,28 @@
 
                     <Button x:Name="SettingsButton"
                             Grid.Column="1"
-                            Style="{StaticResource HeaderIconButton}"
+                            Style="{StaticResource PanelSettingsGhostButton}"
                             ToolTip="{DynamicResource Loc.PanelSettingsTooltip}"
                             Click="BurgerMenu_Click">
-                        <TextBlock Text="&#xE713;"
-                                   FontFamily="Segoe MDL2 Assets"
-                                   FontSize="14"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"/>
+                        <Canvas Width="14" Height="14">
+                            <Path Data="M2,3 L12,3 M2,7 L12,7 M2,11 L12,11"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                  StrokeThickness="1.2"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"/>
+                            <Ellipse Width="3" Height="3"
+                                     Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                     Canvas.Left="3"
+                                     Canvas.Top="1.5"/>
+                            <Ellipse Width="3" Height="3"
+                                     Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                     Canvas.Left="8"
+                                     Canvas.Top="5.5"/>
+                            <Ellipse Width="3" Height="3"
+                                     Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                     Canvas.Left="5"
+                                     Canvas.Top="9.5"/>
+                        </Canvas>
                     </Button>
 
                     <TextBlock x:Name="PanelTitle"
@@ -304,6 +344,30 @@
                     </ScrollViewer>
                 </Grid>
             </Border>
-        </Grid>
-    </Border>
+
+            <Border x:Name="ManualResizeGrip"
+                    Grid.RowSpan="2"
+                    Width="18"
+                    Height="18"
+                    Margin="0,0,3,3"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom"
+                    Background="Transparent"
+                    Cursor="SizeNWSE"
+                    PreviewMouseLeftButtonDown="ManualResizeGrip_PreviewMouseLeftButtonDown">
+                <Path Data="M11,1 L1,11 M11,5 L5,11 M11,9 L9,11"
+                      Stretch="Uniform"
+                      Width="11"
+                      Height="11"
+                      HorizontalAlignment="Right"
+                      VerticalAlignment="Bottom"
+                      Stroke="{StaticResource PanelBorder}"
+                      StrokeThickness="1.2"
+                      StrokeStartLineCap="Round"
+                      StrokeEndLineCap="Round"
+                      Opacity="0.9"/>
+            </Border>
+            </Grid>
+        </Border>
+    </Grid>
 </Window>

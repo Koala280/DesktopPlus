@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using WinForms = System.Windows.Forms;
@@ -27,25 +28,60 @@ namespace DesktopPlus
         public bool showSettingsButton = true;
         public string defaultFolderPath = "";
         public string movementMode = "titlebar";
+        private bool _hoverTemporarilySuspendedByDoubleClick = false;
         private bool _hoverExpanded = false;
+        private bool _hasHoverRestoreState = false;
+        private double _hoverRestoreBaseTop;
+        private double _hoverRestoreCollapsedTop;
+        private double _hoverRestoreExpandedHeight;
         private bool _isCollapseAnimationRunning = false;
         private bool _isBottomAnchored = false;
+        private bool _isExpandedShiftedByBounds = false;
+        private bool _hasForcedCollapseReturnTop = false;
+        private double _forcedCollapseReturnTop;
         private bool _isBoundsCorrectionInProgress = false;
         private bool _isDragMoveActive = false;
+        private bool _isManualResizeActive = false;
+        private UIElement? _dragHandle;
+        private Point _dragStartMouseScreen;
+        private Point _dragStartWindowPosition;
+        private UIElement? _resizeHandle;
+        private Point _resizeStartMouseScreen;
+        private double _resizeStartWidth;
+        private double _resizeStartHeight;
+        private HwndSource? _windowSource;
+        private CancellationTokenSource? _hoverLeaveCts;
+        private bool? _queuedHoverTargetVisible;
         private CancellationTokenSource? _searchCts;
         private AppearanceSettings? _currentAppearance;
         private EventHandler? _headerCornerAnimationHandler;
         private double _headerTopCornerRadius = 14;
         private double _headerBottomCornerRadius = 0;
         private const double BottomAnchorTolerance = 3.0;
+        private const double ResizeGripHitSize = 18.0;
+        private const int WmNcHitTest = 0x0084;
+        private const int WmNcLButtonDblClk = 0x00A3;
+        private const int WmSysCommand = 0x0112;
+        private const int ScSize = 0xF000;
+        private const int ScMove = 0xF010;
+        private const int ScMaximize = 0xF030;
+        private const int HtClient = 0x0001;
+        private const int HtBottomRight = 0x0011;
         private static readonly Thickness ExpandedChromeBorderThickness = new Thickness(1);
-        private static readonly Thickness CollapsedChromeBorderThickness = new Thickness(0);
+        private static readonly Thickness CollapsedChromeBorderThickness = new Thickness(1);
         private static readonly Thickness ExpandedChromePadding = new Thickness(1);
-        private static readonly Thickness CollapsedChromePadding = new Thickness(0);
+        private static readonly Thickness CollapsedChromePadding = new Thickness(1);
         public PanelKind PanelType { get; set; } = PanelKind.None;
         public string PanelId { get; set; } = $"panel:{Guid.NewGuid():N}";
         public List<string> PinnedItems { get; } = new List<string>();
         public double zoomFactor = 1.0;
+        public bool IsBottomAnchored
+        {
+            get => _isBottomAnchored;
+            set => _isBottomAnchored = value;
+        }
+
+        private bool IsHoverBehaviorEnabled => expandOnHover && !_hoverTemporarilySuspendedByDoubleClick;
 
         public DesktopPanel()
         {
@@ -58,7 +94,17 @@ namespace DesktopPlus
             MainWindow.AppearanceChanged += OnAppearanceChanged;
             this.Closed += (s, e) =>
             {
+                CancelPendingHoverLeave();
+                _searchCts?.Cancel();
+                _searchCts?.Dispose();
+                _searchCts = null;
+
                 MainWindow.AppearanceChanged -= OnAppearanceChanged;
+                if (_windowSource != null)
+                {
+                    _windowSource.RemoveHook(DesktopPanelWindowProc);
+                    _windowSource = null;
+                }
                 if (!MainWindow.IsExiting)
                 {
                     MainWindow.MarkPanelHidden(this);
@@ -68,8 +114,11 @@ namespace DesktopPlus
             };
 
             this.Loaded += DesktopPanel_Loaded;
+            this.SourceInitialized += DesktopPanel_SourceInitialized;
             this.LocationChanged += DesktopPanel_LocationChanged;
             this.SizeChanged += DesktopPanel_SizeChanged;
+            this.Deactivated += DesktopPanel_Deactivated;
+            this.MouseMove += Window_MouseMoveHoverProbe;
             this.MouseEnter += Window_MouseEnter;
             this.MouseLeave += Window_MouseLeave;
             ApplySettingsButtonVisibility();
@@ -152,16 +201,118 @@ namespace DesktopPlus
             return true;
         }
 
+        private bool EnsurePanelNotAboveWorkArea()
+        {
+            if (_isBoundsCorrectionInProgress) return false;
+
+            double minTop = GetWorkAreaForPanel().Top;
+            if (Top >= minTop - 0.5)
+            {
+                return false;
+            }
+
+            _isBoundsCorrectionInProgress = true;
+            try
+            {
+                Top = minTop;
+            }
+            finally
+            {
+                _isBoundsCorrectionInProgress = false;
+            }
+
+            return true;
+        }
+
+        private void SetContentScrollbarsFrozen(bool frozen)
+        {
+            if (ContentContainer == null) return;
+
+            ContentContainer.VerticalScrollBarVisibility = frozen
+                ? System.Windows.Controls.ScrollBarVisibility.Hidden
+                : System.Windows.Controls.ScrollBarVisibility.Auto;
+        }
+
         private void SetContentLayerVisibility(bool visible)
         {
             var visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             if (ContentFrame != null)
             {
+                ContentFrame.BeginAnimation(OpacityProperty, null);
                 ContentFrame.Visibility = visibility;
+                ContentFrame.Opacity = visible ? 1 : 0;
             }
             if (ContentContainer != null)
             {
                 ContentContainer.Visibility = visibility;
+            }
+        }
+
+        private void AnimateContentIn()
+        {
+            if (ContentFrame == null) return;
+            ContentFrame.Visibility = Visibility.Visible;
+            ContentFrame.RenderTransformOrigin = new Point(0.5, 0);
+
+            ContentFrame.Opacity = 0;
+            ContentFrame.RenderTransform = new ScaleTransform(1, 0.92);
+
+            var fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(280))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.Stop
+            };
+            fadeIn.Completed += (s, e) =>
+            {
+                ContentFrame.BeginAnimation(OpacityProperty, null);
+                ContentFrame.Opacity = 1;
+            };
+            var scaleY = new DoubleAnimation(0.92, 1, TimeSpan.FromMilliseconds(320))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            };
+
+            scaleY.Completed += (s, e) =>
+            {
+                if (ContentFrame.RenderTransform is ScaleTransform completedSt)
+                {
+                    completedSt.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+                    completedSt.ScaleY = 1;
+                }
+            };
+            ContentFrame.BeginAnimation(OpacityProperty, fadeIn);
+            ((ScaleTransform)ContentFrame.RenderTransform).BeginAnimation(ScaleTransform.ScaleYProperty, scaleY);
+        }
+
+        private void AnimateShadow(bool expanding)
+        {
+            var appearance = _currentAppearance ?? MainWindow.Appearance;
+            double headerBaseOpacity = MainWindow.ResolveHeaderShadowOpacity(appearance);
+            double headerBaseBlur = MainWindow.ResolveHeaderShadowBlur(appearance);
+            double bodyBaseOpacity = MainWindow.ResolveBodyShadowOpacity(appearance);
+            double bodyBaseBlur = MainWindow.ResolveBodyShadowBlur(appearance);
+
+            double headerTargetOpacity = expanding ? headerBaseOpacity : Math.Max(0, headerBaseOpacity * 0.45);
+            double headerTargetBlur = expanding ? headerBaseBlur : Math.Max(0, headerBaseBlur * 0.5);
+            double bodyTargetOpacity = expanding ? bodyBaseOpacity : Math.Max(0, bodyBaseOpacity * 0.35);
+            double bodyTargetBlur = expanding ? bodyBaseBlur : Math.Max(0, bodyBaseBlur * 0.45);
+
+            var dur = TimeSpan.FromMilliseconds(320);
+            var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
+
+            if (HeaderShadow != null)
+            {
+                var headerOpacityAnim = new DoubleAnimation(headerTargetOpacity, dur) { EasingFunction = ease };
+                var headerBlurAnim = new DoubleAnimation(headerTargetBlur, dur) { EasingFunction = ease };
+                HeaderShadow.BeginAnimation(System.Windows.Media.Effects.DropShadowEffect.OpacityProperty, headerOpacityAnim);
+                HeaderShadow.BeginAnimation(System.Windows.Media.Effects.DropShadowEffect.BlurRadiusProperty, headerBlurAnim);
+            }
+            if (BodyShadow != null)
+            {
+                var bodyOpacityAnim = new DoubleAnimation(bodyTargetOpacity, dur) { EasingFunction = ease };
+                var bodyBlurAnim = new DoubleAnimation(bodyTargetBlur, dur) { EasingFunction = ease };
+                BodyShadow.BeginAnimation(System.Windows.Media.Effects.DropShadowEffect.OpacityProperty, bodyOpacityAnim);
+                BodyShadow.BeginAnimation(System.Windows.Media.Effects.DropShadowEffect.BlurRadiusProperty, bodyBlurAnim);
             }
         }
 
@@ -185,6 +336,12 @@ namespace DesktopPlus
             double clamped = Math.Max(0, Math.Min(_headerTopCornerRadius, bottomRadius));
             _headerBottomCornerRadius = clamped;
             HeaderBar.CornerRadius = new CornerRadius(_headerTopCornerRadius, _headerTopCornerRadius, clamped, clamped);
+            if (HeaderShadowHost != null)
+            {
+                double outerTop = _headerTopCornerRadius + 2;
+                double outerBottom = clamped + 2;
+                HeaderShadowHost.CornerRadius = new CornerRadius(outerTop, outerTop, outerBottom, outerBottom);
+            }
         }
 
         private void AnimateHeaderBottomCorners(double targetBottomRadius, TimeSpan duration, IEasingFunction? easing = null)
@@ -227,22 +384,30 @@ namespace DesktopPlus
 
         private void ApplyCollapsedVisualState(bool collapsed, bool animateCorners, TimeSpan? duration = null)
         {
-            ResizeMode = collapsed ? ResizeMode.NoResize : ResizeMode.CanResizeWithGrip;
+            ResizeMode = ResizeMode.NoResize;
             if (PanelChrome != null)
             {
                 PanelChrome.BorderThickness = collapsed ? CollapsedChromeBorderThickness : ExpandedChromeBorderThickness;
                 PanelChrome.Padding = collapsed ? CollapsedChromePadding : ExpandedChromePadding;
             }
+            if (ManualResizeGrip != null)
+            {
+                ManualResizeGrip.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+            }
+            if (BodyShadowHost != null)
+            {
+                BodyShadowHost.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+            }
             if (HeaderBar != null)
             {
-                HeaderBar.BorderThickness = collapsed ? new Thickness(0) : new Thickness(0, 0, 0, 1);
+                HeaderBar.BorderThickness = new Thickness(0, 0, 0, 1);
             }
 
             double targetBottomRadius = collapsed ? _headerTopCornerRadius : 0;
             if (animateCorners)
             {
-                var ease = new QuadraticEase { EasingMode = EasingMode.EaseInOut };
-                AnimateHeaderBottomCorners(targetBottomRadius, duration ?? TimeSpan.FromMilliseconds(200), ease);
+                var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
+                AnimateHeaderBottomCorners(targetBottomRadius, duration ?? TimeSpan.FromMilliseconds(320), ease);
             }
             else
             {
@@ -265,24 +430,32 @@ namespace DesktopPlus
 
         private bool ShouldAnchorToBottom(double collapsedHeight)
         {
-            if (_isBottomAnchored) return true;
-
-            double currentHeight = ActualHeight > 0 ? ActualHeight : Height;
-            double currentBottom = Top + currentHeight;
-            double workBottom = GetWorkAreaForPanel().Bottom;
-            if (currentBottom >= workBottom - BottomAnchorTolerance) return true;
-
-            return Top + Math.Max(collapsedHeight, expandedHeight) >= workBottom - BottomAnchorTolerance;
+            return false;
         }
 
         private bool ShouldUseBottomAnchorOnExpand(double collapsedHeight)
         {
-            if (_isBottomAnchored) return true;
+            return false;
+        }
 
-            double currentHeight = ActualHeight > 0 ? ActualHeight : Height;
-            if (IsBottomAligned(Top, currentHeight)) return true;
+        private double GetCollapseReferenceTop()
+        {
+            if (_hasForcedCollapseReturnTop)
+            {
+                return _forcedCollapseReturnTop;
+            }
 
-            return IsBottomAligned(baseTopPosition, collapsedHeight);
+            if (_hoverExpanded && _hasHoverRestoreState)
+            {
+                return _hoverRestoreCollapsedTop;
+            }
+
+            if (double.IsNaN(collapsedTopPosition) || double.IsInfinity(collapsedTopPosition))
+            {
+                return baseTopPosition;
+            }
+
+            return collapsedTopPosition;
         }
 
         private void SyncAnchoringFromCurrentBounds()
@@ -292,26 +465,220 @@ namespace DesktopPlus
 
             if (isContentVisible)
             {
-                if (IsBottomAligned(Top, currentHeight))
+                if (_hoverExpanded && _hasHoverRestoreState)
                 {
-                    _isBottomAnchored = true;
-                    collapsedTopPosition = GetBottomAnchoredCollapsedTop(collapsedHeight);
-                    baseTopPosition = collapsedTopPosition;
-                }
-                else
-                {
-                    _isBottomAnchored = false;
-                    baseTopPosition = Top;
-                    collapsedTopPosition = Top;
+                    double persistedExpandedHeight = Math.Max(collapsedHeight, currentHeight);
+                    expandedHeight = persistedExpandedHeight;
+                    _hoverRestoreExpandedHeight = persistedExpandedHeight;
+                    return;
                 }
 
+                if (_isExpandedShiftedByBounds)
+                {
+                    expandedHeight = Math.Max(collapsedHeight, currentHeight);
+                    return;
+                }
+
+                _isBottomAnchored = false;
+                baseTopPosition = Top;
+                collapsedTopPosition = Top;
                 expandedHeight = Math.Max(collapsedHeight, currentHeight);
             }
             else
             {
                 collapsedTopPosition = Top;
-                _isBottomAnchored = IsBottomAligned(Top, currentHeight);
+                _isBottomAnchored = false;
                 baseTopPosition = collapsedTopPosition;
+                _isExpandedShiftedByBounds = false;
+                _hasForcedCollapseReturnTop = false;
+            }
+        }
+
+        private void CaptureHoverRestoreState()
+        {
+            _hasHoverRestoreState = true;
+            _hoverRestoreBaseTop = baseTopPosition;
+            _hoverRestoreCollapsedTop = Top;
+            _hoverRestoreExpandedHeight = Math.Max(GetCollapsedHeight(), expandedHeight);
+        }
+
+        private void ApplyHoverRestoreStateForCollapse()
+        {
+            if (!_hasHoverRestoreState) return;
+
+            baseTopPosition = _hoverRestoreBaseTop;
+            collapsedTopPosition = _hoverRestoreCollapsedTop;
+            double collapsedHeight = GetCollapsedHeight();
+            double currentHeight = ActualHeight > 0 ? ActualHeight : Height;
+            double persistedExpandedHeight = Math.Max(collapsedHeight, Math.Max(_hoverRestoreExpandedHeight, currentHeight));
+            _hoverRestoreExpandedHeight = persistedExpandedHeight;
+            expandedHeight = persistedExpandedHeight;
+        }
+
+        private void RebaseHoverRestoreStateFromCurrentBounds()
+        {
+            double collapsedHeight = GetCollapsedHeight();
+            double currentHeight = ActualHeight > 0 ? ActualHeight : Height;
+            double persistedExpandedHeight = Math.Max(collapsedHeight, currentHeight);
+
+            _isBottomAnchored = false;
+            _isExpandedShiftedByBounds = false;
+            _hasForcedCollapseReturnTop = false;
+            baseTopPosition = Top;
+            collapsedTopPosition = Top;
+            expandedHeight = persistedExpandedHeight;
+            _hasHoverRestoreState = true;
+            _hoverRestoreBaseTop = baseTopPosition;
+            _hoverRestoreCollapsedTop = collapsedTopPosition;
+            _hoverRestoreExpandedHeight = persistedExpandedHeight;
+        }
+
+        private void ClearHoverRestoreState()
+        {
+            _hasHoverRestoreState = false;
+        }
+
+        public void SetExpandOnHover(bool enabled)
+        {
+            expandOnHover = enabled;
+            _hoverTemporarilySuspendedByDoubleClick = false;
+            _queuedHoverTargetVisible = null;
+
+            if (!enabled)
+            {
+                CancelPendingHoverLeave();
+                _hoverExpanded = false;
+                ClearHoverRestoreState();
+            }
+        }
+
+        private void HandleHeaderDoubleClickToggle()
+        {
+            if (!expandOnHover)
+            {
+                ToggleCollapseAnimated();
+                return;
+            }
+
+            if (_isCollapseAnimationRunning)
+            {
+                return;
+            }
+
+            CancelPendingHoverLeave();
+            _queuedHoverTargetVisible = null;
+            _hoverExpanded = false;
+            ClearHoverRestoreState();
+
+            if (_hoverTemporarilySuspendedByDoubleClick)
+            {
+                _hoverTemporarilySuspendedByDoubleClick = false;
+                if (isContentVisible)
+                {
+                    ToggleCollapseAnimated();
+                }
+                return;
+            }
+
+            _hoverTemporarilySuspendedByDoubleClick = true;
+            if (!isContentVisible)
+            {
+                ToggleCollapseAnimated();
+            }
+        }
+
+        private void CancelPendingHoverLeave()
+        {
+            var pending = _hoverLeaveCts;
+            _hoverLeaveCts = null;
+            if (pending == null)
+            {
+                return;
+            }
+
+            pending.Cancel();
+            pending.Dispose();
+        }
+
+        private void RequestHoverExpandAnimated()
+        {
+            CancelPendingHoverLeave();
+
+            if (!IsHoverBehaviorEnabled)
+            {
+                _queuedHoverTargetVisible = null;
+                return;
+            }
+
+            if (isContentVisible)
+            {
+                _queuedHoverTargetVisible = null;
+                return;
+            }
+
+            if (_isCollapseAnimationRunning)
+            {
+                _queuedHoverTargetVisible = true;
+                return;
+            }
+
+            _queuedHoverTargetVisible = null;
+            CaptureHoverRestoreState();
+            _hoverExpanded = true;
+            ToggleCollapseAnimated();
+        }
+
+        private void RequestHoverCollapseAnimated()
+        {
+            if (!IsHoverBehaviorEnabled || !_hoverExpanded)
+            {
+                _queuedHoverTargetVisible = null;
+                return;
+            }
+
+            if (IsMouseOver || IsCursorWithinPanelBounds())
+            {
+                _queuedHoverTargetVisible = null;
+                return;
+            }
+
+            if (_isCollapseAnimationRunning)
+            {
+                _queuedHoverTargetVisible = false;
+                return;
+            }
+
+            _queuedHoverTargetVisible = null;
+            ApplyHoverRestoreStateForCollapse();
+            ToggleCollapseAnimated();
+        }
+
+        private void ProcessQueuedHoverState()
+        {
+            if (_isCollapseAnimationRunning)
+            {
+                return;
+            }
+
+            if (!_queuedHoverTargetVisible.HasValue)
+            {
+                if (_hoverExpanded && IsHoverBehaviorEnabled && !IsMouseOver && !IsCursorWithinPanelBounds())
+                {
+                    RequestHoverCollapseAnimated();
+                }
+                return;
+            }
+
+            bool targetVisible = _queuedHoverTargetVisible.Value;
+            _queuedHoverTargetVisible = null;
+
+            if (targetVisible)
+            {
+                RequestHoverExpandAnimated();
+            }
+            else
+            {
+                RequestHoverCollapseAnimated();
             }
         }
 
@@ -322,13 +689,49 @@ namespace DesktopPlus
             ApplyCollapsedVisualState(!isContentVisible, animateCorners: false);
         }
 
+        private void DesktopPanel_SourceInitialized(object? sender, EventArgs e)
+        {
+            _windowSource = PresentationSource.FromVisual(this) as HwndSource;
+            _windowSource?.AddHook(DesktopPanelWindowProc);
+        }
+
+        private IntPtr DesktopPanelWindowProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (msg == WmNcLButtonDblClk)
+            {
+                handled = true;
+                return IntPtr.Zero;
+            }
+
+            if (msg == WmSysCommand)
+            {
+                int command = (int)(wParam.ToInt64() & 0xFFF0);
+                if (command == ScMove || command == ScMaximize || command == ScSize)
+                {
+                    handled = true;
+                    return IntPtr.Zero;
+                }
+            }
+
+            if (msg != WmNcHitTest)
+            {
+                return IntPtr.Zero;
+            }
+
+            handled = true;
+            return new IntPtr(HtClient);
+        }
+
         private void DesktopPanel_LocationChanged(object? sender, EventArgs e)
         {
             if (_isDragMoveActive) return;
 
             if (!_isCollapseAnimationRunning)
             {
-                EnsurePanelInsideVerticalWorkArea();
+                if (EnsurePanelInsideVerticalWorkArea())
+                {
+                    return;
+                }
                 SyncAnchoringFromCurrentBounds();
             }
             MainWindow.SaveSettings();
@@ -340,16 +743,143 @@ namespace DesktopPlus
 
             if (!_isCollapseAnimationRunning)
             {
-                EnsurePanelInsideVerticalWorkArea();
                 SyncAnchoringFromCurrentBounds();
             }
             MainWindow.SaveSettings();
         }
 
+        private void ManualResizeGrip_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton != MouseButton.Left || e.LeftButton != MouseButtonState.Pressed) return;
+            if (sender is UIElement resizeHandle)
+            {
+                BeginManualResize(resizeHandle);
+                e.Handled = true;
+            }
+        }
+
+        private void BeginManualResize(UIElement resizeHandle)
+        {
+            if (_isManualResizeActive || _isDragMoveActive) return;
+            if (!isContentVisible || _isCollapseAnimationRunning) return;
+
+            StopPanelAnimations();
+            _resizeHandle = resizeHandle;
+            _resizeStartMouseScreen = GetMouseScreenPositionDip();
+            _resizeStartWidth = ActualWidth > 0 ? ActualWidth : Width;
+            _resizeStartHeight = ActualHeight > 0 ? ActualHeight : Height;
+            _isManualResizeActive = true;
+
+            resizeHandle.MouseMove += ResizeHandle_MouseMove;
+            resizeHandle.MouseLeftButtonUp += ResizeHandle_MouseLeftButtonUp;
+            resizeHandle.LostMouseCapture += ResizeHandle_LostMouseCapture;
+            resizeHandle.CaptureMouse();
+        }
+
+        private void EndManualResize(bool commitSize)
+        {
+            var handle = _resizeHandle;
+            if (handle != null)
+            {
+                handle.MouseMove -= ResizeHandle_MouseMove;
+                handle.MouseLeftButtonUp -= ResizeHandle_MouseLeftButtonUp;
+                handle.LostMouseCapture -= ResizeHandle_LostMouseCapture;
+                if (handle.IsMouseCaptured)
+                {
+                    handle.ReleaseMouseCapture();
+                }
+                _resizeHandle = null;
+            }
+
+            bool wasResizing = _isManualResizeActive;
+            _isManualResizeActive = false;
+
+            if (commitSize && wasResizing)
+            {
+                double collapsedHeight = GetCollapsedHeight();
+                double currentHeight = ActualHeight > 0 ? ActualHeight : Height;
+                expandedHeight = Math.Max(collapsedHeight, currentHeight);
+                SyncAnchoringFromCurrentBounds();
+                MainWindow.SaveSettings();
+            }
+        }
+
+        private void ResizeHandle_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            if (!_isManualResizeActive) return;
+
+            if (e.LeftButton != MouseButtonState.Pressed)
+            {
+                EndManualResize(commitSize: true);
+                return;
+            }
+
+            Point current = GetMouseScreenPositionDip();
+            double deltaX = current.X - _resizeStartMouseScreen.X;
+            double deltaY = current.Y - _resizeStartMouseScreen.Y;
+            double minWidth = Math.Max(220, MinWidth > 0 ? MinWidth : 0);
+            double minHeight = Math.Max(GetCollapsedHeight(), MinHeight > 0 ? MinHeight : 0);
+            Rect workArea = GetWorkAreaForPanel();
+
+            double targetWidth = Math.Max(minWidth, _resizeStartWidth + deltaX);
+            double targetHeight = Math.Max(minHeight, _resizeStartHeight + deltaY);
+            double maxHeightToBottom = Math.Max(minHeight, workArea.Bottom - Top);
+
+            Width = targetWidth;
+            Height = Math.Min(targetHeight, maxHeightToBottom);
+            UpdateWrapPanelWidth();
+        }
+
+        private void ResizeHandle_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            EndManualResize(commitSize: true);
+            e.Handled = true;
+        }
+
+        private void ResizeHandle_LostMouseCapture(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            EndManualResize(commitSize: true);
+        }
+
+        private void DesktopPanel_Deactivated(object? sender, EventArgs e)
+        {
+            if (IsMouseOver || IsCursorWithinPanelBounds()) return;
+            if (_isRubberBandSelecting)
+            {
+                EndRubberBandSelection();
+            }
+            if (FileList?.SelectedItems.Count > 0)
+            {
+                FileList.SelectedItems.Clear();
+            }
+        }
+
         private void StopPanelAnimations()
         {
+            bool wasAnimating = _isCollapseAnimationRunning;
             BeginAnimation(TopProperty, null);
             BeginAnimation(HeightProperty, null);
+            SetContentScrollbarsFrozen(false);
+            if (ContentFrame != null)
+            {
+                ContentFrame.BeginAnimation(OpacityProperty, null);
+                if (ContentFrame.RenderTransform is ScaleTransform st)
+                {
+                    st.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+                    st.ScaleY = 1;
+                }
+                ContentFrame.Opacity = isContentVisible ? 1 : 0;
+            }
+            if (HeaderShadow != null && wasAnimating)
+            {
+                HeaderShadow.BeginAnimation(System.Windows.Media.Effects.DropShadowEffect.OpacityProperty, null);
+                HeaderShadow.BeginAnimation(System.Windows.Media.Effects.DropShadowEffect.BlurRadiusProperty, null);
+            }
+            if (BodyShadow != null && wasAnimating)
+            {
+                BodyShadow.BeginAnimation(System.Windows.Media.Effects.DropShadowEffect.OpacityProperty, null);
+                BodyShadow.BeginAnimation(System.Windows.Media.Effects.DropShadowEffect.BlurRadiusProperty, null);
+            }
             StopHeaderCornerAnimation();
             _isCollapseAnimationRunning = false;
         }
@@ -357,78 +887,189 @@ namespace DesktopPlus
         public void ForceCollapseState(bool isCollapsed)
         {
             StopPanelAnimations();
+            _isCollapseAnimationRunning = true;
+            SetContentScrollbarsFrozen(false);
             double collapsedHeight = GetCollapsedHeight();
-
-            if (isCollapsed)
+            try
             {
-                if (isContentVisible)
+                if (isCollapsed)
                 {
-                    double currentHeight = ActualHeight > 0 ? ActualHeight : Height;
-                    expandedHeight = Math.Max(collapsedHeight, currentHeight);
-                }
+                    if (isContentVisible)
+                    {
+                        double currentHeight = ActualHeight > 0 ? ActualHeight : Height;
+                        if (!(_hoverExpanded && _hasHoverRestoreState))
+                        {
+                            expandedHeight = Math.Max(collapsedHeight, currentHeight);
+                        }
+                    }
 
-                bool anchorToBottom = ShouldAnchorToBottom(collapsedHeight);
-                double targetTop = anchorToBottom ? GetBottomAnchoredCollapsedTop(collapsedHeight) : baseTopPosition;
-                Rect workArea = GetWorkAreaForPanel();
-                targetTop = ClampTopToWorkArea(workArea, collapsedHeight, targetTop);
+                    bool anchorToBottom = ShouldAnchorToBottom(collapsedHeight);
+                    double collapseReferenceTop = GetCollapseReferenceTop();
+                    double targetTop = anchorToBottom ? GetBottomAnchoredCollapsedTop(collapsedHeight) : collapseReferenceTop;
+                    Rect workArea = GetWorkAreaForPanel();
+                    targetTop = ClampTopToWorkArea(workArea, collapsedHeight, targetTop);
 
-                this.Top = targetTop;
-                this.Height = collapsedHeight;
-                SetContentLayerVisibility(false);
-                isContentVisible = false;
-                _hoverExpanded = false;
-                collapsedTopPosition = targetTop;
-                _isBottomAnchored = anchorToBottom;
-                baseTopPosition = collapsedTopPosition;
-                ApplyCollapsedVisualState(collapsed: true, animateCorners: false);
-            }
-            else
-            {
-                double targetHeight = Math.Max(collapsedHeight, expandedHeight);
-                bool anchorToBottom = ShouldUseBottomAnchorOnExpand(collapsedHeight);
-                double targetTop = anchorToBottom
-                    ? GetBottomAnchoredCollapsedTop(collapsedHeight) + collapsedHeight - targetHeight
-                    : baseTopPosition;
-                Rect workArea = GetWorkAreaForPanel();
-                targetTop = ClampTopToWorkArea(workArea, targetHeight, targetTop);
-
-                this.Top = targetTop;
-                this.Height = targetHeight;
-                SetContentLayerVisibility(true);
-                isContentVisible = true;
-                _isBottomAnchored = anchorToBottom;
-                if (anchorToBottom)
-                {
-                    collapsedTopPosition = GetBottomAnchoredCollapsedTop(collapsedHeight);
+                    this.Top = targetTop;
+                    this.Height = collapsedHeight;
+                    SetContentLayerVisibility(false);
+                    isContentVisible = false;
+                    _hoverExpanded = false;
+                    collapsedTopPosition = targetTop;
+                    _isBottomAnchored = anchorToBottom;
                     baseTopPosition = collapsedTopPosition;
+                    _isExpandedShiftedByBounds = false;
+                    _hasForcedCollapseReturnTop = false;
+                    ApplyCollapsedVisualState(collapsed: true, animateCorners: false);
+                    ClearHoverRestoreState();
                 }
                 else
                 {
-                    baseTopPosition = this.Top;
-                    collapsedTopPosition = this.Top;
+                    double targetHeight = Math.Max(collapsedHeight, expandedHeight);
+                    bool anchorToBottom = ShouldUseBottomAnchorOnExpand(collapsedHeight);
+                    double referenceTop = Top;
+                    collapsedTopPosition = referenceTop;
+                    baseTopPosition = referenceTop;
+                    double targetTop = anchorToBottom
+                        ? GetBottomAnchoredCollapsedTop(collapsedHeight) + collapsedHeight - targetHeight
+                        : referenceTop;
+                    Rect workArea = GetWorkAreaForPanel();
+                    targetTop = ClampTopToWorkArea(workArea, targetHeight, targetTop);
+                    bool shiftedUpByBounds = !anchorToBottom && targetTop < referenceTop - 0.5;
+                    _hasForcedCollapseReturnTop = true;
+                    _forcedCollapseReturnTop = referenceTop;
+
+                    this.Top = targetTop;
+                    this.Height = targetHeight;
+                    SetContentLayerVisibility(true);
+                    Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Render);
+                    isContentVisible = true;
+                    _isBottomAnchored = anchorToBottom;
+                    _isExpandedShiftedByBounds = shiftedUpByBounds;
+                    if (anchorToBottom)
+                    {
+                        collapsedTopPosition = GetBottomAnchoredCollapsedTop(collapsedHeight);
+                        baseTopPosition = collapsedTopPosition;
+                    }
+
+                    ApplyCollapsedVisualState(collapsed: false, animateCorners: false);
+                }
+            }
+            finally
+            {
+                _isCollapseAnimationRunning = false;
+            }
+        }
+
+        private Point GetMouseScreenPositionDip()
+        {
+            var raw = WinForms.Control.MousePosition;
+            var source = PresentationSource.FromVisual(this);
+            if (source?.CompositionTarget != null)
+            {
+                return source.CompositionTarget.TransformFromDevice.Transform(new Point(raw.X, raw.Y));
+            }
+
+            return new Point(raw.X, raw.Y);
+        }
+
+        private void BeginManualWindowDrag(UIElement dragHandle)
+        {
+            if (_isDragMoveActive) return;
+
+            StopPanelAnimations();
+            _dragHandle = dragHandle;
+            _dragStartMouseScreen = GetMouseScreenPositionDip();
+            _dragStartWindowPosition = new Point(Left, Top);
+            _isDragMoveActive = true;
+
+            dragHandle.MouseMove += DragHandle_MouseMove;
+            dragHandle.MouseLeftButtonUp += DragHandle_MouseLeftButtonUp;
+            dragHandle.LostMouseCapture += DragHandle_LostMouseCapture;
+            dragHandle.CaptureMouse();
+        }
+
+        private void EndManualWindowDrag(bool commitPosition)
+        {
+            var handle = _dragHandle;
+            if (handle != null)
+            {
+                handle.MouseMove -= DragHandle_MouseMove;
+                handle.MouseLeftButtonUp -= DragHandle_MouseLeftButtonUp;
+                handle.LostMouseCapture -= DragHandle_LostMouseCapture;
+                if (handle.IsMouseCaptured)
+                {
+                    handle.ReleaseMouseCapture();
+                }
+                _dragHandle = null;
+            }
+
+            bool wasDragging = _isDragMoveActive;
+            _isDragMoveActive = false;
+
+            if (commitPosition && wasDragging)
+            {
+                const double dragCommitThreshold = 1.5;
+                bool positionChanged =
+                    Math.Abs(Left - _dragStartWindowPosition.X) > dragCommitThreshold ||
+                    Math.Abs(Top - _dragStartWindowPosition.Y) > dragCommitThreshold;
+                if (!positionChanged)
+                {
+                    return;
                 }
 
-                ApplyCollapsedVisualState(collapsed: false, animateCorners: false);
+                EnsurePanelInsideVerticalWorkArea();
+                _isExpandedShiftedByBounds = false;
+                _hasForcedCollapseReturnTop = false;
+                if (_hoverExpanded)
+                {
+                    RebaseHoverRestoreStateFromCurrentBounds();
+                }
+                else
+                {
+                    SyncAnchoringFromCurrentBounds();
+                }
+                MainWindow.SaveSettings();
             }
+        }
+
+        private void DragHandle_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            if (!_isDragMoveActive) return;
+
+            if (e.LeftButton != MouseButtonState.Pressed)
+            {
+                EndManualWindowDrag(commitPosition: true);
+                return;
+            }
+
+            Point current = GetMouseScreenPositionDip();
+            double deltaX = current.X - _dragStartMouseScreen.X;
+            double deltaY = current.Y - _dragStartMouseScreen.Y;
+            Left = _dragStartWindowPosition.X + deltaX;
+            double currentHeight = ActualHeight > 0 ? ActualHeight : Height;
+            double desiredTop = _dragStartWindowPosition.Y + deltaY;
+            Top = ClampTopToWorkArea(GetWorkAreaForPanel(), currentHeight, desiredTop);
+        }
+
+        private void DragHandle_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            EndManualWindowDrag(commitPosition: true);
+            e.Handled = true;
+        }
+
+        private void DragHandle_LostMouseCapture(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            EndManualWindowDrag(commitPosition: true);
         }
 
         private void MoveButton_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (movementMode == "locked") return;
-            if (e.ButtonState == MouseButtonState.Pressed)
+            if (e.ChangedButton != MouseButton.Left || e.LeftButton != MouseButtonState.Pressed) return;
+            if (sender is UIElement dragHandle)
             {
-                _isDragMoveActive = true;
-                try
-                {
-                    this.DragMove();
-                }
-                finally
-                {
-                    _isDragMoveActive = false;
-                }
-                EnsurePanelInsideVerticalWorkArea();
-                SyncAnchoringFromCurrentBounds();
-                MainWindow.SaveSettings();
+                BeginManualWindowDrag(dragHandle);
+                e.Handled = true;
             }
         }
 
@@ -451,26 +1092,19 @@ namespace DesktopPlus
             {
                 _lastHeaderClickTime = DateTime.MinValue;
                 e.Handled = true;
-                ToggleCollapseAnimated();
+                HandleHeaderDoubleClickToggle();
                 return;
             }
 
             if (movementMode == "locked") return;
 
-            if (movementMode == "titlebar")
+            if (movementMode == "titlebar" &&
+                e.ChangedButton == MouseButton.Left &&
+                e.LeftButton == MouseButtonState.Pressed &&
+                sender is UIElement dragHandle)
             {
-                _isDragMoveActive = true;
-                try
-                {
-                    this.DragMove();
-                }
-                finally
-                {
-                    _isDragMoveActive = false;
-                }
-                EnsurePanelInsideVerticalWorkArea();
-                SyncAnchoringFromCurrentBounds();
-                MainWindow.SaveSettings();
+                BeginManualWindowDrag(dragHandle);
+                e.Handled = true;
             }
         }
 
@@ -481,34 +1115,57 @@ namespace DesktopPlus
             StopPanelAnimations();
             _isCollapseAnimationRunning = true;
 
-            var duration = TimeSpan.FromMilliseconds(200);
-            var ease = new QuadraticEase { EasingMode = EasingMode.EaseInOut };
+            var duration = TimeSpan.FromMilliseconds(320);
+            var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
             double collapsedHeight = GetCollapsedHeight();
 
             if (isContentVisible)
             {
                 double currentHeight = ActualHeight > 0 ? ActualHeight : Height;
-                expandedHeight = Math.Max(collapsedHeight, currentHeight);
+                if (!(_hoverExpanded && _hasHoverRestoreState))
+                {
+                    expandedHeight = Math.Max(collapsedHeight, currentHeight);
+                }
                 double targetHeight = collapsedHeight;
                 bool anchorToBottom = ShouldAnchorToBottom(collapsedHeight);
-                double targetTop = anchorToBottom ? GetBottomAnchoredCollapsedTop(collapsedHeight) : baseTopPosition;
+                double collapseReferenceTop = GetCollapseReferenceTop();
+                double targetTop = anchorToBottom ? GetBottomAnchoredCollapsedTop(collapsedHeight) : collapseReferenceTop;
                 Rect workArea = GetWorkAreaForPanel();
                 targetTop = ClampTopToWorkArea(workArea, targetHeight, targetTop);
+                SetContentScrollbarsFrozen(true);
 
+                // Content stays visible during collapse - ClipToBounds clips it naturally
+                // Fade content opacity during the collapse for a polished look
+                if (ContentFrame != null)
+                {
+                    var contentFade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(200))
+                    {
+                        EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn },
+                        FillBehavior = FillBehavior.HoldEnd
+                    };
+                    ContentFrame.BeginAnimation(OpacityProperty, contentFade);
+                }
                 ApplyCollapsedVisualState(collapsed: true, animateCorners: true, duration);
+                AnimateShadow(expanding: false);
 
                 Action onComplete = () =>
                 {
                     this.Top = targetTop;
                     this.Height = targetHeight;
+                    if (ContentFrame != null) ContentFrame.BeginAnimation(OpacityProperty, null);
                     SetContentLayerVisibility(false);
+                    SetContentScrollbarsFrozen(false);
                     isContentVisible = false;
                     _hoverExpanded = false;
                     collapsedTopPosition = targetTop;
                     _isBottomAnchored = anchorToBottom;
                     baseTopPosition = collapsedTopPosition;
+                    _isExpandedShiftedByBounds = false;
+                    _hasForcedCollapseReturnTop = false;
                     ApplyCollapsedVisualState(collapsed: true, animateCorners: false);
+                    ClearHoverRestoreState();
                     _isCollapseAnimationRunning = false;
+                    ProcessQueuedHoverState();
                     MainWindow.SaveSettings();
                 };
 
@@ -524,35 +1181,43 @@ namespace DesktopPlus
             }
             else
             {
-                SetContentLayerVisibility(true);
+                SetContentScrollbarsFrozen(false);
+                SetContentLayerVisibility(false);
                 double targetHeight = Math.Max(collapsedHeight, expandedHeight);
                 bool anchorToBottom = ShouldUseBottomAnchorOnExpand(collapsedHeight);
+                double referenceTop = Top;
+                collapsedTopPosition = referenceTop;
+                baseTopPosition = referenceTop;
                 double targetTop = anchorToBottom
                     ? GetBottomAnchoredCollapsedTop(collapsedHeight) + collapsedHeight - targetHeight
-                    : baseTopPosition;
+                    : referenceTop;
                 Rect workArea = GetWorkAreaForPanel();
                 targetTop = ClampTopToWorkArea(workArea, targetHeight, targetTop);
+                bool shiftedUpByBounds = !anchorToBottom && targetTop < referenceTop - 0.5;
+                _hasForcedCollapseReturnTop = true;
+                _forcedCollapseReturnTop = referenceTop;
 
                 ApplyCollapsedVisualState(collapsed: false, animateCorners: true, duration);
+                AnimateShadow(expanding: true);
 
                 Action onComplete = () =>
                 {
                     this.Top = targetTop;
                     this.Height = targetHeight;
+                    AnimateContentIn();
+                    if (ContentContainer != null) ContentContainer.Visibility = Visibility.Visible;
+                    Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Render);
                     isContentVisible = true;
                     _isBottomAnchored = anchorToBottom;
+                    _isExpandedShiftedByBounds = shiftedUpByBounds;
                     if (anchorToBottom)
                     {
                         collapsedTopPosition = GetBottomAnchoredCollapsedTop(collapsedHeight);
                         baseTopPosition = collapsedTopPosition;
                     }
-                    else
-                    {
-                        baseTopPosition = this.Top;
-                        collapsedTopPosition = this.Top;
-                    }
                     ApplyCollapsedVisualState(collapsed: false, animateCorners: false);
                     _isCollapseAnimationRunning = false;
+                    ProcessQueuedHoverState();
                     MainWindow.SaveSettings();
                 };
 

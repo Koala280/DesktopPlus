@@ -63,6 +63,7 @@ namespace DesktopPlus
                 _layoutDefaultPresetName = string.IsNullOrWhiteSpace(state.LayoutDefaultPresetName)
                     ? DefaultPresetName
                     : state.LayoutDefaultPresetName;
+                _activeLayoutName = state.ActiveLayoutName ?? "";
                 foreach (var layout in Layouts)
                 {
                     layout.Panels ??= new List<WindowData>();
@@ -79,12 +80,41 @@ namespace DesktopPlus
                 }
 
                 var defaults = GetDefaultPresets();
+                var defaultNames = new HashSet<string>(defaults.Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
                 var loadedPresets = state.Presets ?? new List<AppearancePreset>();
-                var presetDict = defaults.Concat(loadedPresets)
+
+                var mergedPresets = new List<AppearancePreset>();
+                foreach (var preset in defaults)
+                {
+                    mergedPresets.Add(new AppearancePreset
+                    {
+                        Name = preset.Name,
+                        Settings = CloneAppearance(preset.Settings ?? new AppearanceSettings()),
+                        IsBuiltIn = true
+                    });
+                }
+
+                var customPresets = loadedPresets
+                    .Where(p => p != null &&
+                                !string.IsNullOrWhiteSpace(p.Name) &&
+                                !defaultNames.Contains(p.Name))
                     .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
-                    .Select(g => g.Last())
-                    .ToDictionary(p => p.Name, p => p, StringComparer.OrdinalIgnoreCase);
-                Presets = presetDict.Values.OrderBy(p => p.IsBuiltIn ? 0 : 1).ThenBy(p => p.Name).ToList();
+                    .Select(g => g.Last());
+
+                foreach (var preset in customPresets)
+                {
+                    mergedPresets.Add(new AppearancePreset
+                    {
+                        Name = preset.Name,
+                        Settings = CloneAppearance(preset.Settings ?? new AppearanceSettings()),
+                        IsBuiltIn = false
+                    });
+                }
+
+                Presets = mergedPresets
+                    .OrderBy(p => p.IsBuiltIn ? 0 : 1)
+                    .ThenBy(p => p.Name)
+                    .ToList();
                 if (!Presets.Any(p => string.Equals(p.Name, _layoutDefaultPresetName, StringComparison.OrdinalIgnoreCase)))
                 {
                     _layoutDefaultPresetName = DefaultPresetName;
@@ -95,6 +125,11 @@ namespace DesktopPlus
                     {
                         layout.DefaultPanelPresetName = _layoutDefaultPresetName;
                     }
+                }
+                if (!string.IsNullOrWhiteSpace(_activeLayoutName) &&
+                    !Layouts.Any(l => string.Equals(l.Name, _activeLayoutName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    _activeLayoutName = "";
                 }
 
                 foreach (var winData in savedWindows)
@@ -190,6 +225,8 @@ namespace DesktopPlus
                 {
                     layoutDefaultPreset = DefaultPresetName;
                 }
+                mainWindow?.SyncActiveLayoutFromCurrentState();
+                string activeLayoutName = mainWindow?._activeLayoutName ?? "";
 
                 var state = new AppState
                 {
@@ -198,6 +235,7 @@ namespace DesktopPlus
                     Presets = Presets,
                     Layouts = Layouts,
                     LayoutDefaultPresetName = layoutDefaultPreset,
+                    ActiveLayoutName = activeLayoutName,
                     Language = language,
                     StartWithWindows = startWithWindows,
                     CloseBehavior = closeBehavior

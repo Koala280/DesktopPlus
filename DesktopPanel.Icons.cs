@@ -210,7 +210,13 @@ namespace DesktopPlus
             var wrapPanel = FindVisualChild<WrapPanel>(FileList);
             if (wrapPanel != null)
             {
-                double availableWidth = ContentContainer.ViewportWidth - 10;
+                // Keep a stable gutter so scrollbar appearance does not shift icon layout.
+                const double horizontalInset = 10;
+                const double scrollbarGutterReserve = 8;
+                double baseWidth = ContentContainer.ViewportWidth > 0
+                    ? ContentContainer.ViewportWidth
+                    : ContentContainer.ActualWidth;
+                double availableWidth = baseWidth - horizontalInset - scrollbarGutterReserve;
                 if (availableWidth > 0)
                 {
                     wrapPanel.Width = availableWidth;

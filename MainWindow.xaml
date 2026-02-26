@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        xmlns:sys="clr-namespace:System;assembly=mscorlib"
+        xmlns:local="clr-namespace:DesktopPlus"
         Title="Desktop+"
         Height="720"
         Width="1120"
@@ -32,6 +32,7 @@
         <Style x:Key="FlatTextBox" TargetType="TextBox">
             <Setter Property="Padding" Value="10,7"/>
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="CaretBrush" Value="{StaticResource TextPrimary}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -96,6 +97,7 @@
                                           x:Name="Toggle"
                                           Style="{x:Null}"
                                           IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          ClickMode="Press"
                                           Background="Transparent"
                                           BorderThickness="0"
                                           Focusable="False">
@@ -110,13 +112,18 @@
                                    AllowsTransparency="True"
                                    Placement="Bottom"
                                    IsOpen="{TemplateBinding IsDropDownOpen}"
-                                   Focusable="False">
+                                   Focusable="False"
+                                   StaysOpen="False">
                                 <Border Background="{StaticResource InputBackground}"
                                         BorderBrush="{StaticResource InputBorder}"
                                         BorderThickness="1"
                                         CornerRadius="10"
                                         Padding="4">
-                                    <ScrollViewer>
+                                    <ScrollViewer MaxHeight="280"
+                                                  VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled"
+                                                  CanContentScroll="True"
+                                                  PanningMode="VerticalOnly">
                                         <ItemsPresenter/>
                                     </ScrollViewer>
                                 </Border>
@@ -201,6 +208,7 @@
                                           Style="{x:Null}"
                                           Background="Transparent"
                                           BorderThickness="0"
+                                          ClickMode="Press"
                                           Focusable="False"
                                           IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
                                 <ToggleButton.Template>
@@ -214,7 +222,8 @@
                                    Placement="Bottom"
                                    IsOpen="{TemplateBinding IsDropDownOpen}"
                                    Focusable="False"
-                                   PopupAnimation="Slide">
+                                   StaysOpen="False"
+                                   PopupAnimation="Fade">
                                 <Border Background="#1A2230"
                                         BorderBrush="#42536D"
                                         BorderThickness="1"
@@ -228,11 +237,63 @@
                                                           Opacity="0.28"/>
                                     </Border.Effect>
                                     <ScrollViewer MaxHeight="240"
-                                                  VerticalScrollBarVisibility="Auto"
-                                                  HorizontalScrollBarVisibility="Disabled">
+                                                   VerticalScrollBarVisibility="Auto"
+                                                   HorizontalScrollBarVisibility="Disabled"
+                                                   CanContentScroll="True"
+                                                   PanningMode="VerticalOnly">
                                         <ScrollViewer.Resources>
-                                            <Style TargetType="ScrollBar" BasedOn="{StaticResource {x:Type ScrollBar}}">
-                                                <Setter Property="Width" Value="6"/>
+                                            <Style TargetType="ScrollBar">
+                                                <Setter Property="Width" Value="5"/>
+                                                <Setter Property="Background" Value="Transparent"/>
+                                                <Setter Property="Opacity" Value="0.9"/>
+                                                <Setter Property="Template">
+                                                    <Setter.Value>
+                                                        <ControlTemplate TargetType="ScrollBar">
+                                                            <Grid Background="Transparent"
+                                                                  Width="{TemplateBinding Width}"
+                                                                  SnapsToDevicePixels="True">
+                                                                <Track x:Name="PART_Track"
+                                                                       Orientation="{TemplateBinding Orientation}"
+                                                                       Minimum="{TemplateBinding Minimum}"
+                                                                       Maximum="{TemplateBinding Maximum}"
+                                                                       ViewportSize="{TemplateBinding ViewportSize}"
+                                                                       Value="{Binding Value, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
+                                                                       IsDirectionReversed="True">
+                                                                    <Track.DecreaseRepeatButton>
+                                                                        <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}"
+                                                                                      Background="Transparent"
+                                                                                      BorderThickness="0"
+                                                                                      Style="{x:Null}"/>
+                                                                    </Track.DecreaseRepeatButton>
+                                                                    <Track.Thumb>
+                                                                        <Thumb Background="#6E7F98"
+                                                                               BorderThickness="0"
+                                                                               MinHeight="20">
+                                                                            <Thumb.Template>
+                                                                                <ControlTemplate TargetType="Thumb">
+                                                                                    <Border Background="{TemplateBinding Background}"
+                                                                                            CornerRadius="2"
+                                                                                            Margin="1,2,1,2"/>
+                                                                                </ControlTemplate>
+                                                                            </Thumb.Template>
+                                                                        </Thumb>
+                                                                    </Track.Thumb>
+                                                                    <Track.IncreaseRepeatButton>
+                                                                        <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}"
+                                                                                      Background="Transparent"
+                                                                                      BorderThickness="0"
+                                                                                      Style="{x:Null}"/>
+                                                                    </Track.IncreaseRepeatButton>
+                                                                </Track>
+                                                            </Grid>
+                                                        </ControlTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                                <Style.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter Property="Opacity" Value="1"/>
+                                                    </Trigger>
+                                                </Style.Triggers>
                                             </Style>
                                         </ScrollViewer.Resources>
                                         <ItemsPresenter/>
@@ -387,12 +448,11 @@
         </Style>
 
         <Style x:Key="TitleBarButton" TargetType="Button">
-            <Setter Property="Width" Value="34"/>
-            <Setter Property="Height" Value="30"/>
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="28"/>
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Foreground" Value="#B8C3D6"/>
             <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
@@ -400,21 +460,16 @@
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="Bd"
                                 Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="8">
+                                CornerRadius="6">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#2A3446"/>
-                                <Setter Property="Foreground" Value="White"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#2A303A"/>
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#334056"/>
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Bd" Property="Opacity" Value="0.6"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#353C48"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -422,35 +477,7 @@
             </Setter>
         </Style>
 
-        <Style x:Key="TitleBarCloseButton" TargetType="Button" BasedOn="{StaticResource TitleBarButton}">
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="BorderBrush" Value="Transparent"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="8">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#C93B32"/>
-                                <Setter Property="Foreground" Value="White"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#A93028"/>
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Bd" Property="Opacity" Value="0.6"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
+        <Style x:Key="TitleBarCloseButton" TargetType="Button" BasedOn="{StaticResource TitleBarButton}"/>
 
         <Style x:Key="AccentCheckBox" TargetType="CheckBox">
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
@@ -545,46 +572,33 @@
         </Style>
 
         <Style x:Key="PillTabItem" TargetType="TabItem">
-            <Setter Property="Foreground" Value="#9EABC0"/>
+            <Setter Property="Foreground" Value="#6B7280"/>
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Padding" Value="16,8"/>
-            <Setter Property="Margin" Value="1,0,3,0"/>
+            <Setter Property="Width" Value="90"/>
+            <Setter Property="Padding" Value="0,12,0,14"/>
+            <Setter Property="Margin" Value="0"/>
             <Setter Property="FontSize" Value="13"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="MinHeight" Value="36"/>
+            <Setter Property="FontWeight" Value="Medium"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TabItem">
-                        <Border x:Name="Outer"
+                        <Border x:Name="Bg"
                                 Background="Transparent"
-                                CornerRadius="8"
-                                Padding="1"
+                                Padding="{TemplateBinding Padding}"
                                 SnapsToDevicePixels="True">
-                            <Border x:Name="Bg"
-                                    Background="{TemplateBinding Background}"
-                                    CornerRadius="7"
-                                    BorderBrush="Transparent"
-                                    BorderThickness="1">
-                                <ContentPresenter ContentSource="Header"
-                                                  RecognizesAccessKey="True"
-                                                  HorizontalAlignment="Center"
-                                                  VerticalAlignment="Center"
-                                                  Margin="{TemplateBinding Padding}"/>
-                            </Border>
+                            <ContentPresenter ContentSource="Header"
+                                              RecognizesAccessKey="True"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="#242B38"/>
-                                <Setter TargetName="Bg" Property="BorderBrush" Value="#344156"/>
-                                <Setter Property="Foreground" Value="#DCE4F2"/>
+                                <Setter Property="Foreground" Value="#A7B0C0"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="#2C3546"/>
-                                <Setter TargetName="Bg" Property="BorderBrush" Value="#3D4A62"/>
                                 <Setter Property="Foreground" Value="White"/>
-                                <Setter Property="Panel.ZIndex" Value="2"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.55"/>
@@ -597,12 +611,13 @@
 
         <Style x:Key="AccentSlider" TargetType="Slider">
             <Setter Property="Foreground" Value="{StaticResource Primary}"/>
+            <Setter Property="IsMoveToPointEnabled" Value="True"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Slider">
                         <Grid Margin="2">
                             <Track x:Name="PART_Track"
-                                   Height="16"
+                                   Height="20"
                                    VerticalAlignment="Center"
                                    Minimum="{TemplateBinding Minimum}"
                                    Maximum="{TemplateBinding Maximum}"
@@ -610,16 +625,17 @@
                                 <Track.DecreaseRepeatButton>
                                     <RepeatButton Command="Slider.DecreaseLarge"
                                                   Background="{StaticResource Primary}"
-                                                  BorderBrush="{StaticResource PrimaryDarker}"
                                                   BorderThickness="0"
-                                                  Height="6"
+                                                  Height="20"
                                                   VerticalAlignment="Center">
                                         <RepeatButton.Template>
                                             <ControlTemplate TargetType="RepeatButton">
-                                                <Border Background="{TemplateBinding Background}"
-                                                        CornerRadius="3"
-                                                        Height="{TemplateBinding Height}"
-                                                        VerticalAlignment="Center"/>
+                                                <Grid Background="Transparent">
+                                                    <Border Background="{TemplateBinding Background}"
+                                                            CornerRadius="3"
+                                                            Height="6"
+                                                            VerticalAlignment="Center"/>
+                                                </Grid>
                                             </ControlTemplate>
                                         </RepeatButton.Template>
                                     </RepeatButton>
@@ -628,14 +644,16 @@
                                     <RepeatButton Command="Slider.IncreaseLarge"
                                                   Background="#2A303A"
                                                   BorderThickness="0"
-                                                  Height="6"
+                                                  Height="20"
                                                   VerticalAlignment="Center">
                                         <RepeatButton.Template>
                                             <ControlTemplate TargetType="RepeatButton">
-                                                <Border Background="{TemplateBinding Background}"
-                                                        CornerRadius="3"
-                                                        Height="{TemplateBinding Height}"
-                                                        VerticalAlignment="Center"/>
+                                                <Grid Background="Transparent">
+                                                    <Border Background="{TemplateBinding Background}"
+                                                            CornerRadius="3"
+                                                            Height="6"
+                                                            VerticalAlignment="Center"/>
+                                                </Grid>
                                             </ControlTemplate>
                                         </RepeatButton.Template>
                                     </RepeatButton>
@@ -669,33 +687,38 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TabControl">
-                        <Grid ClipToBounds="False">
+                        <Grid>
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
-                            <Border Grid.Row="0"
-                                    Background="#1B2331"
-                                    BorderBrush="#314055"
-                                    BorderThickness="1"
-                                    CornerRadius="13"
-                                    Padding="4,4,10,4"
-                                    Margin="0,0,3,12"
-                                    HorizontalAlignment="Left"
-                                    VerticalAlignment="Center"
-                                    SnapsToDevicePixels="True"
-                                    ClipToBounds="False">
+                            <Grid Grid.Row="0">
                                 <TabPanel x:Name="HeaderPanel"
                                           IsItemsHost="True"
                                           Background="Transparent"
                                           HorizontalAlignment="Left"
-                                          VerticalAlignment="Center"/>
-                            </Border>
-                            <ContentPresenter x:Name="TabContentHost"
-                                              Grid.Row="1"
+                                          Margin="2,0,0,0"/>
+                                <Border x:Name="SlidingIndicator"
+                                        Height="2.5"
+                                        VerticalAlignment="Bottom"
+                                        HorizontalAlignment="Left"
+                                        Background="{StaticResource Primary}"
+                                        CornerRadius="1.25"
+                                        Width="0">
+                                    <Border.RenderTransform>
+                                        <TranslateTransform X="0"/>
+                                    </Border.RenderTransform>
+                                </Border>
+                            </Grid>
+                            <Border Grid.Row="1"
+                                    Height="1"
+                                    Background="#2A303A"
+                                    Margin="0,-1,0,20"/>
+                            <ContentPresenter Grid.Row="2"
+                                              x:Name="TabContentHost"
                                               ContentSource="SelectedContent"
-                                              Opacity="1"
-                                              Margin="0,0,0,0">
+                                              Opacity="1">
                                 <ContentPresenter.RenderTransform>
                                     <TranslateTransform Y="0"/>
                                 </ContentPresenter.RenderTransform>
@@ -761,38 +784,35 @@
                             Margin="0,0,2,0">
                     <Button Style="{StaticResource TitleBarButton}"
                             Click="Minimize_Click">
-                        <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                        <Path Data="M4,10 L16,10"
+                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                               StrokeThickness="1.5"
-                              Data="M 4 9 L 12 9"
                               StrokeStartLineCap="Round"
                               StrokeEndLineCap="Round"
-                              Width="16"
-                              Height="16"
+                              Width="12" Height="12"
                               Stretch="Uniform"/>
                     </Button>
                     <Button Style="{StaticResource TitleBarButton}"
                             Click="MaximizeRestore_Click"
-                            Margin="6,0,0,0">
-                        <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                              StrokeThickness="1.35"
-                              Data="M 4 4 L 12 4 L 12 12 L 4 12 Z"
+                            Margin="4,0,0,0">
+                        <Path Data="M4,4 L12,4 L12,12 L4,12 Z"
+                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                              StrokeThickness="1.5"
                               StrokeStartLineCap="Round"
                               StrokeEndLineCap="Round"
                               StrokeLineJoin="Round"
-                              Width="16"
-                              Height="16"
+                              Width="12" Height="12"
                               Stretch="Uniform"/>
                     </Button>
                     <Button Style="{StaticResource TitleBarCloseButton}"
                             Click="Close_Click"
-                            Margin="6,0,0,0">
-                        <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                              StrokeThickness="1.6"
-                              Data="M 4 4 L 12 12 M 12 4 L 4 12"
+                            Margin="4,0,0,0">
+                        <Path Data="M4,4 L12,12 M12,4 L4,12"
+                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                              StrokeThickness="1.5"
                               StrokeStartLineCap="Round"
                               StrokeEndLineCap="Round"
-                              Width="16"
-                              Height="16"
+                              Width="10" Height="10"
                               Stretch="Uniform"/>
                     </Button>
                 </StackPanel>
@@ -1136,15 +1156,21 @@
                                                                     Orientation="Horizontal"
                                                                     HorizontalAlignment="Right"
                                                                     VerticalAlignment="Center">
-                                                            <ComboBox Width="190"
-                                                                      Style="{StaticResource GeneralCombo}"
-                                                                      DisplayMemberPath="Name"
-                                                                      SelectedValuePath="Name"
-                                                                      ItemsSource="{Binding Presets}"
-                                                                      SelectedValue="{Binding DefaultPresetName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                                      Tag="{Binding}"
-                                                                      Margin="0,0,8,0"
-                                                                      SelectionChanged="LayoutItemPresetCombo_SelectionChanged"/>
+                                                            <StackPanel Margin="0,0,8,0"
+                                                                        VerticalAlignment="Center">
+                                                                <TextBlock Text="{DynamicResource Loc.LayoutsDefaultPreset}"
+                                                                           Foreground="{StaticResource Muted}"
+                                                                           FontSize="11"
+                                                                           Margin="0,0,0,4"/>
+                                                                <ComboBox Width="190"
+                                                                          Style="{StaticResource GeneralCombo}"
+                                                                          DisplayMemberPath="Name"
+                                                                          SelectedValuePath="Name"
+                                                                          ItemsSource="{Binding Presets}"
+                                                                          SelectedValue="{Binding DefaultPresetName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                          Tag="{Binding}"
+                                                                          SelectionChanged="LayoutItemPresetCombo_SelectionChanged"/>
+                                                            </StackPanel>
                                                             <Button Content="{DynamicResource Loc.LayoutsApply}"
                                                                     Tag="{Binding Layout}"
                                                                     Padding="10,6"
@@ -1200,8 +1226,7 @@
 
                                     <Grid Grid.Row="1" Margin="0,14,0,0">
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="2.2*"/>
-                                            <ColumnDefinition Width="1.4*"/>
+                                            <ColumnDefinition Width="2.6*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
 
@@ -1218,55 +1243,26 @@
                                                       SelectionChanged="GlobalPresetChanged"/>
                                         </StackPanel>
 
-                                        <StackPanel Grid.Column="1" Margin="12,0,0,0">
-                                            <TextBlock Text="{DynamicResource Loc.ThemesPresetTooltip}"
-                                                       Foreground="{StaticResource Muted}"
-                                                       FontSize="11"
-                                                       Margin="0,0,0,5"/>
-                                            <TextBox x:Name="PresetNameInput"
-                                                     Height="36"
-                                                     Style="{StaticResource FlatTextBox}"
-                                                     ToolTip="{DynamicResource Loc.ThemesPresetTooltip}"/>
-                                        </StackPanel>
-
-                                        <Grid Grid.Column="2" Margin="12,18,0,0">
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                            </Grid.RowDefinitions>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="Auto"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-                                            <Button Grid.Row="0"
-                                                    Grid.Column="0"
-                                                    Content="{DynamicResource Loc.ThemesApplyAll}"
-                                                    Style="{StaticResource GhostButton}"
-                                                    Padding="12,6"
-                                                    Margin="0,0,6,6"
-                                                    Click="ApplyPresetAll_Click"/>
-                                            <Button Grid.Row="0"
-                                                    Grid.Column="1"
-                                                    Content="{DynamicResource Loc.ThemesSave}"
+                                        <StackPanel Grid.Column="1"
+                                                    Orientation="Horizontal"
+                                                    VerticalAlignment="Bottom"
+                                                    Margin="12,0,0,0">
+                                            <Button Content="{DynamicResource Loc.ThemesCreate}"
                                                     Style="{StaticResource PrimaryButton}"
                                                     Padding="12,6"
-                                                    Margin="0,0,0,6"
-                                                    Click="SavePreset_Click"/>
-                                            <Button Grid.Row="1"
-                                                    Grid.Column="0"
-                                                    Content="{DynamicResource Loc.ThemesDelete}"
+                                                    Margin="0,0,6,0"
+                                                    Click="CreatePreset_Click"/>
+                                            <Button Content="{DynamicResource Loc.ThemesDelete}"
                                                     Style="{StaticResource GhostButton}"
                                                     Padding="12,6"
                                                     Margin="0,0,6,0"
                                                     Click="DeletePreset_Click"/>
-                                            <Button Grid.Row="1"
-                                                    Grid.Column="1"
-                                                    Content="{DynamicResource Loc.ThemesResetDefaults}"
+                                            <Button Content="{DynamicResource Loc.ThemesResetDefaults}"
                                                     Style="{StaticResource GhostButton}"
                                                     Padding="12,6"
                                                     Margin="0,0,0,0"
                                                     Click="ResetStandardPresets_Click"/>
-                                        </Grid>
+                                        </StackPanel>
                                     </Grid>
                                 </Grid>
                             </Border>
@@ -1318,7 +1314,9 @@
                                                                 HorizontalAlignment="Right"
                                                                 CornerRadius="4"
                                                                 Background="#242833"
-                                                                Margin="6,0,0,0"/>
+                                                                Margin="6,0,0,0"
+                                                                Cursor="Hand"
+                                                                MouseLeftButtonUp="Swatch_Click"/>
                                                     </DockPanel>
                                                     <TextBox x:Name="BackgroundColorInput"
                                                              Grid.Row="1"
@@ -1338,7 +1336,9 @@
                                                                 HorizontalAlignment="Right"
                                                                 CornerRadius="4"
                                                                 Background="#2A303B"
-                                                                Margin="6,0,0,0"/>
+                                                                Margin="6,0,0,0"
+                                                                Cursor="Hand"
+                                                                MouseLeftButtonUp="Swatch_Click"/>
                                                     </DockPanel>
                                                     <TextBox x:Name="HeaderColorInput"
                                                              Grid.Row="1"
@@ -1375,7 +1375,9 @@
                                                                 HorizontalAlignment="Right"
                                                                 CornerRadius="4"
                                                                 Background="#6E8BFF"
-                                                                Margin="6,0,0,0"/>
+                                                                Margin="6,0,0,0"
+                                                                Cursor="Hand"
+                                                                MouseLeftButtonUp="Swatch_Click"/>
                                                     </DockPanel>
                                                     <TextBox x:Name="AccentColorInput"
                                                              Grid.Row="3"
@@ -1407,19 +1409,55 @@
                                                                Foreground="{StaticResource Muted}"
                                                                FontSize="11"/>
                                                     <StackPanel Grid.Row="5" Grid.Column="1" Margin="0,4,0,0">
-                                                        <Slider x:Name="ShadowOpacitySlider"
-                                                                Minimum="0"
-                                                                Maximum="0.8"
-                                                                TickFrequency="0.05"
-                                                                Margin="0,0,0,8"
-                                                                Style="{StaticResource AccentSlider}"
-                                                                ValueChanged="AppearanceInputChanged"/>
-                                                        <Slider x:Name="ShadowBlurSlider"
-                                                                Minimum="6"
-                                                                Maximum="36"
-                                                                TickFrequency="1"
-                                                                Style="{StaticResource AccentSlider}"
-                                                                ValueChanged="AppearanceInputChanged"/>
+                                                        <Border Background="#1A202A"
+                                                                BorderBrush="{StaticResource CardBorder}"
+                                                                BorderThickness="1"
+                                                                CornerRadius="8"
+                                                                Padding="8"
+                                                                Margin="0,0,0,8">
+                                                            <StackPanel>
+                                                                <TextBlock Text="{DynamicResource Loc.LabelHeaderShadow}"
+                                                                           Foreground="{StaticResource Muted}"
+                                                                           FontSize="11"/>
+                                                                <Slider x:Name="HeaderShadowOpacitySlider"
+                                                                        Minimum="0"
+                                                                        Maximum="0.8"
+                                                                        TickFrequency="0.05"
+                                                                        Margin="0,4,0,6"
+                                                                        Style="{StaticResource AccentSlider}"
+                                                                        ValueChanged="AppearanceInputChanged"/>
+                                                                <Slider x:Name="HeaderShadowBlurSlider"
+                                                                        Minimum="6"
+                                                                        Maximum="36"
+                                                                        TickFrequency="1"
+                                                                        Style="{StaticResource AccentSlider}"
+                                                                        ValueChanged="AppearanceInputChanged"/>
+                                                            </StackPanel>
+                                                        </Border>
+                                                        <Border Background="#1A202A"
+                                                                BorderBrush="{StaticResource CardBorder}"
+                                                                BorderThickness="1"
+                                                                CornerRadius="8"
+                                                                Padding="8">
+                                                            <StackPanel>
+                                                                <TextBlock Text="{DynamicResource Loc.LabelBodyShadow}"
+                                                                           Foreground="{StaticResource Muted}"
+                                                                           FontSize="11"/>
+                                                                <Slider x:Name="BodyShadowOpacitySlider"
+                                                                        Minimum="0"
+                                                                        Maximum="0.8"
+                                                                        TickFrequency="0.05"
+                                                                        Margin="0,4,0,6"
+                                                                        Style="{StaticResource AccentSlider}"
+                                                                        ValueChanged="AppearanceInputChanged"/>
+                                                                <Slider x:Name="BodyShadowBlurSlider"
+                                                                        Minimum="6"
+                                                                        Maximum="36"
+                                                                        TickFrequency="1"
+                                                                        Style="{StaticResource AccentSlider}"
+                                                                        ValueChanged="AppearanceInputChanged"/>
+                                                            </StackPanel>
+                                                        </Border>
                                                     </StackPanel>
                                                 </Grid>
                                             </StackPanel>
@@ -1474,7 +1512,103 @@
                                                             <ComboBoxItem Content="{DynamicResource Loc.PatternDiagonal}" Tag="Diagonal"/>
                                                             <ComboBoxItem Content="{DynamicResource Loc.PatternGrid}" Tag="Grid"/>
                                                             <ComboBoxItem Content="{DynamicResource Loc.PatternDots}" Tag="Dots"/>
+                                                            <ComboBoxItem Content="{DynamicResource Loc.PatternCustom}" Tag="Custom"/>
                                                         </ComboBox>
+
+                                                        <DockPanel LastChildFill="False" Margin="0,8,0,0">
+                                                            <TextBlock Text="{DynamicResource Loc.LabelPatternColor}"
+                                                                       Foreground="{StaticResource Muted}"
+                                                                       FontSize="11"/>
+                                                            <Border x:Name="PatternColorSwatch"
+                                                                    Width="20"
+                                                                    Height="20"
+                                                                    HorizontalAlignment="Right"
+                                                                    CornerRadius="4"
+                                                                    Background="#6E8BFF"
+                                                                    Margin="6,0,0,0"
+                                                                    Cursor="Hand"
+                                                                    MouseLeftButtonUp="Swatch_Click"/>
+                                                        </DockPanel>
+                                                        <TextBox x:Name="PatternColorInput"
+                                                                 Height="30"
+                                                                 Style="{StaticResource FlatTextBox}"
+                                                                 Margin="0,4,0,0"
+                                                                 TextChanged="AppearanceInputChanged"/>
+
+                                                        <TextBlock Text="{DynamicResource Loc.LabelPatternOpacity}"
+                                                                   Foreground="{StaticResource Muted}"
+                                                                   FontSize="11"
+                                                                   Margin="0,8,0,0"/>
+                                                        <Slider x:Name="PatternOpacitySlider"
+                                                                Minimum="0.05"
+                                                                Maximum="1"
+                                                                TickFrequency="0.05"
+                                                                Value="0.25"
+                                                                Style="{StaticResource AccentSlider}"
+                                                                Margin="0,4,0,0"
+                                                                ValueChanged="AppearanceInputChanged"/>
+
+                                                        <TextBlock Text="{DynamicResource Loc.LabelPatternTileSize}"
+                                                                   Foreground="{StaticResource Muted}"
+                                                                   FontSize="11"
+                                                                   Margin="0,8,0,0"/>
+                                                        <Slider x:Name="PatternTileSizeSlider"
+                                                                Minimum="6"
+                                                                Maximum="64"
+                                                                TickFrequency="1"
+                                                                Value="8"
+                                                                Style="{StaticResource AccentSlider}"
+                                                                Margin="0,4,0,0"
+                                                                ValueChanged="AppearanceInputChanged"/>
+
+                                                        <TextBlock Text="{DynamicResource Loc.LabelPatternStroke}"
+                                                                   Foreground="{StaticResource Muted}"
+                                                                   FontSize="11"
+                                                                   Margin="0,8,0,0"/>
+                                                        <Slider x:Name="PatternStrokeSlider"
+                                                                Minimum="0.5"
+                                                                Maximum="8"
+                                                                TickFrequency="0.1"
+                                                                Value="1"
+                                                                Style="{StaticResource AccentSlider}"
+                                                                Margin="0,4,0,0"
+                                                                ValueChanged="AppearanceInputChanged"/>
+
+                                                        <Border x:Name="PatternEditorSection"
+                                                                Background="#141A23"
+                                                                CornerRadius="8"
+                                                                BorderBrush="{StaticResource CardBorder}"
+                                                                BorderThickness="1"
+                                                                Padding="8"
+                                                                Margin="0,8,0,0"
+                                                                Visibility="Collapsed">
+                                                            <StackPanel>
+                                                                <DockPanel LastChildFill="False">
+                                                                    <TextBlock Text="{DynamicResource Loc.PatternEditorHint}"
+                                                                               Foreground="{StaticResource Muted}"
+                                                                               FontSize="11"
+                                                                               VerticalAlignment="Center"/>
+                                                                    <Button Content="{DynamicResource Loc.ButtonPatternClear}"
+                                                                            Height="24"
+                                                                            MinWidth="64"
+                                                                            Margin="8,0,0,0"
+                                                                            Style="{StaticResource GhostButton}"
+                                                                            Click="PatternClear_Click"/>
+                                                                </DockPanel>
+                                                                <Border Background="#11161F"
+                                                                        BorderBrush="{StaticResource CardBorder}"
+                                                                        BorderThickness="1"
+                                                                        CornerRadius="6"
+                                                                        Padding="6"
+                                                                        Margin="0,8,0,0">
+                                                                    <UniformGrid x:Name="PatternEditorGrid"
+                                                                                 Rows="16"
+                                                                                 Columns="16"
+                                                                                 Width="192"
+                                                                                 Height="192"/>
+                                                                </Border>
+                                                            </StackPanel>
+                                                        </Border>
                                                     </StackPanel>
                                                 </Border>
 
@@ -1575,15 +1709,26 @@
                                                                 HorizontalAlignment="Right"
                                                                 CornerRadius="4"
                                                                 Background="#F2F5FA"
-                                                                Margin="6,0,0,0"/>
+                                                                Margin="6,0,0,0"
+                                                                Cursor="Hand"
+                                                                MouseLeftButtonUp="Swatch_Click"/>
                                                     </DockPanel>
 
-                                                    <TextBox x:Name="FontFamilyInput"
-                                                             Grid.Row="1" Grid.Column="0"
-                                                             Height="30"
-                                                             Style="{StaticResource FlatTextBox}"
-                                                             Margin="0,4,10,10"
-                                                             TextChanged="AppearanceInputChanged"/>
+                                                    <ComboBox x:Name="FontFamilyCombo"
+                                                              Grid.Row="1" Grid.Column="0"
+                                                              Height="30"
+                                                              Style="{StaticResource FlatCombo}"
+                                                              Margin="0,4,10,10"
+                                                              IsTextSearchEnabled="True"
+                                                              MaxDropDownHeight="300"
+                                                              SelectionChanged="AppearanceInputChanged">
+                                                        <ComboBox.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <TextBlock Text="{Binding}"
+                                                                           FontFamily="{Binding}"/>
+                                                            </DataTemplate>
+                                                        </ComboBox.ItemTemplate>
+                                                    </ComboBox>
                                                     <TextBox x:Name="TextColorInput"
                                                              Grid.Row="1" Grid.Column="1"
                                                              Height="30"
@@ -1607,7 +1752,9 @@
                                                                 HorizontalAlignment="Right"
                                                                 CornerRadius="4"
                                                                 Background="#6E8BFF"
-                                                                Margin="6,0,0,0"/>
+                                                                Margin="6,0,0,0"
+                                                                Cursor="Hand"
+                                                                MouseLeftButtonUp="Swatch_Click"/>
                                                     </DockPanel>
 
                                                     <TextBox x:Name="TitleFontSizeInput"
@@ -1653,163 +1800,20 @@
                                                        FontWeight="SemiBold"
                                                        Foreground="White"
                                                        Margin="0,0,0,8"/>
-                                            <Border x:Name="PreviewPanel"
-                                                    Background="Transparent"
-                                                    CornerRadius="14"
-                                                    BorderBrush="{DynamicResource PreviewBorderBrush}"
-                                                    BorderThickness="1"
-                                                    Padding="1">
-                                                <Border.Resources>
-                                                    <sys:Double x:Key="PreviewTitleFontSize">16</sys:Double>
-                                                    <sys:Double x:Key="PreviewItemFontSize">12</sys:Double>
-                                                    <SolidColorBrush x:Key="PreviewTextBrush" Color="#F2F5FA"/>
-                                                    <SolidColorBrush x:Key="PreviewMutedBrush" Color="#A7B0C0"/>
-                                                    <SolidColorBrush x:Key="PreviewFolderBrush" Color="#6E8BFF"/>
-                                                    <SolidColorBrush x:Key="PreviewBorderBrush" Color="#343B48"/>
-                                                    <SolidColorBrush x:Key="PreviewInsetBrush" Color="#1E232B"/>
-                                                </Border.Resources>
-                                                <Border.Effect>
-                                                    <DropShadowEffect x:Name="PreviewShadow"
-                                                                      BlurRadius="18"
-                                                                      ShadowDepth="0"
-                                                                      Opacity="0.35"/>
-                                                </Border.Effect>
-                                                <Grid ClipToBounds="True">
-                                                    <Grid.RowDefinitions>
-                                                        <RowDefinition Height="46"/>
-                                                        <RowDefinition Height="*"/>
-                                                    </Grid.RowDefinitions>
-                                                    <Border x:Name="PreviewHeader"
-                                                            Grid.Row="0"
-                                                            Background="#2A303B"
-                                                            BorderBrush="{DynamicResource PreviewBorderBrush}"
-                                                            BorderThickness="0,0,0,1"
-                                                            CornerRadius="12,12,0,0"
-                                                            Padding="10,0">
-                                                        <Grid>
-                                                            <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="Auto"/>
-                                                                <ColumnDefinition Width="8"/>
-                                                                <ColumnDefinition Width="*"/>
-                                                                <ColumnDefinition Width="130"/>
-                                                                <ColumnDefinition Width="Auto"/>
-                                                            </Grid.ColumnDefinitions>
-                                                            <Border Width="24"
-                                                                    Height="24"
-                                                                    CornerRadius="8"
-                                                                    Background="{DynamicResource PreviewInsetBrush}"
-                                                                    BorderBrush="{DynamicResource PreviewBorderBrush}"
-                                                                    BorderThickness="1"
-                                                                    VerticalAlignment="Center">
-                                                                <Path Data="M2,5 L12,5 M2,9 L12,9"
-                                                                      Stroke="{DynamicResource PreviewTextBrush}"
-                                                                      StrokeThickness="1.4"
-                                                                      StrokeStartLineCap="Round"
-                                                                      StrokeEndLineCap="Round"
-                                                                      Width="12"
-                                                                      Height="12"
-                                                                      Stretch="Uniform"
-                                                                      HorizontalAlignment="Center"
-                                                                      VerticalAlignment="Center"/>
-                                                            </Border>
-
-                                                            <TextBlock x:Name="PreviewTitleText"
-                                                                       Grid.Column="2"
-                                                                       Text="{DynamicResource Loc.PanelDefaultTitle}"
-                                                                       FontSize="{DynamicResource PreviewTitleFontSize}"
-                                                                       FontWeight="SemiBold"
-                                                                       Foreground="{DynamicResource PreviewTextBrush}"
-                                                                       VerticalAlignment="Center"
-                                                                       TextTrimming="CharacterEllipsis"/>
-
-                                                            <Border Grid.Column="3"
-                                                                    Background="{DynamicResource PreviewInsetBrush}"
-                                                                    BorderBrush="{DynamicResource PreviewBorderBrush}"
-                                                                    BorderThickness="1"
-                                                                    CornerRadius="9"
-                                                                    Padding="8,0"
-                                                                    VerticalAlignment="Center">
-                                                                <TextBlock x:Name="PreviewSearchText"
-                                                                           Text="{DynamicResource Loc.PanelSearchPlaceholder}"
-                                                                           Foreground="{DynamicResource PreviewMutedBrush}"
-                                                                           FontSize="11"
-                                                                           VerticalAlignment="Center"
-                                                                           TextTrimming="CharacterEllipsis"/>
-                                                            </Border>
-
-                                                            <StackPanel Grid.Column="4"
-                                                                        Orientation="Horizontal"
-                                                                        VerticalAlignment="Center"
-                                                                        Margin="8,0,0,0">
-                                                                <Border Width="20"
-                                                                        Height="20"
-                                                                        CornerRadius="6"
-                                                                        Background="{DynamicResource PreviewInsetBrush}"
-                                                                        BorderBrush="{DynamicResource PreviewBorderBrush}"
-                                                                        BorderThickness="1"/>
-                                                                <Border Width="20"
-                                                                        Height="20"
-                                                                        CornerRadius="6"
-                                                                        Background="{DynamicResource PreviewInsetBrush}"
-                                                                        BorderBrush="{DynamicResource PreviewBorderBrush}"
-                                                                        BorderThickness="1"
-                                                                        Margin="6,0,0,0"/>
-                                                            </StackPanel>
-                                                        </Grid>
-                                                    </Border>
-                                                    <Border x:Name="PreviewContent"
-                                                            Grid.Row="1"
-                                                            Background="{DynamicResource PreviewInsetBrush}"
-                                                            CornerRadius="0,0,12,12"
-                                                            BorderBrush="{DynamicResource PreviewBorderBrush}"
-                                                            BorderThickness="0"
-                                                            Padding="10,8,10,10"
-                                                            Margin="0">
-                                                        <Grid>
-                                                            <Border BorderBrush="{DynamicResource PreviewBorderBrush}"
-                                                                    BorderThickness="1"
-                                                                    CornerRadius="9"
-                                                                    Background="#16FFFFFF"
-                                                                    Margin="4"/>
-                                                            <WrapPanel x:Name="PreviewItems" Margin="4">
-                                                                <StackPanel Width="90" Margin="6">
-                                                                    <Grid Width="30" Height="24" HorizontalAlignment="Center">
-                                                                        <Border Background="{DynamicResource PreviewFolderBrush}" CornerRadius="4" Height="16" VerticalAlignment="Bottom"/>
-                                                                        <Border Background="{DynamicResource PreviewFolderBrush}" CornerRadius="3" Width="14" Height="8" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="4,0,0,0"/>
-                                                                    </Grid>
-                                                                    <TextBlock Text="{DynamicResource Loc.PreviewFolderDocs}" Foreground="{DynamicResource PreviewFolderBrush}" FontSize="{DynamicResource PreviewItemFontSize}" TextAlignment="Center" TextWrapping="Wrap" Margin="0,5,0,0"/>
-                                                                </StackPanel>
-                                                                <StackPanel Width="90" Margin="6">
-                                                                    <Grid Width="30" Height="24" HorizontalAlignment="Center">
-                                                                        <Border Background="{DynamicResource PreviewFolderBrush}" CornerRadius="4" Height="16" VerticalAlignment="Bottom"/>
-                                                                        <Border Background="{DynamicResource PreviewFolderBrush}" CornerRadius="3" Width="14" Height="8" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="4,0,0,0"/>
-                                                                    </Grid>
-                                                                    <TextBlock Text="{DynamicResource Loc.PreviewFolderPhotos}" Foreground="{DynamicResource PreviewFolderBrush}" FontSize="{DynamicResource PreviewItemFontSize}" TextAlignment="Center" TextWrapping="Wrap" Margin="0,5,0,0"/>
-                                                                </StackPanel>
-                                                                <StackPanel Width="90" Margin="6">
-                                                                    <Grid Width="30" Height="24" HorizontalAlignment="Center">
-                                                                        <Border Background="{DynamicResource PreviewFolderBrush}" CornerRadius="4" Height="16" VerticalAlignment="Bottom"/>
-                                                                        <Border Background="{DynamicResource PreviewFolderBrush}" CornerRadius="3" Width="14" Height="8" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="4,0,0,0"/>
-                                                                    </Grid>
-                                                                    <TextBlock Text="{DynamicResource Loc.PreviewFolderProjects}" Foreground="{DynamicResource PreviewFolderBrush}" FontSize="{DynamicResource PreviewItemFontSize}" TextAlignment="Center" TextWrapping="Wrap" Margin="0,5,0,0"/>
-                                                                </StackPanel>
-                                                                <StackPanel Width="90" Margin="6">
-                                                                    <Border Width="22" Height="26" CornerRadius="3" BorderBrush="{DynamicResource PreviewTextBrush}" BorderThickness="1" HorizontalAlignment="Center" Background="Transparent"/>
-                                                                    <TextBlock Text="{DynamicResource Loc.PreviewFileReadme}" Foreground="{DynamicResource PreviewTextBrush}" FontSize="{DynamicResource PreviewItemFontSize}" TextAlignment="Center" TextWrapping="Wrap" Margin="0,5,0,0"/>
-                                                                </StackPanel>
-                                                                <StackPanel Width="90" Margin="6">
-                                                                    <Border Width="22" Height="26" CornerRadius="3" BorderBrush="{DynamicResource PreviewTextBrush}" BorderThickness="1" HorizontalAlignment="Center" Background="Transparent"/>
-                                                                    <TextBlock Text="{DynamicResource Loc.PreviewFileTodo}" Foreground="{DynamicResource PreviewTextBrush}" FontSize="{DynamicResource PreviewItemFontSize}" TextAlignment="Center" TextWrapping="Wrap" Margin="0,5,0,0"/>
-                                                                </StackPanel>
-                                                                <StackPanel Width="90" Margin="6">
-                                                                    <Border Width="22" Height="26" CornerRadius="3" BorderBrush="{DynamicResource PreviewTextBrush}" BorderThickness="1" HorizontalAlignment="Center" Background="Transparent"/>
-                                                                    <TextBlock Text="{DynamicResource Loc.PreviewFileBudget}" Foreground="{DynamicResource PreviewTextBrush}" FontSize="{DynamicResource PreviewItemFontSize}" TextAlignment="Center" TextWrapping="Wrap" Margin="0,5,0,0"/>
-                                                                </StackPanel>
-                                                            </WrapPanel>
-                                                        </Grid>
-                                                    </Border>
-                                                </Grid>
-                                            </Border>
+                                            <Grid>
+                                                <Border CornerRadius="14"
+                                                        Background="#242833"
+                                                        Margin="2"/>
+                                                <Viewbox Stretch="Uniform"
+                                                         StretchDirection="Both"
+                                                         Margin="0">
+                                                    <Grid x:Name="PreviewPanelHost"
+                                                          Width="820"
+                                                          Height="480"
+                                                          ClipToBounds="True"
+                                                          IsHitTestVisible="False"/>
+                                                </Viewbox>
+                                            </Grid>
                                         </StackPanel>
                                     </Border>
                                 </Grid>
@@ -1840,6 +1844,15 @@
                 </TabControl>
             </StackPanel>
         </ScrollViewer>
+
+        <Popup x:Name="ColorPickerPopup"
+               AllowsTransparency="True"
+               StaysOpen="False"
+               Placement="Bottom"
+               PopupAnimation="Fade"
+               HorizontalOffset="-150">
+            <local:ColorPickerPopup x:Name="ColorPicker"/>
+        </Popup>
     </Grid>
 </Window>
 

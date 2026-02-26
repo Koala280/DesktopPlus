@@ -115,6 +115,7 @@
                                Placement="Bottom"
                                IsOpen="{TemplateBinding IsDropDownOpen}"
                                Focusable="False"
+                               StaysOpen="False"
                                PopupAnimation="Fade">
                             <Border Background="{StaticResource InputBackground}"
                                     BorderBrush="{StaticResource InputBorder}"
@@ -371,35 +372,40 @@
     </Style>
 
     <Style x:Key="PillTabItem" TargetType="TabItem">
-        <Setter Property="Foreground" Value="#8891A0"/>
+        <Setter Property="Foreground" Value="#6B7280"/>
         <Setter Property="Background" Value="Transparent"/>
-        <Setter Property="Padding" Value="16,8"/>
-        <Setter Property="Margin" Value="0"/>
-        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Padding" Value="0,10,0,12"/>
+        <Setter Property="Margin" Value="0,0,28,0"/>
+        <Setter Property="FontSize" Value="13.5"/>
         <Setter Property="FontWeight" Value="Medium"/>
-        <Setter Property="MinHeight" Value="32"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TabItem">
-                    <Border x:Name="Bg"
-                            Background="{TemplateBinding Background}"
-                            CornerRadius="6"
-                            Padding="{TemplateBinding Padding}">
-                        <ContentPresenter ContentSource="Header"
-                                          RecognizesAccessKey="True"
-                                          HorizontalAlignment="Center"
-                                          VerticalAlignment="Center"/>
-                    </Border>
+                    <Grid>
+                        <Border x:Name="Bg"
+                                Background="Transparent"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter ContentSource="Header"
+                                              RecognizesAccessKey="True"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <Border x:Name="Indicator"
+                                Height="2"
+                                VerticalAlignment="Bottom"
+                                Background="Transparent"
+                                CornerRadius="1"
+                                Margin="0,0,0,0"/>
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Bg" Property="Background" Value="#262B35"/>
-                            <Setter Property="Foreground" Value="#C5CCD8"/>
+                            <Setter Property="Foreground" Value="#A7B0C0"/>
                         </Trigger>
                         <Trigger Property="IsSelected" Value="True">
-                            <Setter TargetName="Bg" Property="Background" Value="#2D3340"/>
                             <Setter Property="Foreground" Value="White"/>
+                            <Setter TargetName="Indicator" Property="Background" Value="{StaticResource Primary}"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -484,22 +490,20 @@
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        <Border Grid.Row="0"
-                                Background="#1C2028"
-                                CornerRadius="8"
-                                Padding="4"
-                                Margin="0,0,0,16"
-                                HorizontalAlignment="Left"
-                                VerticalAlignment="Center">
-                            <TabPanel x:Name="HeaderPanel"
-                                      IsItemsHost="True"
-                                      Background="Transparent"
-                                      HorizontalAlignment="Left"
-                                      VerticalAlignment="Center"/>
-                        </Border>
-                        <ContentPresenter Grid.Row="1"
+                        <TabPanel Grid.Row="0"
+                                  x:Name="HeaderPanel"
+                                  IsItemsHost="True"
+                                  Background="Transparent"
+                                  HorizontalAlignment="Left"
+                                  Margin="2,0,0,0"/>
+                        <Border Grid.Row="1"
+                                Height="1"
+                                Background="#2A303A"
+                                Margin="0,0,0,20"/>
+                        <ContentPresenter Grid.Row="2"
                                           x:Name="PART_SelectedContentHost"
                                           ContentSource="SelectedContent"/>
                     </Grid>

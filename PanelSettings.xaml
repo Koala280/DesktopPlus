@@ -109,14 +109,21 @@
                              Margin="0,4,10,8"/>
 
                     <TextBlock Grid.Row="0" Grid.Column="1" Text="{DynamicResource Loc.PanelSettingsPreset}" Foreground="{StaticResource Muted}" FontSize="12"/>
-                    <ComboBox x:Name="PresetSelect"
-                              Grid.Row="1" Grid.Column="1"
-                              Height="34"
-                              Style="{StaticResource FlatCombo}"
-                              DisplayMemberPath="Name"
-                              SelectedValuePath="Name"
-                              Margin="0,4,0,8"
-                              SelectionChanged="PresetSelect_SelectionChanged"/>
+                    <StackPanel Grid.Row="1" Grid.Column="1"
+                                Margin="0,4,0,8">
+                        <ComboBox x:Name="PresetSelect"
+                                  Height="34"
+                                  Style="{StaticResource FlatCombo}"
+                                  DisplayMemberPath="Name"
+                                  SelectedValuePath="Name"
+                                  SelectionChanged="PresetSelect_SelectionChanged"/>
+                        <Button x:Name="ResetPresetToStandardButton"
+                                Content="{DynamicResource Loc.PanelSettingsResetToStandard}"
+                                Style="{StaticResource GhostButton}"
+                                Padding="10,6"
+                                Margin="0,6,0,0"
+                                Click="ResetPresetToStandardButton_Click"/>
+                    </StackPanel>
 
                     <TextBlock Grid.Row="2" Grid.Column="0" Text="{DynamicResource Loc.PanelSettingsDefaultFolder}" Foreground="{StaticResource Muted}" FontSize="12"/>
                     <StackPanel Grid.Row="3" Grid.Column="0" Orientation="Horizontal" Margin="0,4,10,8">
