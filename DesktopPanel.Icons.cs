@@ -95,6 +95,8 @@ namespace DesktopPlus
             double textSize = Math.Max(8, activeAppearance.ItemFontSize) * zoomFactor;
             double panelWidth = 100 * zoomFactor;
             bool isFolder = isBackButton || Directory.Exists(path);
+            bool isHiddenItem = !isBackButton && showHiddenItems && IsHiddenPath(path);
+            double baseOpacity = isHiddenItem ? 0.58 : 1.0;
             var textBrush = CreateBrush(
                 isFolder ? ResolveFolderColor(activeAppearance) : activeAppearance.TextColor,
                 1.0,
@@ -105,7 +107,8 @@ namespace DesktopPlus
                 Orientation = System.Windows.Controls.Orientation.Vertical,
                 Width = panelWidth,
                 Margin = new Thickness(5),
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Center
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+                Opacity = baseOpacity
             };
 
             System.Windows.Controls.Image icon = new System.Windows.Controls.Image
@@ -135,12 +138,20 @@ namespace DesktopPlus
             panel.Children.Add(text);
             panel.PreviewMouseLeftButtonDown += (s, e) =>
             {
-                panel.Opacity = 0.8;
+                panel.Opacity = Math.Max(0.45, baseOpacity - 0.2);
             };
 
             panel.MouseLeftButtonUp += (s, e) =>
             {
-                panel.Opacity = 1.0;
+                panel.Opacity = baseOpacity;
+            };
+
+            panel.MouseLeave += (s, e) =>
+            {
+                if (Mouse.LeftButton != MouseButtonState.Pressed)
+                {
+                    panel.Opacity = baseOpacity;
+                }
             };
             return panel;
         }
@@ -203,6 +214,75 @@ namespace DesktopPlus
             UpdateWrapPanelWidth();
         }
 
+        public void FitToContent()
+        {
+            if (ContentContainer == null || FileList == null) return;
+
+            if (!isContentVisible)
+            {
+                ForceCollapseState(false);
+            }
+
+            SetContentLayerVisibility(true);
+            UpdateWrapPanelWidth();
+            UpdateLayout();
+
+            var wrapPanel = FindVisualChild<WrapPanel>(FileList);
+            if (wrapPanel == null)
+            {
+                MainWindow.SaveSettings();
+                return;
+            }
+
+            double measureWidth = wrapPanel.Width > 0 ? wrapPanel.Width : ContentContainer.ActualWidth;
+            if (measureWidth <= 1)
+            {
+                MainWindow.SaveSettings();
+                return;
+            }
+
+            wrapPanel.Measure(new System.Windows.Size(measureWidth, double.PositiveInfinity));
+            double desiredWrapHeight = wrapPanel.DesiredSize.Height;
+            double viewportHeight = ContentContainer.ViewportHeight > 0
+                ? ContentContainer.ViewportHeight
+                : ContentContainer.ActualHeight;
+
+            if (viewportHeight <= 1)
+            {
+                MainWindow.SaveSettings();
+                return;
+            }
+
+            const double viewportPadding = 6;
+            double targetViewportHeight = Math.Max(0, desiredWrapHeight + viewportPadding);
+            double delta = targetViewportHeight - viewportHeight;
+            if (Math.Abs(delta) <= 0.5)
+            {
+                MainWindow.SaveSettings();
+                return;
+            }
+
+            double collapsedHeight = GetCollapsedHeight();
+            double minWindowHeight = Math.Max(collapsedHeight, MinHeight > 0 ? MinHeight : 0);
+            Rect workArea = GetWorkAreaForPanel();
+            double maxWindowHeight = Math.Max(minWindowHeight, workArea.Bottom - Top);
+
+            double targetHeight = Height + delta;
+            targetHeight = Math.Max(minWindowHeight, Math.Min(targetHeight, maxWindowHeight));
+
+            Height = targetHeight;
+            expandedHeight = Math.Max(collapsedHeight, targetHeight);
+            SyncAnchoringFromCurrentBounds();
+            UpdateWrapPanelWidth();
+
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                UpdateWrapPanelWidth();
+                MainWindow.SaveSettings();
+                MainWindow.NotifyPanelsChanged();
+            }), System.Windows.Threading.DispatcherPriority.Render);
+        }
+
         private void UpdateWrapPanelWidth()
         {
             if (ContentContainer == null || FileList == null) return;
@@ -210,16 +290,23 @@ namespace DesktopPlus
             var wrapPanel = FindVisualChild<WrapPanel>(FileList);
             if (wrapPanel != null)
             {
-                // Keep a stable gutter so scrollbar appearance does not shift icon layout.
+                // Keep reserve independent from current scrollbar visibility so
+                // Fit-to-content remains stable and doesn't oscillate on wrap changes.
                 const double horizontalInset = 10;
-                const double scrollbarGutterReserve = 8;
-                double baseWidth = ContentContainer.ViewportWidth > 0
-                    ? ContentContainer.ViewportWidth
-                    : ContentContainer.ActualWidth;
+                const double scrollbarGutterReserve = 6;
+                double baseWidth = ContentContainer.ActualWidth > 0
+                    ? ContentContainer.ActualWidth
+                    : ContentContainer.ViewportWidth;
                 double availableWidth = baseWidth - horizontalInset - scrollbarGutterReserve;
                 if (availableWidth > 0)
                 {
-                    wrapPanel.Width = availableWidth;
+                    if (Math.Abs(wrapPanel.Width - availableWidth) > 0.5)
+                    {
+                        wrapPanel.Width = availableWidth;
+                        wrapPanel.InvalidateMeasure();
+                        wrapPanel.InvalidateArrange();
+                        FileList.InvalidateMeasure();
+                    }
                 }
             }
         }

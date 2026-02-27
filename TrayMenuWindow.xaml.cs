@@ -1,6 +1,8 @@
 using System;
+using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media.Imaging;
 
 namespace DesktopPlus
 {
@@ -14,6 +16,7 @@ namespace DesktopPlus
         public TrayMenuWindow(Action openMainAction, Action exitAction)
         {
             InitializeComponent();
+            TrySetWindowIcon();
             _openMainAction = openMainAction;
             _exitAction = exitAction;
             RefreshTexts();
@@ -46,8 +49,27 @@ namespace DesktopPlus
 
         public void RefreshTexts()
         {
-            OpenMainButton.Content = MainWindow.GetString("Loc.TrayOpen");
-            ExitButton.Content = MainWindow.GetString("Loc.TrayExit");
+            OpenMainButtonText.Text = MainWindow.GetString("Loc.TrayOpen");
+            ExitButtonText.Text = MainWindow.GetString("Loc.TrayExit");
+            TrayStatusText.Text = MainWindow.GetString("Loc.TrayStatusRunning");
+            TrayHintText.Text = MainWindow.GetString("Loc.TrayHintEsc");
+        }
+
+        private void TrySetWindowIcon()
+        {
+            try
+            {
+                string iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "desktopplus_icon.ico");
+                if (!File.Exists(iconPath)) return;
+
+                using var stream = new FileStream(iconPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                Icon = BitmapFrame.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+                Icon.Freeze();
+            }
+            catch
+            {
+                // Keep tray menu usable even if icon asset is missing.
+            }
         }
 
         private void TrayMenuWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)

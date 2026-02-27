@@ -651,6 +651,8 @@ namespace DesktopPlus
             if (_appearancePreviewPanel == null || _appearancePreviewRoot == null)
             {
                 var previewPanel = new DesktopPanel();
+                previewPanel.IsPreviewPanel = true;
+                previewPanel.PanelId = "preview:appearance";
                 previewPanel.expandOnHover = false;
                 previewPanel.SetExpandOnHover(false);
                 previewPanel.ApplyMovementMode("locked");

@@ -9,24 +9,123 @@ namespace DesktopPlus
 {
     public partial class MainWindow : Window
     {
+        private sealed class LayoutPanelDefaultsSnapshot
+        {
+            public bool ShowHidden { get; set; }
+            public bool ShowFileExtensions { get; set; } = true;
+            public bool ExpandOnHover { get; set; } = true;
+            public bool OpenFoldersExternally { get; set; }
+            public bool ShowSettingsButton { get; set; } = true;
+            public string MovementMode { get; set; } = "titlebar";
+            public string SearchVisibilityMode { get; set; } = DesktopPanel.SearchVisibilityAlways;
+        }
+
+        private static string NormalizePanelMovementMode(string? mode)
+        {
+            if (string.Equals(mode, "button", StringComparison.OrdinalIgnoreCase))
+            {
+                return "button";
+            }
+
+            if (string.Equals(mode, "locked", StringComparison.OrdinalIgnoreCase))
+            {
+                return "locked";
+            }
+
+            return "titlebar";
+        }
+
+        private static void NormalizeLayoutPanelDefaults(LayoutDefinition layout)
+        {
+            if (layout == null)
+            {
+                return;
+            }
+
+            layout.PanelDefaultMovementMode = NormalizePanelMovementMode(layout.PanelDefaultMovementMode);
+            layout.PanelDefaultSearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(layout.PanelDefaultSearchVisibilityMode);
+        }
+
+        private static LayoutPanelDefaultsSnapshot CaptureLayoutPanelDefaults(LayoutDefinition layout)
+        {
+            NormalizeLayoutPanelDefaults(layout);
+            return new LayoutPanelDefaultsSnapshot
+            {
+                ShowHidden = layout.PanelDefaultShowHidden,
+                ShowFileExtensions = layout.PanelDefaultShowFileExtensions,
+                ExpandOnHover = layout.PanelDefaultExpandOnHover,
+                OpenFoldersExternally = layout.PanelDefaultOpenFoldersExternally,
+                ShowSettingsButton = layout.PanelDefaultShowSettingsButton,
+                MovementMode = layout.PanelDefaultMovementMode,
+                SearchVisibilityMode = layout.PanelDefaultSearchVisibilityMode
+            };
+        }
+
+        private static void ApplyLayoutPanelDefaults(LayoutDefinition layout, LayoutPanelDefaultsSnapshot defaults)
+        {
+            layout.PanelDefaultShowHidden = defaults.ShowHidden;
+            layout.PanelDefaultShowFileExtensions = defaults.ShowFileExtensions;
+            layout.PanelDefaultExpandOnHover = defaults.ExpandOnHover;
+            layout.PanelDefaultOpenFoldersExternally = defaults.OpenFoldersExternally;
+            layout.PanelDefaultShowSettingsButton = defaults.ShowSettingsButton;
+            layout.PanelDefaultMovementMode = NormalizePanelMovementMode(defaults.MovementMode);
+            layout.PanelDefaultSearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(defaults.SearchVisibilityMode);
+        }
+
+        private static void CopyPanelBehaviorSettings(WindowData source, WindowData target)
+        {
+            target.PresetName = source.PresetName;
+            target.ShowHidden = source.ShowHidden;
+            target.ShowFileExtensions = source.ShowFileExtensions;
+            target.ExpandOnHover = source.ExpandOnHover;
+            target.OpenFoldersExternally = source.OpenFoldersExternally;
+            target.ShowSettingsButton = source.ShowSettingsButton;
+            target.MovementMode = NormalizePanelMovementMode(source.MovementMode);
+            target.SearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(source.SearchVisibilityMode);
+        }
+
+        private static void ApplyPanelBehaviorToOpenPanel(DesktopPanel panel, WindowData source)
+        {
+            bool hiddenChanged = panel.showHiddenItems != source.ShowHidden;
+            bool fileExtensionsChanged = panel.showFileExtensions != source.ShowFileExtensions;
+            string sourcePresetName = string.IsNullOrWhiteSpace(source.PresetName) ? DefaultPresetName : source.PresetName;
+
+            if (!string.Equals(panel.assignedPresetName, sourcePresetName, StringComparison.OrdinalIgnoreCase))
+            {
+                panel.assignedPresetName = sourcePresetName;
+                panel.ApplyAppearance(GetPresetSettings(sourcePresetName));
+            }
+
+            panel.showHiddenItems = source.ShowHidden;
+            panel.showFileExtensions = source.ShowFileExtensions;
+            panel.SetExpandOnHover(source.ExpandOnHover);
+            panel.openFoldersExternally = source.OpenFoldersExternally;
+            panel.showSettingsButton = source.ShowSettingsButton;
+            panel.ApplySettingsButtonVisibility();
+            panel.ApplyMovementMode(NormalizePanelMovementMode(source.MovementMode));
+            panel.SetSearchVisibilityMode(source.SearchVisibilityMode);
+
+            if ((hiddenChanged || fileExtensionsChanged) && !string.IsNullOrWhiteSpace(panel.currentFolderPath))
+            {
+                panel.LoadFolder(panel.currentFolderPath, false);
+            }
+            else if (fileExtensionsChanged && panel.PanelType == PanelKind.List)
+            {
+                panel.LoadList(panel.PinnedItems.ToArray(), false);
+            }
+        }
+
         private void RefreshLayoutList()
         {
             if (LayoutOverviewList == null || LayoutOverviewCount == null) return;
 
             var ordered = Layouts.OrderBy(l => l.Name).ToList();
-            var presets = Presets
-                .OrderBy(p => p.IsBuiltIn ? 0 : 1)
-                .ThenBy(p => p.Name)
-                .ToList();
-
-            _suspendLayoutPresetSelection = true;
-            var items = ordered.Select(layout => BuildLayoutOverviewItem(layout, presets)).ToList();
+            var items = ordered.Select(BuildLayoutOverviewItem).ToList();
             LayoutOverviewList.ItemsSource = items;
-            _suspendLayoutPresetSelection = false;
             LayoutOverviewCount.Text = string.Format(GetString("Loc.LayoutCount"), items.Count);
         }
 
-        private LayoutOverviewItem BuildLayoutOverviewItem(LayoutDefinition layout, List<AppearancePreset> presets)
+        private LayoutOverviewItem BuildLayoutOverviewItem(LayoutDefinition layout)
         {
             int total = layout.Panels?.Count ?? 0;
             int hidden = layout.Panels?.Count(p => p.IsHidden) ?? 0;
@@ -49,7 +148,6 @@ namespace DesktopPlus
                 Name = name,
                 Summary = summary,
                 DefaultPresetName = defaultPresetName,
-                Presets = presets,
                 Layout = layout
             };
         }
@@ -119,16 +217,6 @@ namespace DesktopPlus
             var mainWindow = Application.Current?.MainWindow as MainWindow;
             string candidate = mainWindow?._layoutDefaultPresetName ?? DefaultPresetName;
 
-            if (mainWindow != null && !string.IsNullOrWhiteSpace(mainWindow._activeLayoutName))
-            {
-                var activeLayout = Layouts.FirstOrDefault(l =>
-                    string.Equals(l.Name, mainWindow._activeLayoutName, StringComparison.OrdinalIgnoreCase));
-                if (activeLayout != null && !string.IsNullOrWhiteSpace(activeLayout.DefaultPanelPresetName))
-                {
-                    candidate = activeLayout.DefaultPanelPresetName;
-                }
-            }
-
             if (string.IsNullOrWhiteSpace(candidate) ||
                 !Presets.Any(p => string.Equals(p.Name, candidate, StringComparison.OrdinalIgnoreCase)))
             {
@@ -140,50 +228,10 @@ namespace DesktopPlus
             return candidate;
         }
 
-        private void SyncActiveLayoutFromCurrentState()
-        {
-            if (string.IsNullOrWhiteSpace(_activeLayoutName))
-            {
-                return;
-            }
-
-            var activeLayout = Layouts.FirstOrDefault(l =>
-                string.Equals(l.Name, _activeLayoutName, StringComparison.OrdinalIgnoreCase));
-            if (activeLayout == null)
-            {
-                _activeLayoutName = "";
-                return;
-            }
-
-            string layoutDefaultPresetName = ResolveLayoutDefaultPresetName(activeLayout);
-            activeLayout.DefaultPanelPresetName = layoutDefaultPresetName;
-            string selectedThemePreset = GetSelectedPresetName();
-            if (!string.IsNullOrWhiteSpace(selectedThemePreset))
-            {
-                activeLayout.ThemePresetName = selectedThemePreset;
-            }
-            activeLayout.Appearance = CloneAppearance(Appearance);
-
-            var normalizedPanels = savedWindows
-                .Select(CloneWindowData)
-                .Where(HasPersistableLayoutContent)
-                .ToList();
-
-            foreach (var panel in normalizedPanels)
-            {
-                NormalizeWindowData(panel);
-                panel.PresetName = EncodeLayoutPanelPreset(panel.PresetName, layoutDefaultPresetName);
-            }
-
-            activeLayout.Panels = CreateWindowDataMap(normalizedPanels, rewriteDuplicates: true)
-                .Values
-                .Select(CloneWindowData)
-                .ToList();
-        }
-
         private List<WindowData> CaptureOpenPanelsForLayout(string layoutDefaultPresetName)
         {
             var panels = Application.Current.Windows.OfType<DesktopPanel>()
+                .Where(IsUserPanel)
                 .Select(BuildWindowDataFromPanel)
                 .Where(HasPersistableLayoutContent)
                 .ToList();
@@ -201,64 +249,6 @@ namespace DesktopPlus
                 .ToList();
         }
 
-        private void LayoutItemPresetCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
-        {
-            if (_suspendLayoutPresetSelection) return;
-            if (sender is not System.Windows.Controls.ComboBox combo) return;
-            if (combo.Tag is not LayoutOverviewItem item) return;
-            if (!combo.IsKeyboardFocusWithin && !combo.IsDropDownOpen) return;
-            if (combo.SelectedItem is not AppearancePreset preset) return;
-            if (item.Layout == null) return;
-
-            string previousDefault = ResolveLayoutDefaultPresetName(item.Layout);
-            string nextDefault = preset.Name;
-            item.Layout.DefaultPanelPresetName = nextDefault;
-            item.DefaultPresetName = nextDefault;
-            _layoutDefaultPresetName = nextDefault;
-
-            var standardPanelKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var layoutPanel in item.Layout.Panels ?? new List<WindowData>())
-            {
-                NormalizeWindowData(layoutPanel);
-                bool usesLayoutStandard = string.IsNullOrWhiteSpace(layoutPanel.PresetName) ||
-                                          string.Equals(layoutPanel.PresetName, previousDefault, StringComparison.OrdinalIgnoreCase);
-                if (!usesLayoutStandard) continue;
-
-                standardPanelKeys.Add(GetPanelKey(layoutPanel));
-                layoutPanel.PresetName = "";
-            }
-
-            if (!string.Equals(previousDefault, nextDefault, StringComparison.OrdinalIgnoreCase))
-            {
-                var appearance = GetPresetSettings(nextDefault);
-                foreach (var panel in Application.Current.Windows.OfType<DesktopPanel>())
-                {
-                    bool matchesStandardKey = standardPanelKeys.Contains(GetPanelKey(panel));
-                    bool matchesStandardPreset = string.Equals(panel.assignedPresetName, previousDefault, StringComparison.OrdinalIgnoreCase) ||
-                                                string.IsNullOrWhiteSpace(panel.assignedPresetName);
-                    if (!matchesStandardKey && !matchesStandardPreset) continue;
-
-                    panel.assignedPresetName = nextDefault;
-                    panel.ApplyAppearance(appearance);
-                }
-
-                foreach (var saved in savedWindows)
-                {
-                    NormalizeWindowData(saved);
-                    bool matchesStandardKey = standardPanelKeys.Contains(GetPanelKey(saved));
-                    bool matchesStandardPreset = string.Equals(saved.PresetName, previousDefault, StringComparison.OrdinalIgnoreCase) ||
-                                                string.IsNullOrWhiteSpace(saved.PresetName);
-                    if (!matchesStandardKey && !matchesStandardPreset) continue;
-
-                    saved.PresetName = nextDefault;
-                }
-            }
-
-            SaveSettings();
-            RefreshLayoutList();
-            NotifyPanelsChanged();
-        }
-
         private void CreateLayoutFromCurrent_Click(object sender, RoutedEventArgs e)
         {
             SaveSettings();
@@ -273,9 +263,17 @@ namespace DesktopPlus
                 Name = name,
                 ThemePresetName = GetSelectedPresetName(),
                 DefaultPanelPresetName = layoutDefaultPresetName,
+                PanelDefaultShowHidden = false,
+                PanelDefaultShowFileExtensions = true,
+                PanelDefaultExpandOnHover = true,
+                PanelDefaultOpenFoldersExternally = false,
+                PanelDefaultShowSettingsButton = true,
+                PanelDefaultMovementMode = "titlebar",
+                PanelDefaultSearchVisibilityMode = DesktopPanel.SearchVisibilityAlways,
                 Appearance = CloneAppearance(Appearance),
                 Panels = CaptureOpenPanelsForLayout(layoutDefaultPresetName)
             };
+            NormalizeLayoutPanelDefaults(layout);
             Layouts.Add(layout);
             SaveSettings();
             RefreshLayoutList();
@@ -293,12 +291,173 @@ namespace DesktopPlus
                 Name = name,
                 ThemePresetName = GetSelectedPresetName(),
                 DefaultPanelPresetName = GetSelectedLayoutDefaultPresetName(),
+                PanelDefaultShowHidden = false,
+                PanelDefaultShowFileExtensions = true,
+                PanelDefaultExpandOnHover = true,
+                PanelDefaultOpenFoldersExternally = false,
+                PanelDefaultShowSettingsButton = true,
+                PanelDefaultMovementMode = "titlebar",
+                PanelDefaultSearchVisibilityMode = DesktopPanel.SearchVisibilityAlways,
                 Appearance = CloneAppearance(Appearance),
                 Panels = new List<WindowData>()
             };
+            NormalizeLayoutPanelDefaults(layout);
             Layouts.Add(layout);
             SaveSettings();
             RefreshLayoutList();
+        }
+
+        private void OpenLayoutGlobalPanelSettings_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement fe && fe.Tag is LayoutDefinition layout)
+            {
+                NormalizeLayoutPanelDefaults(layout);
+                var settings = new PanelSettings(layout);
+                settings.Owner = this;
+                settings.Show();
+            }
+        }
+
+        internal void ApplyLayoutGlobalPanelSettings(
+            LayoutDefinition layout,
+            bool showHidden,
+            bool showFileExtensions,
+            bool expandOnHover,
+            bool openFoldersExternally,
+            bool showSettingsButton,
+            string movementMode,
+            string searchVisibilityMode,
+            string? defaultPresetName)
+        {
+            if (layout == null)
+            {
+                return;
+            }
+
+            string oldDefaultPresetName = ResolveLayoutDefaultPresetName(layout);
+            string nextDefaultPresetName = !string.IsNullOrWhiteSpace(defaultPresetName)
+                ? defaultPresetName
+                : oldDefaultPresetName;
+            if (string.IsNullOrWhiteSpace(nextDefaultPresetName) ||
+                !Presets.Any(p => string.Equals(p.Name, nextDefaultPresetName, StringComparison.OrdinalIgnoreCase)))
+            {
+                nextDefaultPresetName = oldDefaultPresetName;
+            }
+            bool defaultPresetChanged = !string.Equals(oldDefaultPresetName, nextDefaultPresetName, StringComparison.OrdinalIgnoreCase);
+
+            var oldDefaults = CaptureLayoutPanelDefaults(layout);
+            var newDefaults = new LayoutPanelDefaultsSnapshot
+            {
+                ShowHidden = showHidden,
+                ShowFileExtensions = showFileExtensions,
+                ExpandOnHover = expandOnHover,
+                OpenFoldersExternally = openFoldersExternally,
+                ShowSettingsButton = showSettingsButton,
+                MovementMode = NormalizePanelMovementMode(movementMode),
+                SearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(searchVisibilityMode)
+            };
+
+            var panelMap = CreateWindowDataMap(layout.Panels ?? new List<WindowData>(), rewriteDuplicates: true);
+            foreach (var openPanel in Application.Current.Windows.OfType<DesktopPanel>().Where(IsUserPanel))
+            {
+                string key = GetPanelKey(openPanel);
+                if (!panelMap.ContainsKey(key))
+                {
+                    continue;
+                }
+
+                var snapshot = BuildWindowDataFromPanel(openPanel);
+                NormalizeWindowData(snapshot);
+                panelMap[key] = snapshot;
+            }
+
+            foreach (var panel in panelMap.Values)
+            {
+                NormalizeWindowData(panel);
+                string effectivePresetName = ResolveLayoutPanelPreset(panel.PresetName, oldDefaultPresetName);
+                bool usesOldLayoutStandardPreset =
+                    string.IsNullOrWhiteSpace(panel.PresetName) ||
+                    string.Equals(effectivePresetName, oldDefaultPresetName, StringComparison.OrdinalIgnoreCase);
+
+                if (defaultPresetChanged && usesOldLayoutStandardPreset)
+                {
+                    effectivePresetName = nextDefaultPresetName;
+                }
+
+                panel.PresetName = effectivePresetName;
+
+                if (panel.ShowHidden == oldDefaults.ShowHidden)
+                {
+                    panel.ShowHidden = newDefaults.ShowHidden;
+                }
+
+                if (panel.ShowFileExtensions == oldDefaults.ShowFileExtensions)
+                {
+                    panel.ShowFileExtensions = newDefaults.ShowFileExtensions;
+                }
+
+                if (panel.ExpandOnHover == oldDefaults.ExpandOnHover)
+                {
+                    panel.ExpandOnHover = newDefaults.ExpandOnHover;
+                }
+
+                if (panel.OpenFoldersExternally == oldDefaults.OpenFoldersExternally)
+                {
+                    panel.OpenFoldersExternally = newDefaults.OpenFoldersExternally;
+                }
+
+                if (panel.ShowSettingsButton == oldDefaults.ShowSettingsButton)
+                {
+                    panel.ShowSettingsButton = newDefaults.ShowSettingsButton;
+                }
+
+                if (string.Equals(NormalizePanelMovementMode(panel.MovementMode), oldDefaults.MovementMode, StringComparison.OrdinalIgnoreCase))
+                {
+                    panel.MovementMode = newDefaults.MovementMode;
+                }
+
+                if (string.Equals(DesktopPanel.NormalizeSearchVisibilityMode(panel.SearchVisibilityMode), oldDefaults.SearchVisibilityMode, StringComparison.OrdinalIgnoreCase))
+                {
+                    panel.SearchVisibilityMode = newDefaults.SearchVisibilityMode;
+                }
+            }
+
+            layout.Panels = panelMap.Values
+                .Select(p =>
+                {
+                    var clone = CloneWindowData(p);
+                    clone.PresetName = EncodeLayoutPanelPreset(clone.PresetName, nextDefaultPresetName);
+                    return clone;
+                })
+                .ToList();
+            ApplyLayoutPanelDefaults(layout, newDefaults);
+            layout.DefaultPanelPresetName = nextDefaultPresetName;
+            _layoutDefaultPresetName = nextDefaultPresetName;
+
+            var updatedByKey = panelMap;
+            foreach (var saved in savedWindows)
+            {
+                if (!updatedByKey.TryGetValue(GetPanelKey(saved), out var source))
+                {
+                    continue;
+                }
+
+                CopyPanelBehaviorSettings(source, saved);
+            }
+
+            foreach (var openPanel in Application.Current.Windows.OfType<DesktopPanel>().Where(IsUserPanel))
+            {
+                if (!updatedByKey.TryGetValue(GetPanelKey(openPanel), out var source))
+                {
+                    continue;
+                }
+
+                ApplyPanelBehaviorToOpenPanel(openPanel, source);
+            }
+
+            SaveSettings();
+            RefreshLayoutList();
+            NotifyPanelsChanged();
         }
 
         private void ApplyLayout_Click(object sender, RoutedEventArgs e)
@@ -313,43 +472,11 @@ namespace DesktopPlus
         {
             if (sender is FrameworkElement fe && fe.Tag is LayoutDefinition layout)
             {
-                SaveSettings();
-
                 string layoutDefaultPresetName = ResolveLayoutDefaultPresetName(layout);
                 layout.DefaultPanelPresetName = layoutDefaultPresetName;
                 layout.ThemePresetName = GetSelectedPresetName();
                 layout.Appearance = CloneAppearance(Appearance);
-
-                var openPanelMap = CreateOpenPanelMap(Application.Current.Windows.OfType<DesktopPanel>());
-                var layoutPanelMap = CreateWindowDataMap(layout.Panels ?? new List<WindowData>(), rewriteDuplicates: true);
-                var updatedPanels = new List<WindowData>();
-
-                foreach (var existingLayoutPanel in layoutPanelMap.Values)
-                {
-                    var key = GetPanelKey(existingLayoutPanel);
-                    WindowData snapshot;
-
-                    if (openPanelMap.TryGetValue(key, out var openPanel))
-                    {
-                        snapshot = BuildWindowDataFromPanel(openPanel);
-                        snapshot.IsHidden = false;
-                    }
-                    else
-                    {
-                        snapshot = CloneWindowData(existingLayoutPanel);
-                    }
-
-                    NormalizeWindowData(snapshot);
-                    if (!HasPersistableLayoutContent(snapshot)) continue;
-
-                    snapshot.PresetName = EncodeLayoutPanelPreset(snapshot.PresetName, layoutDefaultPresetName);
-                    updatedPanels.Add(snapshot);
-                }
-
-                layout.Panels = CreateWindowDataMap(updatedPanels, rewriteDuplicates: true)
-                    .Values
-                    .Select(CloneWindowData)
-                    .ToList();
+                layout.Panels = CaptureOpenPanelsForLayout(layoutDefaultPresetName);
 
                 SaveSettings();
                 RefreshLayoutList();
@@ -360,11 +487,6 @@ namespace DesktopPlus
         {
             if (sender is FrameworkElement fe && fe.Tag is LayoutDefinition layout)
             {
-                if (!string.IsNullOrWhiteSpace(_activeLayoutName) &&
-                    string.Equals(_activeLayoutName, layout.Name, StringComparison.OrdinalIgnoreCase))
-                {
-                    _activeLayoutName = "";
-                }
                 Layouts.Remove(layout);
                 SaveSettings();
                 RefreshLayoutList();
@@ -378,7 +500,6 @@ namespace DesktopPlus
             string layoutDefaultPresetName = ResolveLayoutDefaultPresetName(layout);
             layout.DefaultPanelPresetName = layoutDefaultPresetName;
             _layoutDefaultPresetName = layoutDefaultPresetName;
-            _activeLayoutName = layout.Name;
 
             var layoutPanels = (layout.Panels ?? new List<WindowData>())
                 .Select(CloneWindowData)
@@ -392,7 +513,10 @@ namespace DesktopPlus
 
             var layoutDict = CreateWindowDataMap(layoutPanels, rewriteDuplicates: true);
 
-            var openPanels = Application.Current.Windows.OfType<DesktopPanel>().ToList();
+            var openPanels = Application.Current.Windows
+                .OfType<DesktopPanel>()
+                .Where(IsUserPanel)
+                .ToList();
             foreach (var panel in openPanels)
             {
                 panel.Close();

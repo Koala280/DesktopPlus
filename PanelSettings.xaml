@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="{DynamicResource Loc.PanelSettingsTitle}"
-        Height="460"
+        Height="500"
         Width="520"
         WindowStartupLocation="CenterOwner"
         Background="#1A1D23"
@@ -85,9 +85,20 @@
                 BorderThickness="1"
                 CornerRadius="0,0,12,12">
             <StackPanel>
-                <TextBlock Text="{DynamicResource Loc.PanelSettingsTitle}" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" Margin="0,0,0,8"/>
+                <TextBlock x:Name="SettingsHeading"
+                           Text="{DynamicResource Loc.PanelSettingsTitle}"
+                           FontSize="18"
+                           FontWeight="SemiBold"
+                           Foreground="{StaticResource TextPrimary}"
+                           Margin="0,0,0,2"/>
+                <TextBlock x:Name="SettingsModeHint"
+                           Foreground="{StaticResource Muted}"
+                           FontSize="12"
+                           Margin="0,0,0,6"
+                           Visibility="Collapsed"/>
                 <Grid Margin="0,6,0,0">
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -101,15 +112,15 @@
                         <ColumnDefinition Width="1.1*"/>
                     </Grid.ColumnDefinitions>
 
-                    <TextBlock Grid.Row="0" Grid.Column="0" Text="{DynamicResource Loc.PanelSettingsName}" Foreground="{StaticResource Muted}" FontSize="12"/>
+                    <TextBlock x:Name="NameLabel" Grid.Row="0" Grid.Column="0" Text="{DynamicResource Loc.PanelSettingsName}" Foreground="{StaticResource Muted}" FontSize="12"/>
                     <TextBox x:Name="NameInput"
                              Grid.Row="1" Grid.Column="0"
                              Height="34"
                              Style="{StaticResource FlatTextBox}"
                              Margin="0,4,10,8"/>
 
-                    <TextBlock Grid.Row="0" Grid.Column="1" Text="{DynamicResource Loc.PanelSettingsPreset}" Foreground="{StaticResource Muted}" FontSize="12"/>
-                    <StackPanel Grid.Row="1" Grid.Column="1"
+                    <TextBlock x:Name="PresetLabel" Grid.Row="0" Grid.Column="1" Text="{DynamicResource Loc.PanelSettingsPreset}" Foreground="{StaticResource Muted}" FontSize="12"/>
+                    <StackPanel x:Name="PresetSection" Grid.Row="1" Grid.Column="1"
                                 Margin="0,4,0,8">
                         <ComboBox x:Name="PresetSelect"
                                   Height="34"
@@ -125,10 +136,10 @@
                                 Click="ResetPresetToStandardButton_Click"/>
                     </StackPanel>
 
-                    <TextBlock Grid.Row="2" Grid.Column="0" Text="{DynamicResource Loc.PanelSettingsDefaultFolder}" Foreground="{StaticResource Muted}" FontSize="12"/>
-                    <StackPanel Grid.Row="3" Grid.Column="0" Orientation="Horizontal" Margin="0,4,10,8">
+                    <TextBlock x:Name="DefaultFolderLabel" Grid.Row="2" Grid.Column="0" Text="{DynamicResource Loc.PanelSettingsDefaultFolder}" Foreground="{StaticResource Muted}" FontSize="12"/>
+                    <StackPanel x:Name="DefaultFolderRow" Grid.Row="3" Grid.Column="0" Orientation="Horizontal" Margin="0,4,10,8">
                         <TextBlock x:Name="FolderPathLabel" Text="{DynamicResource Loc.PanelSettingsFolderUnset}" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Width="240"/>
-                        <Button Content="{DynamicResource Loc.PanelSettingsChange}" Padding="10,6" Margin="6,0,0,0" Style="{StaticResource GhostButton}" Click="ChangeFolder_Click"/>
+                        <Button x:Name="ChangeFolderButton" Content="{DynamicResource Loc.PanelSettingsChange}" Padding="10,6" Margin="6,0,0,0" Style="{StaticResource GhostButton}" Click="ChangeFolder_Click"/>
                     </StackPanel>
 
                     <TextBlock Grid.Row="2" Grid.Column="1" Text="{DynamicResource Loc.PanelSettingsFolderAction}" Foreground="{StaticResource Muted}" FontSize="12"/>
@@ -147,22 +158,27 @@
                               Style="{StaticResource AccentCheckBox}"
                               Margin="0,6,0,0"/>
 
-                    <CheckBox x:Name="HiddenToggle"
-                              Grid.Row="4" Grid.Column="1"
-                              Content="{DynamicResource Loc.PanelSettingsShowHidden}"
-                              Style="{StaticResource AccentCheckBox}"
-                              Margin="0,6,0,0"/>
+                    <StackPanel Grid.Row="4" Grid.Column="1"
+                                Margin="0,6,0,0">
+                        <CheckBox x:Name="HiddenToggle"
+                                  Content="{DynamicResource Loc.PanelSettingsShowHidden}"
+                                  Style="{StaticResource AccentCheckBox}"/>
+                        <CheckBox x:Name="FileExtensionsToggle"
+                                  Content="{DynamicResource Loc.PanelSettingsShowFileExtensions}"
+                                  Style="{StaticResource AccentCheckBox}"
+                                  Margin="0,6,0,0"/>
+                    </StackPanel>
 
                     <TextBlock Grid.Row="5" Grid.Column="0"
                                Text="{DynamicResource Loc.PanelSettingsMovement}"
                                Foreground="{StaticResource Muted}"
                                FontSize="12"
                                Margin="0,12,0,0"/>
-                    <CheckBox x:Name="SettingsButtonToggle"
-                              Grid.Row="5" Grid.Column="1"
-                              Content="{DynamicResource Loc.PanelSettingsShowSettingsButton}"
-                              Style="{StaticResource AccentCheckBox}"
-                              Margin="0,12,0,0"/>
+                    <TextBlock Grid.Row="5" Grid.Column="1"
+                               Text="{DynamicResource Loc.PanelSettingsSearchVisibility}"
+                               Foreground="{StaticResource Muted}"
+                               FontSize="12"
+                               Margin="0,12,0,0"/>
                     <ComboBox x:Name="MovementModeSelect"
                               Grid.Row="6" Grid.Column="0"
                               Height="34"
@@ -172,6 +188,27 @@
                         <ComboBoxItem Content="{DynamicResource Loc.MovementButton}" Tag="button"/>
                         <ComboBoxItem Content="{DynamicResource Loc.MovementLocked}" Tag="locked"/>
                     </ComboBox>
+                    <ComboBox x:Name="SearchVisibilitySelect"
+                              Grid.Row="6" Grid.Column="1"
+                              Height="34"
+                              Style="{StaticResource FlatCombo}"
+                              Margin="0,4,0,0">
+                        <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSearchAlways}" Tag="always"/>
+                        <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSearchExpandedOnly}" Tag="expanded"/>
+                        <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSearchHidden}" Tag="hidden"/>
+                    </ComboBox>
+                    <CheckBox x:Name="SettingsButtonToggle"
+                              Grid.Row="7" Grid.Column="0"
+                              Content="{DynamicResource Loc.PanelSettingsShowSettingsButton}"
+                              Style="{StaticResource AccentCheckBox}"
+                              Margin="0,10,0,0"/>
+                    <Button x:Name="FitContentButton"
+                            Grid.Row="7" Grid.Column="1"
+                            Height="34"
+                            Margin="0,10,0,0"
+                            Content="{DynamicResource Loc.PanelSettingsFitContent}"
+                            Style="{StaticResource GhostButton}"
+                            Click="FitContent_Click"/>
                 </Grid>
 
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">

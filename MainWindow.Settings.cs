@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -18,12 +19,21 @@ namespace DesktopPlus
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "DesktopPlus_Settings.json"
         );
+        private static readonly JsonSerializerOptions SettingsJsonOptions = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+            AllowTrailingCommas = true,
+            ReadCommentHandling = JsonCommentHandling.Skip,
+            NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals |
+                             JsonNumberHandling.AllowReadingFromString
+        };
 
         private static DispatcherTimer? _saveDebounceTimer;
         private static readonly object _saveTimerLock = new object();
 
         private void LoadSettings()
         {
+            _hideMainWindowOnStartup = false;
             if (!File.Exists(settingsFilePath)) return;
 
             try
@@ -35,11 +45,11 @@ namespace DesktopPlus
 
                 try
                 {
-                    state = JsonSerializer.Deserialize<AppState>(json) ?? new AppState();
+                    state = JsonSerializer.Deserialize<AppState>(json, SettingsJsonOptions) ?? new AppState();
                 }
                 catch
                 {
-                    var legacy = JsonSerializer.Deserialize<List<WindowData>>(json) ?? new List<WindowData>();
+                    var legacy = JsonSerializer.Deserialize<List<WindowData>>(json, SettingsJsonOptions) ?? new List<WindowData>();
                     state = new AppState { Windows = legacy };
                 }
 
@@ -63,11 +73,11 @@ namespace DesktopPlus
                 _layoutDefaultPresetName = string.IsNullOrWhiteSpace(state.LayoutDefaultPresetName)
                     ? DefaultPresetName
                     : state.LayoutDefaultPresetName;
-                _activeLayoutName = state.ActiveLayoutName ?? "";
                 foreach (var layout in Layouts)
                 {
                     layout.Panels ??= new List<WindowData>();
                     layout.Appearance ??= new AppearanceSettings();
+                    NormalizeLayoutPanelDefaults(layout);
                     if (string.IsNullOrWhiteSpace(layout.DefaultPanelPresetName))
                     {
                         layout.DefaultPanelPresetName = _layoutDefaultPresetName;
@@ -126,12 +136,7 @@ namespace DesktopPlus
                         layout.DefaultPanelPresetName = _layoutDefaultPresetName;
                     }
                 }
-                if (!string.IsNullOrWhiteSpace(_activeLayoutName) &&
-                    !Layouts.Any(l => string.Equals(l.Name, _activeLayoutName, StringComparison.OrdinalIgnoreCase)))
-                {
-                    _activeLayoutName = "";
-                }
-
+                int openedPanels = 0;
                 foreach (var winData in savedWindows)
                 {
                     if (winData.IsHidden) continue;
@@ -145,8 +150,13 @@ namespace DesktopPlus
                         continue;
                     }
 
-                    Dispatcher.Invoke(() => OpenPanelFromData(winData));
+                    var opened = Dispatcher.Invoke(() => OpenPanelFromData(winData));
+                    if (opened != null)
+                    {
+                        openedPanels++;
+                    }
                 }
+                _hideMainWindowOnStartup = openedPanels > 0;
 
                 AppearanceChanged?.Invoke();
                 NotifyPanelsChanged();
@@ -196,7 +206,9 @@ namespace DesktopPlus
         {
             try
             {
-                var open = System.Windows.Application.Current.Windows.OfType<DesktopPanel>()
+                var open = System.Windows.Application.Current.Windows
+                    .OfType<DesktopPanel>()
+                    .Where(IsUserPanel)
                     .Where(win => win.PanelType != PanelKind.None ||
                                   !string.IsNullOrWhiteSpace(win.currentFolderPath) ||
                                   win.PinnedItems.Count > 0)
@@ -225,8 +237,7 @@ namespace DesktopPlus
                 {
                     layoutDefaultPreset = DefaultPresetName;
                 }
-                mainWindow?.SyncActiveLayoutFromCurrentState();
-                string activeLayoutName = mainWindow?._activeLayoutName ?? "";
+                string activeLayoutName = "";
 
                 var state = new AppState
                 {
@@ -241,11 +252,12 @@ namespace DesktopPlus
                     CloseBehavior = closeBehavior
                 };
 
-                string json = JsonSerializer.Serialize(state, new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals
-                });
+                string json = JsonSerializer.Serialize(
+                    state,
+                    new JsonSerializerOptions(SettingsJsonOptions)
+                    {
+                        WriteIndented = true
+                    });
                 File.WriteAllText(settingsFilePath, json);
                 NotifyPanelsChanged();
             }

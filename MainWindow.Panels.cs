@@ -13,7 +13,10 @@ namespace DesktopPlus
             if (PanelOverviewList == null || PanelOverviewCount == null) return;
 
             savedWindows = CreateWindowDataMap(savedWindows, rewriteDuplicates: true).Values.ToList();
-            var openPanelList = System.Windows.Application.Current.Windows.OfType<DesktopPanel>().ToList();
+            var openPanelList = System.Windows.Application.Current.Windows
+                .OfType<DesktopPanel>()
+                .Where(IsUserPanel)
+                .ToList();
             var openPanels = CreateOpenPanelMap(openPanelList);
 
             foreach (var panel in openPanelList)
@@ -132,6 +135,7 @@ namespace DesktopPlus
         private void ApplyWindowDataToPanel(DesktopPanel panel, WindowData data)
         {
             panel.showHiddenItems = data.ShowHidden;
+            panel.showFileExtensions = data.ShowFileExtensions;
             ApplyPanelContent(panel, data);
             if (!string.IsNullOrWhiteSpace(data.PanelTitle))
             {
@@ -145,6 +149,7 @@ namespace DesktopPlus
             panel.showSettingsButton = data.ShowSettingsButton;
             panel.ApplyMovementMode(string.IsNullOrWhiteSpace(data.MovementMode) ? "titlebar" : data.MovementMode);
             panel.ApplySettingsButtonVisibility();
+            panel.SetSearchVisibilityMode(data.SearchVisibilityMode);
             panel.defaultFolderPath = data.DefaultFolderPath;
 
             double storedTop = data.Top;
@@ -166,7 +171,7 @@ namespace DesktopPlus
                     : storedHeight;
             }
             panel.expandedHeight = Math.Max(storedHeight, restoredExpandedHeight);
-            panel.IsBottomAnchored = false;
+            panel.IsBottomAnchored = data.IsBottomAnchored;
             panel.SetZoom(data.Zoom);
             var assigned = GetPresetSettings(data.PresetName);
             panel.ApplyAppearance(assigned);
@@ -199,7 +204,7 @@ namespace DesktopPlus
 
         public static void MarkPanelHidden(DesktopPanel panel)
         {
-            if (panel == null) return;
+            if (!IsUserPanel(panel)) return;
             var snapshot = BuildWindowDataFromPanel(panel);
             snapshot.IsHidden = true;
             var panelKey = GetPanelKey(snapshot);
@@ -249,7 +254,7 @@ namespace DesktopPlus
                 {
                     item.Panel.Show();
                     item.Panel.WindowState = WindowState.Normal;
-                    item.Panel.Activate();
+                    item.Panel.SendPanelToBack();
                     if (existing != null && existing.IsHidden)
                     {
                         existing.IsHidden = false;
@@ -484,7 +489,8 @@ namespace DesktopPlus
         private void ShowAllPanels_Click(object sender, RoutedEventArgs e)
         {
             savedWindows = CreateWindowDataMap(savedWindows, rewriteDuplicates: true).Values.ToList();
-            var openPanels = CreateOpenPanelMap(Application.Current.Windows.OfType<DesktopPanel>());
+            var openPanels = CreateOpenPanelMap(
+                Application.Current.Windows.OfType<DesktopPanel>().Where(IsUserPanel));
 
             foreach (var saved in savedWindows)
             {
@@ -517,7 +523,10 @@ namespace DesktopPlus
 
         private void HideAllPanels_Click(object sender, RoutedEventArgs e)
         {
-            var openPanels = Application.Current.Windows.OfType<DesktopPanel>().ToList();
+            var openPanels = Application.Current.Windows
+                .OfType<DesktopPanel>()
+                .Where(IsUserPanel)
+                .ToList();
             foreach (var panel in openPanels)
             {
                 panel.Close();

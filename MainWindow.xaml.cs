@@ -30,9 +30,9 @@ namespace DesktopPlus
         public static event Action? PanelsChanged;
         private bool _isUiReady = false;
         private bool _suspendPresetSelection = false;
-        private bool _suspendLayoutPresetSelection = false;
         private bool _suspendGeneralHandlers = false;
         private bool _isMainWindowDragActive = false;
+        private bool _hideMainWindowOnStartup = false;
         private UIElement? _mainWindowDragHandle;
         private System.Windows.Point _mainWindowDragStartMouseScreen;
         private System.Windows.Point _mainWindowDragStartWindowPosition;
@@ -40,13 +40,13 @@ namespace DesktopPlus
         private const string DefaultLanguageCode = "de";
         private const string CloseBehaviorMinimize = "Minimize";
         private const string CloseBehaviorExit = "Exit";
+        private const string PreviewPanelIdPrefix = "preview:";
         private const string StartupRegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
         private const string StartupRegistryValue = "DesktopPlus";
         public static string CurrentLanguageCode { get; private set; } = DefaultLanguageCode;
 
         private string _languageCode = DefaultLanguageCode;
         private string _layoutDefaultPresetName = DefaultPresetName;
-        private string _activeLayoutName = "";
         private bool _startWithWindows = false;
         private string _closeBehavior = CloseBehaviorMinimize;
 
@@ -112,6 +112,46 @@ namespace DesktopPlus
             return panel.PanelId;
         }
 
+        private static bool IsPreviewSampleFolderPath(string? folderPath)
+        {
+            if (string.IsNullOrWhiteSpace(folderPath))
+            {
+                return false;
+            }
+
+            try
+            {
+                string candidate = Path.GetFullPath(folderPath)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string previewRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "DesktopPlus", "PreviewPanelSample"))
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                return candidate.StartsWith(previewRoot, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return folderPath.IndexOf("PreviewPanelSample", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                       folderPath.IndexOf("DesktopPlus", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+        }
+
+        private static bool IsInternalPreviewWindowData(WindowData? data)
+        {
+            if (data == null) return false;
+
+            if (!string.IsNullOrWhiteSpace(data.PanelId) &&
+                data.PanelId.StartsWith(PreviewPanelIdPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return IsPreviewSampleFolderPath(data.FolderPath);
+        }
+
+        private static bool IsUserPanel(DesktopPanel? panel)
+        {
+            return panel != null && !panel.IsPreviewPanel;
+        }
+
         private static WindowData? FindSavedWindow(string panelKey)
         {
             return savedWindows.FirstOrDefault(x =>
@@ -124,6 +164,7 @@ namespace DesktopPlus
             foreach (var window in windows)
             {
                 if (window == null) continue;
+                if (IsInternalPreviewWindowData(window)) continue;
                 NormalizeWindowData(window);
                 string key = GetPanelKey(window);
 
@@ -147,7 +188,7 @@ namespace DesktopPlus
             var map = new Dictionary<string, DesktopPanel>(StringComparer.OrdinalIgnoreCase);
             foreach (var panel in panels)
             {
-                if (panel == null) continue;
+                if (!IsUserPanel(panel)) continue;
                 map[GetPanelKey(panel)] = panel;
             }
             return map;
@@ -157,6 +198,7 @@ namespace DesktopPlus
         {
             if (data == null) return;
             data.PinnedItems ??= new List<string>();
+            data.SearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(data.SearchVisibilityMode);
             if (!data.IsCollapsed)
             {
                 if (data.ExpandedHeight <= 0 || data.ExpandedHeight < data.Height)
@@ -178,6 +220,17 @@ namespace DesktopPlus
 
         private static WindowData BuildWindowDataFromPanel(DesktopPanel panel)
         {
+            if (!IsUserPanel(panel))
+            {
+                return new WindowData
+                {
+                    PanelId = string.IsNullOrWhiteSpace(panel.PanelId) ? $"{PreviewPanelIdPrefix}appearance" : panel.PanelId,
+                    PanelType = PanelKind.None.ToString(),
+                    FolderPath = panel.currentFolderPath ?? "",
+                    IsHidden = true
+                };
+            }
+
             var kind = ResolvePanelKind(panel);
             var folderPath = kind == PanelKind.Folder ? panel.currentFolderPath : "";
             var pinnedItems = kind == PanelKind.List
@@ -203,14 +256,16 @@ namespace DesktopPlus
                 IsHidden = false,
                 CollapsedTop = panel.collapsedTopPosition,
                 BaseTop = panel.baseTopPosition,
-                IsBottomAnchored = false,
+                IsBottomAnchored = panel.IsBottomAnchored,
                 PanelTitle = panel.PanelTitle.Text,
                 PresetName = string.IsNullOrWhiteSpace(panel.assignedPresetName) ? DefaultPresetName : panel.assignedPresetName,
                 ShowHidden = panel.showHiddenItems,
+                ShowFileExtensions = panel.showFileExtensions,
                 ShowSettingsButton = panel.showSettingsButton,
                 ExpandOnHover = panel.expandOnHover,
                 OpenFoldersExternally = panel.openFoldersExternally,
                 MovementMode = panel.movementMode,
+                SearchVisibilityMode = panel.searchVisibilityMode,
                 PinnedItems = pinnedItems
             };
         }
@@ -221,6 +276,7 @@ namespace DesktopPlus
             AddHandler(MouseWheelEvent, new MouseWheelEventHandler(MainScrollViewer_PreviewMouseWheel), true);
             TrySetWindowIcon();
             LoadSettings();
+            FileSearchIndex.EnsureStarted();
             ApplyLanguage(_languageCode);
             if (!Presets.Any())
             {
@@ -233,7 +289,21 @@ namespace DesktopPlus
             this.Loaded += (s, e) => RefreshPanelOverview();
             PanelsChanged += RefreshPanelOverview;
             this.Closed += (s, e) => PanelsChanged -= RefreshPanelOverview;
+            ApplyStartupWindowVisibilityPreference();
 
+        }
+
+        private void ApplyStartupWindowVisibilityPreference()
+        {
+            if (!_hideMainWindowOnStartup || _isExit) return;
+            _hideMainWindowOnStartup = false;
+
+            ShowInTaskbar = false;
+            if (WindowState != WindowState.Minimized)
+            {
+                WindowState = WindowState.Minimized;
+            }
+            Hide();
         }
 
         private void InitNotifyIcon()
@@ -382,6 +452,7 @@ namespace DesktopPlus
         private void ShowMainWindow()
         {
             CloseTrayMenuWindow();
+            ShowInTaskbar = true;
             this.Show();
             this.WindowState = WindowState.Normal;
             this.Activate();
@@ -588,8 +659,16 @@ namespace DesktopPlus
 
         private void OnWindowStateChanged(object? sender, EventArgs e)
         {
-            // Früher wurde das Fenster bei Minimierung ausgeblendet, was zu
-            // Verwirrung führte. Jetzt bleibt es normal minimiert sichtbar.
+            if (_isExit) return;
+
+            if (WindowState == WindowState.Minimized)
+            {
+                ShowInTaskbar = false;
+                Hide();
+                return;
+            }
+
+            ShowInTaskbar = true;
         }
 
         public static void NotifyPanelsChanged()
@@ -619,6 +698,7 @@ namespace DesktopPlus
             var selectedPreset = (PresetComboTop?.SelectedItem as AppearancePreset)?.Name ?? DefaultPresetName;
             var panel = CreatePanelWithPreset(selectedPreset);
             panel.Show();
+            SaveSettings();
             PanelsChanged?.Invoke();
         }
 
@@ -680,6 +760,7 @@ namespace DesktopPlus
             RefreshLayoutList();
             ApplyGeneralSettingsToUi();
             _isUiReady = true;
+            ApplyStartupWindowVisibilityPreference();
 
             if (MainTabs != null)
             {
@@ -782,9 +863,12 @@ namespace DesktopPlus
                 PanelTitle = source.PanelTitle ?? "",
                 PresetName = source.PresetName ?? "",
                 ShowHidden = source.ShowHidden,
+                ShowFileExtensions = source.ShowFileExtensions,
                 ShowSettingsButton = source.ShowSettingsButton,
                 ExpandOnHover = source.ExpandOnHover,
                 OpenFoldersExternally = source.OpenFoldersExternally,
+                MovementMode = source.MovementMode ?? "titlebar",
+                SearchVisibilityMode = source.SearchVisibilityMode ?? DesktopPanel.SearchVisibilityAlways,
                 PinnedItems = source.PinnedItems?.ToList() ?? new List<string>()
             };
         }
@@ -809,9 +893,12 @@ namespace DesktopPlus
             target.PanelTitle = source.PanelTitle ?? "";
             target.PresetName = source.PresetName ?? "";
             target.ShowHidden = source.ShowHidden;
+            target.ShowFileExtensions = source.ShowFileExtensions;
             target.ShowSettingsButton = source.ShowSettingsButton;
             target.ExpandOnHover = source.ExpandOnHover;
             target.OpenFoldersExternally = source.OpenFoldersExternally;
+            target.MovementMode = source.MovementMode ?? "titlebar";
+            target.SearchVisibilityMode = source.SearchVisibilityMode ?? DesktopPanel.SearchVisibilityAlways;
             target.PinnedItems = source.PinnedItems?.ToList() ?? new List<string>();
         }
 

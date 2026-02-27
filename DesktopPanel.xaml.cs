@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
 using System.Windows.Input;
@@ -23,11 +24,13 @@ namespace DesktopPlus
         public static bool ExpandOnHover = true;
         public string assignedPresetName = "";
         public bool showHiddenItems = false;
+        public bool showFileExtensions = true;
         public bool expandOnHover = true;
         public bool openFoldersExternally = false;
         public bool showSettingsButton = true;
         public string defaultFolderPath = "";
         public string movementMode = "titlebar";
+        public string searchVisibilityMode = SearchVisibilityAlways;
         private bool _hoverTemporarilySuspendedByDoubleClick = false;
         private bool _hoverExpanded = false;
         private bool _hasHoverRestoreState = false;
@@ -53,10 +56,19 @@ namespace DesktopPlus
         private CancellationTokenSource? _hoverLeaveCts;
         private bool? _queuedHoverTargetVisible;
         private CancellationTokenSource? _searchCts;
+        private bool _suppressSearchTextChanged = false;
+        private readonly HashSet<string> _searchInjectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<System.Windows.Controls.ListBoxItem> _searchInjectedItems = new List<System.Windows.Controls.ListBoxItem>();
+        private readonly HashSet<string> _baseItemPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private AppearanceSettings? _currentAppearance;
         private EventHandler? _headerCornerAnimationHandler;
         private double _headerTopCornerRadius = 14;
         private double _headerBottomCornerRadius = 0;
+        public const string SearchVisibilityAlways = "always";
+        public const string SearchVisibilityExpanded = "expanded";
+        public const string SearchVisibilityHidden = "hidden";
+        private const double HeaderSearchWidth = 230;
+        private const double HeaderSearchSpacerWidth = 8;
         private const double BottomAnchorTolerance = 3.0;
         private const double ResizeGripHitSize = 18.0;
         private const int WmNcHitTest = 0x0084;
@@ -67,10 +79,41 @@ namespace DesktopPlus
         private const int ScMaximize = 0xF030;
         private const int HtClient = 0x0001;
         private const int HtBottomRight = 0x0011;
+        private const int GwlExStyle = -20;
+        private const int WsExToolWindow = 0x00000080;
+        private const int WsExAppWindow = 0x00040000;
+        private static readonly IntPtr HwndBottom = new IntPtr(1);
+        private const uint SwpNoSize = 0x0001;
+        private const uint SwpNoMove = 0x0002;
+        private const uint SwpNoActivate = 0x0010;
+        private const uint SwpNoOwnerZOrder = 0x0200;
+
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
+        private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)]
+        private static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+        private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
+        private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetWindowPos(
+            IntPtr hWnd,
+            IntPtr hWndInsertAfter,
+            int X,
+            int Y,
+            int cx,
+            int cy,
+            uint uFlags);
         private static readonly Thickness ExpandedChromeBorderThickness = new Thickness(1);
         private static readonly Thickness CollapsedChromeBorderThickness = new Thickness(1);
         private static readonly Thickness ExpandedChromePadding = new Thickness(1);
         private static readonly Thickness CollapsedChromePadding = new Thickness(1);
+        public bool IsPreviewPanel { get; set; } = false;
         public PanelKind PanelType { get; set; } = PanelKind.None;
         public string PanelId { get; set; } = $"panel:{Guid.NewGuid():N}";
         public List<string> PinnedItems { get; } = new List<string>();
@@ -117,11 +160,14 @@ namespace DesktopPlus
             this.SourceInitialized += DesktopPanel_SourceInitialized;
             this.LocationChanged += DesktopPanel_LocationChanged;
             this.SizeChanged += DesktopPanel_SizeChanged;
+            this.Activated += DesktopPanel_Activated;
             this.Deactivated += DesktopPanel_Deactivated;
             this.MouseMove += Window_MouseMoveHoverProbe;
             this.MouseEnter += Window_MouseEnter;
             this.MouseLeave += Window_MouseLeave;
+            this.PreviewKeyDown += DesktopPanel_PreviewKeyDown;
             ApplySettingsButtonVisibility();
+            ApplySearchVisibility();
             ApplyCollapsedVisualState(collapsed: false, animateCorners: false);
             UpdateDropZoneVisibility();
         }
@@ -140,7 +186,8 @@ namespace DesktopPlus
             double headerHeight = (HeaderBar != null && HeaderBar.ActualHeight > 0) ? HeaderBar.ActualHeight : 52;
             double padding = CollapsedChromePadding.Top + CollapsedChromePadding.Bottom;
             double border = CollapsedChromeBorderThickness.Top + CollapsedChromeBorderThickness.Bottom;
-            return Math.Max(headerHeight, headerHeight + padding + border);
+            double raw = Math.Max(headerHeight, headerHeight + padding + border);
+            return SnapVerticalDipToDevicePixel(raw);
         }
 
         private Rect GetWorkAreaForPanel()
@@ -174,6 +221,31 @@ namespace DesktopPlus
             double minTop = workArea.Top;
             double maxTop = workArea.Bottom - safeHeight;
             return Math.Max(minTop, Math.Min(maxTop, top));
+        }
+
+        private double SnapVerticalDipToDevicePixel(double value)
+        {
+            try
+            {
+                var source = PresentationSource.FromVisual(this);
+                double scaleY = source?.CompositionTarget?.TransformToDevice.M22 ?? 1.0;
+                if (Math.Abs(scaleY) < 0.0001)
+                {
+                    return Math.Round(value);
+                }
+
+                return Math.Round(value * scaleY) / scaleY;
+            }
+            catch
+            {
+                return Math.Round(value);
+            }
+        }
+
+        private void SnapWindowVerticalBounds(ref double top, ref double height)
+        {
+            top = SnapVerticalDipToDevicePixel(top);
+            height = Math.Max(1, SnapVerticalDipToDevicePixel(height));
         }
 
         private bool EnsurePanelInsideVerticalWorkArea()
@@ -686,6 +758,7 @@ namespace DesktopPlus
         {
             EnsurePanelInsideVerticalWorkArea();
             SyncAnchoringFromCurrentBounds();
+            ApplySearchVisibility();
             ApplyCollapsedVisualState(!isContentVisible, animateCorners: false);
         }
 
@@ -693,6 +766,61 @@ namespace DesktopPlus
         {
             _windowSource = PresentationSource.FromVisual(this) as HwndSource;
             _windowSource?.AddHook(DesktopPanelWindowProc);
+            ApplyDesktopWindowBehavior();
+        }
+
+        private static int GetExtendedWindowStyle(IntPtr handle)
+        {
+            if (IntPtr.Size == 8)
+            {
+                return (int)GetWindowLongPtr64(handle, GwlExStyle).ToInt64();
+            }
+
+            return GetWindowLong32(handle, GwlExStyle);
+        }
+
+        private static void SetExtendedWindowStyle(IntPtr handle, int style)
+        {
+            if (IntPtr.Size == 8)
+            {
+                SetWindowLongPtr64(handle, GwlExStyle, new IntPtr(style));
+                return;
+            }
+
+            SetWindowLong32(handle, GwlExStyle, style);
+        }
+
+        private void ApplyDesktopWindowBehavior()
+        {
+            if (IsPreviewPanel) return;
+            IntPtr handle = _windowSource?.Handle ?? IntPtr.Zero;
+            if (handle == IntPtr.Zero) return;
+
+            int extendedStyle = GetExtendedWindowStyle(handle);
+            int desiredStyle = (extendedStyle | WsExToolWindow) & ~WsExAppWindow;
+            if (desiredStyle != extendedStyle)
+            {
+                SetExtendedWindowStyle(handle, desiredStyle);
+            }
+
+            ShowInTaskbar = false;
+            SendPanelToBack();
+        }
+
+        internal void SendPanelToBack()
+        {
+            if (IsPreviewPanel) return;
+            IntPtr handle = _windowSource?.Handle ?? IntPtr.Zero;
+            if (handle == IntPtr.Zero) return;
+
+            SetWindowPos(
+                handle,
+                HwndBottom,
+                0,
+                0,
+                0,
+                0,
+                SwpNoMove | SwpNoSize | SwpNoActivate | SwpNoOwnerZOrder);
         }
 
         private IntPtr DesktopPanelWindowProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -735,6 +863,11 @@ namespace DesktopPlus
                 SyncAnchoringFromCurrentBounds();
             }
             MainWindow.SaveSettings();
+        }
+
+        private void DesktopPanel_Activated(object? sender, EventArgs e)
+        {
+            SendPanelToBack();
         }
 
         private void DesktopPanel_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -899,7 +1032,12 @@ namespace DesktopPlus
                         double currentHeight = ActualHeight > 0 ? ActualHeight : Height;
                         if (!(_hoverExpanded && _hasHoverRestoreState))
                         {
-                            expandedHeight = Math.Max(collapsedHeight, currentHeight);
+                            bool hasExpandedBounds = currentHeight > collapsedHeight + 0.5;
+                            bool hasStoredExpandedHeight = expandedHeight > collapsedHeight + 0.5;
+                            if (hasExpandedBounds || !hasStoredExpandedHeight)
+                            {
+                                expandedHeight = Math.Max(collapsedHeight, currentHeight);
+                            }
                         }
                     }
 
@@ -908,9 +1046,11 @@ namespace DesktopPlus
                     double targetTop = anchorToBottom ? GetBottomAnchoredCollapsedTop(collapsedHeight) : collapseReferenceTop;
                     Rect workArea = GetWorkAreaForPanel();
                     targetTop = ClampTopToWorkArea(workArea, collapsedHeight, targetTop);
+                    double targetHeight = collapsedHeight;
+                    SnapWindowVerticalBounds(ref targetTop, ref targetHeight);
 
                     this.Top = targetTop;
-                    this.Height = collapsedHeight;
+                    this.Height = targetHeight;
                     SetContentLayerVisibility(false);
                     isContentVisible = false;
                     _hoverExpanded = false;
@@ -920,13 +1060,18 @@ namespace DesktopPlus
                     _isExpandedShiftedByBounds = false;
                     _hasForcedCollapseReturnTop = false;
                     ApplyCollapsedVisualState(collapsed: true, animateCorners: false);
+                    ApplySearchVisibility();
                     ClearHoverRestoreState();
                 }
                 else
                 {
                     double targetHeight = Math.Max(collapsedHeight, expandedHeight);
                     bool anchorToBottom = ShouldUseBottomAnchorOnExpand(collapsedHeight);
-                    double referenceTop = Top;
+                    double referenceTop = GetCollapseReferenceTop();
+                    if (double.IsNaN(referenceTop) || double.IsInfinity(referenceTop))
+                    {
+                        referenceTop = Top;
+                    }
                     collapsedTopPosition = referenceTop;
                     baseTopPosition = referenceTop;
                     double targetTop = anchorToBottom
@@ -934,6 +1079,7 @@ namespace DesktopPlus
                         : referenceTop;
                     Rect workArea = GetWorkAreaForPanel();
                     targetTop = ClampTopToWorkArea(workArea, targetHeight, targetTop);
+                    SnapWindowVerticalBounds(ref targetTop, ref targetHeight);
                     bool shiftedUpByBounds = !anchorToBottom && targetTop < referenceTop - 0.5;
                     _hasForcedCollapseReturnTop = true;
                     _forcedCollapseReturnTop = referenceTop;
@@ -952,6 +1098,7 @@ namespace DesktopPlus
                     }
 
                     ApplyCollapsedVisualState(collapsed: false, animateCorners: false);
+                    ApplySearchVisibility();
                 }
             }
             finally
@@ -1066,11 +1213,8 @@ namespace DesktopPlus
         {
             if (movementMode == "locked") return;
             if (e.ChangedButton != MouseButton.Left || e.LeftButton != MouseButtonState.Pressed) return;
-            if (sender is UIElement dragHandle)
-            {
-                BeginManualWindowDrag(dragHandle);
-                e.Handled = true;
-            }
+            BeginManualWindowDrag(this);
+            e.Handled = true;
         }
 
         private DateTime _lastHeaderClickTime = DateTime.MinValue;
@@ -1132,6 +1276,7 @@ namespace DesktopPlus
                 double targetTop = anchorToBottom ? GetBottomAnchoredCollapsedTop(collapsedHeight) : collapseReferenceTop;
                 Rect workArea = GetWorkAreaForPanel();
                 targetTop = ClampTopToWorkArea(workArea, targetHeight, targetTop);
+                SnapWindowVerticalBounds(ref targetTop, ref targetHeight);
                 SetContentScrollbarsFrozen(true);
 
                 // Content stays visible during collapse - ClipToBounds clips it naturally
@@ -1163,6 +1308,7 @@ namespace DesktopPlus
                     _isExpandedShiftedByBounds = false;
                     _hasForcedCollapseReturnTop = false;
                     ApplyCollapsedVisualState(collapsed: true, animateCorners: false);
+                    ApplySearchVisibility();
                     ClearHoverRestoreState();
                     _isCollapseAnimationRunning = false;
                     ProcessQueuedHoverState();
@@ -1185,7 +1331,11 @@ namespace DesktopPlus
                 SetContentLayerVisibility(false);
                 double targetHeight = Math.Max(collapsedHeight, expandedHeight);
                 bool anchorToBottom = ShouldUseBottomAnchorOnExpand(collapsedHeight);
-                double referenceTop = Top;
+                double referenceTop = GetCollapseReferenceTop();
+                if (double.IsNaN(referenceTop) || double.IsInfinity(referenceTop))
+                {
+                    referenceTop = Top;
+                }
                 collapsedTopPosition = referenceTop;
                 baseTopPosition = referenceTop;
                 double targetTop = anchorToBottom
@@ -1193,6 +1343,7 @@ namespace DesktopPlus
                     : referenceTop;
                 Rect workArea = GetWorkAreaForPanel();
                 targetTop = ClampTopToWorkArea(workArea, targetHeight, targetTop);
+                SnapWindowVerticalBounds(ref targetTop, ref targetHeight);
                 bool shiftedUpByBounds = !anchorToBottom && targetTop < referenceTop - 0.5;
                 _hasForcedCollapseReturnTop = true;
                 _forcedCollapseReturnTop = referenceTop;
@@ -1216,6 +1367,7 @@ namespace DesktopPlus
                         baseTopPosition = collapsedTopPosition;
                     }
                     ApplyCollapsedVisualState(collapsed: false, animateCorners: false);
+                    ApplySearchVisibility();
                     _isCollapseAnimationRunning = false;
                     ProcessQueuedHoverState();
                     MainWindow.SaveSettings();
@@ -1285,6 +1437,76 @@ namespace DesktopPlus
             if (settingsButton != null)
             {
                 settingsButton.Visibility = showSettingsButton ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
+
+        public static string NormalizeSearchVisibilityMode(string? mode)
+        {
+            if (string.Equals(mode, SearchVisibilityExpanded, StringComparison.OrdinalIgnoreCase))
+            {
+                return SearchVisibilityExpanded;
+            }
+
+            if (string.Equals(mode, SearchVisibilityHidden, StringComparison.OrdinalIgnoreCase))
+            {
+                return SearchVisibilityHidden;
+            }
+
+            return SearchVisibilityAlways;
+        }
+
+        public void SetSearchVisibilityMode(string? mode)
+        {
+            string normalized = NormalizeSearchVisibilityMode(mode);
+            bool changed = !string.Equals(searchVisibilityMode, normalized, StringComparison.OrdinalIgnoreCase);
+            searchVisibilityMode = normalized;
+
+            if (changed && string.Equals(searchVisibilityMode, SearchVisibilityHidden, StringComparison.OrdinalIgnoreCase))
+            {
+                ResetSearchState(clearSearchBox: true);
+                RestoreUnfilteredPanelItems();
+            }
+
+            ApplySearchVisibility();
+        }
+
+        private bool ShouldShowSearch()
+        {
+            string normalized = NormalizeSearchVisibilityMode(searchVisibilityMode);
+            if (string.Equals(normalized, SearchVisibilityHidden, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (string.Equals(normalized, SearchVisibilityExpanded, StringComparison.OrdinalIgnoreCase))
+            {
+                return isContentVisible;
+            }
+
+            return true;
+        }
+
+        private void ApplySearchVisibility()
+        {
+            bool showSearch = ShouldShowSearch();
+
+            if (SearchContainer != null)
+            {
+                SearchContainer.Visibility = showSearch ? Visibility.Visible : Visibility.Collapsed;
+            }
+
+            if (SearchColumn != null)
+            {
+                SearchColumn.Width = showSearch
+                    ? new GridLength(HeaderSearchWidth)
+                    : new GridLength(0);
+            }
+
+            if (SearchSpacerColumn != null)
+            {
+                SearchSpacerColumn.Width = showSearch
+                    ? new GridLength(HeaderSearchSpacerWidth)
+                    : new GridLength(0);
             }
         }
 

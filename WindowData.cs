@@ -25,7 +25,9 @@ namespace DesktopPlus
         public bool ShowSettingsButton { get; set; } = true;
         public bool ExpandOnHover { get; set; } = true;
         public bool OpenFoldersExternally { get; set; }
+        public bool ShowFileExtensions { get; set; } = true;
         public string MovementMode { get; set; } = "titlebar";
+        public string SearchVisibilityMode { get; set; } = "always";
         public List<string> PinnedItems { get; set; } = new List<string>();
     }
 }

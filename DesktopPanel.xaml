@@ -7,6 +7,7 @@
         FontFamily="Segoe UI"
         WindowStyle="None"
         ResizeMode="NoResize"
+        ShowInTaskbar="False"
         Background="Transparent"
         AllowsTransparency="True"
         AllowDrop="True"
@@ -81,8 +82,8 @@
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="8"/>
                         <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="230"/>
-                        <ColumnDefinition Width="8"/>
+                        <ColumnDefinition x:Name="SearchColumn" Width="230"/>
+                        <ColumnDefinition x:Name="SearchSpacerColumn" Width="8"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
@@ -155,18 +156,21 @@
                                FontWeight="SemiBold"
                                Opacity="0.95"/>
 
-                    <Border Grid.Column="4"
+                    <Border x:Name="SearchContainer"
+                            Grid.Column="4"
                             Background="#1A202A"
                             BorderBrush="{StaticResource PanelBorder}"
                             BorderThickness="1"
                             CornerRadius="10"
-                            Padding="12,0"
+                            Padding="10,0,8,0"
                             VerticalAlignment="Center">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBox x:Name="SearchBox"
+                                     Grid.Column="0"
                                      Background="Transparent"
                                      BorderThickness="0"
                                      Foreground="{StaticResource PanelText}"
@@ -205,6 +209,43 @@
                                     </Style>
                                 </TextBox.Style>
                             </TextBox>
+                            <Button x:Name="SearchClearButton"
+                                    Grid.Column="1"
+                                    Width="16"
+                                    Height="16"
+                                    Margin="6,0,0,0"
+                                    VerticalAlignment="Center"
+                                    HorizontalAlignment="Right"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Foreground="{StaticResource PanelMuted}"
+                                    Focusable="False"
+                                    Cursor="Hand"
+                                    Click="SearchClearButton_Click">
+                                <Button.Style>
+                                    <Style TargetType="Button">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                        <Setter Property="Opacity" Value="0.85"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter Property="Opacity" Value="1"/>
+                                                <Setter Property="Foreground" Value="{StaticResource PanelText}"/>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                                <Path Data="M3,3 L9,9 M9,3 L3,9"
+                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                      StrokeThickness="1.4"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      Width="12"
+                                      Height="12"
+                                      Stretch="Uniform"/>
+                            </Button>
                         </Grid>
                     </Border>
 
