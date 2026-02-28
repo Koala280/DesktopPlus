@@ -63,10 +63,10 @@ jobs:
         with:
           name: desktopplus-${{ steps.meta.outputs.version }}
           path: |
-            artifacts\DesktopPlus-${{ steps.meta.outputs.version }}-*-portable.zip
-            artifacts\installer\DesktopPlus-Setup-${{ steps.meta.outputs.version }}.exe
-            artifacts\SHA256SUMS.txt
-            artifacts\release-manifest.json
+            artifacts/DesktopPlus-${{ steps.meta.outputs.version }}-*-portable.zip
+            artifacts/installer/DesktopPlus-Setup-${{ steps.meta.outputs.version }}.exe
+            artifacts/SHA256SUMS.txt
+            artifacts/release-manifest.json
           if-no-files-found: error
 
       - name: Publish GitHub release
@@ -74,8 +74,14 @@ jobs:
         with:
           tag_name: v${{ steps.meta.outputs.version }}
           generate_release_notes: true
+          body: |
+            ## Code signing policy
+            [Code signing policy](https://github.com/Koala280/DesktopPlus/blob/main/CODE_SIGNING_POLICY.md)
+
+            Free code signing provided by SignPath.io, certificate by SignPath Foundation.
           files: |
-            artifacts\DesktopPlus-${{ steps.meta.outputs.version }}-*-portable.zip
-            artifacts\installer\DesktopPlus-Setup-${{ steps.meta.outputs.version }}.exe
-            artifacts\SHA256SUMS.txt
-            artifacts\release-manifest.json
+            artifacts/DesktopPlus-${{ steps.meta.outputs.version }}-*-portable.zip
+            artifacts/installer/DesktopPlus-Setup-${{ steps.meta.outputs.version }}.exe
+            artifacts/SHA256SUMS.txt
+            artifacts/release-manifest.json
+          fail_on_unmatched_files: true

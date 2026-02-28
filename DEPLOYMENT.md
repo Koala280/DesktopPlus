@@ -97,6 +97,7 @@ It performs:
    - auto-sort and shortcuts work
 6. Create and push tag `vX.Y.Z` (or trigger workflow manually).
 7. Validate attached GitHub release files.
+8. Ensure the release page contains a visible `Code signing policy` link (added automatically by workflow body).
 
 ## Windows startup behavior
 

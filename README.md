@@ -12,6 +12,7 @@
   <a href="#quick-start">Quick Start</a> &middot;
   <a href="#why-this-project">Why</a> &middot;
   <a href="#features">Features</a> &middot;
+  <a href="#code-signing-policy">Code signing policy</a> &middot;
   <a href="#hotkeys-and-shortcuts">Shortcuts</a> &middot;
   <a href="#troubleshooting">Troubleshooting</a>
 </p>
@@ -50,6 +51,13 @@ DesktopPlus is built for people who want a fast desktop workflow without replaci
 | Global shortcuts | System-wide shortcuts for panel toggle and temporary foreground mode. |
 | Tray integration | Run from system tray, reopen main window, and control app behavior. |
 | Localization | German and English interface. |
+
+## Code signing policy
+
+Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+
+Policy details (roles, approval flow, privacy statement):
+[CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md)
 
 ## Quick Start
 
