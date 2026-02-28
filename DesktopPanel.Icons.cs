@@ -224,6 +224,9 @@ namespace DesktopPlus
             }
 
             SetContentLayerVisibility(true);
+            SetContentScrollbarsFrozen(true);
+            try
+            {
             UpdateWrapPanelWidth();
             UpdateLayout();
 
@@ -236,7 +239,7 @@ namespace DesktopPlus
 
             Rect workArea = GetWorkAreaForPanel();
             double startWidth = Width;
-            int baselineItemsPerRow = GetMaxItemsPerRow(FileList, wrapPanel);
+            int baselineFirstRowCount = GetFirstRowItemCount(FileList, wrapPanel);
             bool widthChanged = false;
             bool heightChanged = false;
             double minWindowWidth = Math.Max(220, MinWidth > 0 ? MinWidth : 0);
@@ -249,15 +252,17 @@ namespace DesktopPlus
             if (currentLayoutWidth > 1)
             {
                 double neededWrapWidth = GetVisibleItemRightEdge(FileList, wrapPanel);
+                double firstRowRightEdge = GetFirstRowRightEdge(FileList, wrapPanel);
+                double stableNeededWrapWidth = Math.Max(neededWrapWidth, firstRowRightEdge);
 
-                if (neededWrapWidth > 0)
+                if (stableNeededWrapWidth > 0)
                 {
                     // Use the actual right-most rendered item edge for width fitting.
                     // This avoids overestimating with count * max-width and keeps
                     // scrollbar overlay changes out of the fit calculation.
                     double wrapHorizontalMargin = GetHorizontalMargin(wrapPanel);
-                    const double layoutSafetyPixels = 1;
-                    double neededContentWidth = Math.Ceiling(neededWrapWidth + wrapHorizontalMargin + layoutSafetyPixels);
+                    double layoutSafetyPixels = Math.Ceiling(2 * VisualTreeHelper.GetDpi(this).DpiScaleX);
+                    double neededContentWidth = Math.Ceiling(stableNeededWrapWidth + wrapHorizontalMargin + layoutSafetyPixels);
                     double chrome = Width - currentLayoutWidth;
                     double targetWidth = chrome + neededContentWidth;
 
@@ -277,40 +282,17 @@ namespace DesktopPlus
                 UpdateWrapPanelWidth();
                 UpdateLayout();
 
-                // Guard against accidental row loss from threshold/rounding drift.
-                // If the candidate width reduced items-per-row, widen minimally.
-                if (baselineItemsPerRow > 0 && Width < startWidth - 0.5)
+                // Guard against wrap-threshold drift (rounding/DPI):
+                // never reduce items in the first row when fitting width.
+                if (baselineFirstRowCount > 0 && Width < startWidth - 0.5)
                 {
-                    int fittedItemsPerRow = GetMaxItemsPerRow(FileList, wrapPanel);
-                    if (fittedItemsPerRow < baselineItemsPerRow)
+                    int fittedFirstRowCount = GetFirstRowItemCount(FileList, wrapPanel);
+                    if (fittedFirstRowCount < baselineFirstRowCount)
                     {
-                        double low = Width;
-                        double high = Math.Max(low, Math.Min(startWidth, maxWindowWidth));
-
-                        for (int i = 0; i < 10 && high - low > 0.5; i++)
+                        double fallbackWidth = Math.Max(minWindowWidth, Math.Min(startWidth, maxWindowWidth));
+                        if (Math.Abs(fallbackWidth - Width) > 0.5)
                         {
-                            double mid = (low + high) / 2.0;
-                            Width = mid;
-                            UpdateLayout();
-                            UpdateWrapPanelWidth();
-                            UpdateLayout();
-
-                            int probeItemsPerRow = GetMaxItemsPerRow(FileList, wrapPanel);
-                            if (probeItemsPerRow >= baselineItemsPerRow)
-                            {
-                                high = mid;
-                            }
-                            else
-                            {
-                                low = mid;
-                            }
-                        }
-
-                        double correctedWidth = Math.Ceiling(high);
-                        correctedWidth = Math.Max(minWindowWidth, Math.Min(correctedWidth, maxWindowWidth));
-                        if (Math.Abs(correctedWidth - Width) > 0.5)
-                        {
-                            Width = correctedWidth;
+                            Width = fallbackWidth;
                             UpdateLayout();
                             UpdateWrapPanelWidth();
                             UpdateLayout();
@@ -423,6 +405,11 @@ namespace DesktopPlus
                 MainWindow.SaveSettings();
                 MainWindow.NotifyPanelsChanged();
             }), System.Windows.Threading.DispatcherPriority.Render);
+            }
+            finally
+            {
+                SetContentScrollbarsFrozen(false);
+            }
         }
 
         private void UpdateWrapPanelWidth()
@@ -474,12 +461,11 @@ namespace DesktopPlus
             return element.Margin.Left + element.Margin.Right;
         }
 
-        private static int GetMaxItemsPerRow(System.Windows.Controls.ListBox fileList, WrapPanel wrapPanel)
+        private static int GetFirstRowItemCount(System.Windows.Controls.ListBox fileList, WrapPanel wrapPanel)
         {
             const double rowTolerance = 2.0;
-            double currentRowY = double.NaN;
-            int currentRowCount = 0;
-            int maxItemsPerRow = 0;
+            double firstRowY = double.NaN;
+            int count = 0;
 
             foreach (var item in fileList.Items)
             {
@@ -502,30 +488,63 @@ namespace DesktopPlus
                 }
 
                 var topLeft = container.TranslatePoint(new System.Windows.Point(0, 0), wrapPanel);
-                if (double.IsNaN(currentRowY))
+                if (double.IsNaN(firstRowY))
                 {
-                    currentRowY = topLeft.Y;
+                    firstRowY = topLeft.Y;
                 }
-                else if (Math.Abs(topLeft.Y - currentRowY) > rowTolerance)
+                else if (Math.Abs(topLeft.Y - firstRowY) > rowTolerance)
                 {
-                    if (currentRowCount > maxItemsPerRow)
-                    {
-                        maxItemsPerRow = currentRowCount;
-                    }
-
-                    currentRowY = topLeft.Y;
-                    currentRowCount = 0;
+                    break;
                 }
 
-                currentRowCount++;
+                count++;
             }
 
-            if (currentRowCount > maxItemsPerRow)
+            return count;
+        }
+
+        private static double GetFirstRowRightEdge(System.Windows.Controls.ListBox fileList, WrapPanel wrapPanel)
+        {
+            const double rowTolerance = 2.0;
+            double firstRowY = double.NaN;
+            double maxRight = 0;
+            bool hasVisibleItems = false;
+
+            foreach (var item in fileList.Items)
             {
-                maxItemsPerRow = currentRowCount;
+                if (fileList.ItemContainerGenerator.ContainerFromItem(item) is not ListBoxItem container)
+                {
+                    continue;
+                }
+
+                if (container.Visibility != Visibility.Visible)
+                {
+                    continue;
+                }
+
+                double itemWidth = container.ActualWidth > 0
+                    ? container.ActualWidth
+                    : container.RenderSize.Width;
+                if (itemWidth <= 0)
+                {
+                    continue;
+                }
+
+                var topLeft = container.TranslatePoint(new System.Windows.Point(0, 0), wrapPanel);
+                if (double.IsNaN(firstRowY))
+                {
+                    firstRowY = topLeft.Y;
+                }
+                else if (Math.Abs(topLeft.Y - firstRowY) > rowTolerance)
+                {
+                    break;
+                }
+
+                maxRight = Math.Max(maxRight, topLeft.X + itemWidth);
+                hasVisibleItems = true;
             }
 
-            return maxItemsPerRow;
+            return hasVisibleItems ? maxRight : 0;
         }
 
         private static double GetVisibleItemRightEdge(System.Windows.Controls.ListBox fileList, WrapPanel wrapPanel)
