@@ -380,3 +380,8 @@ FodyWeavers.xsd
 # Windows specific
 Thumbs.db
 *.lnk
+
+# Local AI/tooling state
+.claude/
+.codex/
+.cursor/
