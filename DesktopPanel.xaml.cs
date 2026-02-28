@@ -943,6 +943,16 @@ namespace DesktopPlus
         private void ManualResizeGrip_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (e.ChangedButton != MouseButton.Left || e.LeftButton != MouseButtonState.Pressed) return;
+            if (_isCollapseAnimationRunning || _isDragMoveActive) return;
+
+            // Double-click on the resize grip triggers the same behavior as "Fit to content".
+            if (e.ClickCount >= 2)
+            {
+                FitToContent();
+                e.Handled = true;
+                return;
+            }
+
             if (sender is UIElement resizeHandle)
             {
                 BeginManualResize(resizeHandle);

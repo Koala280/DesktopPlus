@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="{DynamicResource Loc.PanelSettingsTitle}"
-        Height="500"
+        Height="620"
         Width="520"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
@@ -97,122 +97,189 @@
                            FontSize="12"
                            Margin="0,0,0,6"
                            Visibility="Collapsed"/>
-                <Grid Margin="0,6,0,0">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="1.1*"/>
-                        <ColumnDefinition Width="1.1*"/>
-                    </Grid.ColumnDefinitions>
 
-                    <TextBlock x:Name="NameLabel" Grid.Row="0" Grid.Column="0" Text="{DynamicResource Loc.PanelSettingsName}" Foreground="{StaticResource Muted}" FontSize="12"/>
-                    <TextBox x:Name="NameInput"
-                             Grid.Row="1" Grid.Column="0"
-                             Height="34"
-                             Style="{StaticResource FlatTextBox}"
-                             Margin="0,4,10,8"/>
+                <!-- Section: Allgemein (Name + Preset) -->
+                <Border Background="#1F242C"
+                        BorderBrush="#2B313D"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="14,10"
+                        Margin="0,8,0,0">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
 
-                    <TextBlock x:Name="PresetLabel" Grid.Row="0" Grid.Column="1" Text="{DynamicResource Loc.PanelSettingsPreset}" Foreground="{StaticResource Muted}" FontSize="12"/>
-                    <StackPanel x:Name="PresetSection" Grid.Row="1" Grid.Column="1"
-                                Margin="0,4,0,8">
-                        <ComboBox x:Name="PresetSelect"
-                                  Height="34"
-                                  Style="{StaticResource FlatCombo}"
-                                  DisplayMemberPath="Name"
-                                  SelectedValuePath="Name"
-                                  SelectionChanged="PresetSelect_SelectionChanged"/>
+                        <TextBlock x:Name="NameLabel" Grid.Row="0" Grid.Column="0"
+                                   Text="{DynamicResource Loc.PanelSettingsName}"
+                                   Foreground="{StaticResource Muted}" FontSize="12"/>
+                        <TextBox x:Name="NameInput"
+                                 Grid.Row="1" Grid.Column="0"
+                                 Height="34"
+                                 Style="{StaticResource FlatTextBox}"
+                                 Margin="0,4,0,0"/>
+
+                        <TextBlock x:Name="PresetLabel" Grid.Row="0" Grid.Column="2"
+                                   Text="{DynamicResource Loc.PanelSettingsPreset}"
+                                   Foreground="{StaticResource Muted}" FontSize="12"/>
+                        <StackPanel x:Name="PresetSection" Grid.Row="1" Grid.Column="2"
+                                    Margin="0,4,0,0">
+                            <ComboBox x:Name="PresetSelect"
+                                      Height="34"
+                                      Style="{StaticResource FlatCombo}"
+                                      DisplayMemberPath="Name"
+                                      SelectedValuePath="Name"
+                                      SelectionChanged="PresetSelect_SelectionChanged"/>
+                        </StackPanel>
                         <Button x:Name="ResetPresetToStandardButton"
+                                Grid.Row="2" Grid.Column="2"
                                 Content="{DynamicResource Loc.PanelSettingsResetToStandard}"
                                 Style="{StaticResource GhostButton}"
-                                Padding="10,6"
+                                Padding="10,5"
                                 Margin="0,6,0,0"
+                                HorizontalAlignment="Stretch"
                                 Click="ResetPresetToStandardButton_Click"/>
+                    </Grid>
+                </Border>
+
+                <!-- Section: Ordner -->
+                <Border x:Name="FolderSection"
+                        Background="#1F242C"
+                        BorderBrush="#2B313D"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="14,10"
+                        Margin="0,8,0,0">
+                    <StackPanel>
+                        <TextBlock x:Name="DefaultFolderLabel"
+                                   Text="{DynamicResource Loc.PanelSettingsDefaultFolder}"
+                                   Foreground="{StaticResource Muted}" FontSize="12"/>
+                        <StackPanel x:Name="DefaultFolderRow" Orientation="Horizontal" Margin="0,4,0,0">
+                            <TextBlock x:Name="FolderPathLabel"
+                                       Text="{DynamicResource Loc.PanelSettingsFolderUnset}"
+                                       Foreground="{StaticResource TextPrimary}"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis"
+                                       MaxWidth="370"/>
+                            <Button x:Name="ChangeFolderButton"
+                                    Content="{DynamicResource Loc.PanelSettingsChange}"
+                                    Padding="10,5"
+                                    Margin="8,0,0,0"
+                                    Style="{StaticResource GhostButton}"
+                                    Click="ChangeFolder_Click"/>
+                        </StackPanel>
+
+                        <TextBlock Text="{DynamicResource Loc.PanelSettingsFolderAction}"
+                                   Foreground="{StaticResource Muted}" FontSize="12"
+                                   Margin="0,10,0,0"/>
+                        <ComboBox x:Name="FolderActionSelect"
+                                  Height="34"
+                                  Style="{StaticResource FlatCombo}"
+                                  Margin="0,4,0,0">
+                            <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsOpenInternal}" Tag="internal"/>
+                            <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsOpenExternal}" Tag="external"/>
+                        </ComboBox>
                     </StackPanel>
+                </Border>
 
-                    <TextBlock x:Name="DefaultFolderLabel" Grid.Row="2" Grid.Column="0" Text="{DynamicResource Loc.PanelSettingsDefaultFolder}" Foreground="{StaticResource Muted}" FontSize="12"/>
-                    <StackPanel x:Name="DefaultFolderRow" Grid.Row="3" Grid.Column="0" Orientation="Horizontal" Margin="0,4,10,8">
-                        <TextBlock x:Name="FolderPathLabel" Text="{DynamicResource Loc.PanelSettingsFolderUnset}" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Width="240"/>
-                        <Button x:Name="ChangeFolderButton" Content="{DynamicResource Loc.PanelSettingsChange}" Padding="10,6" Margin="6,0,0,0" Style="{StaticResource GhostButton}" Click="ChangeFolder_Click"/>
-                    </StackPanel>
-
-                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{DynamicResource Loc.PanelSettingsFolderAction}" Foreground="{StaticResource Muted}" FontSize="12"/>
-                    <ComboBox x:Name="FolderActionSelect"
-                              Grid.Row="3" Grid.Column="1"
-                              Height="34"
-                              Style="{StaticResource FlatCombo}"
-                              Margin="0,4,0,8">
-                        <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsOpenInternal}" Tag="internal"/>
-                        <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsOpenExternal}" Tag="external"/>
-                    </ComboBox>
-
-                    <CheckBox x:Name="HoverToggle"
-                              Grid.Row="4" Grid.Column="0"
-                              Content="{DynamicResource Loc.PanelSettingsExpandOnHover}"
-                              Style="{StaticResource AccentCheckBox}"
-                              Margin="0,6,0,0"/>
-
-                    <StackPanel Grid.Row="4" Grid.Column="1"
-                                Margin="0,6,0,0">
+                <!-- Section: Anzeige (Visibility toggles) -->
+                <Border Background="#1F242C"
+                        BorderBrush="#2B313D"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="14,10"
+                        Margin="0,8,0,0">
+                    <StackPanel>
                         <CheckBox x:Name="HiddenToggle"
                                   Content="{DynamicResource Loc.PanelSettingsShowHidden}"
                                   Style="{StaticResource AccentCheckBox}"/>
                         <CheckBox x:Name="FileExtensionsToggle"
                                   Content="{DynamicResource Loc.PanelSettingsShowFileExtensions}"
                                   Style="{StaticResource AccentCheckBox}"
-                                  Margin="0,6,0,0"/>
+                                  Margin="0,8,0,0"/>
+                        <CheckBox x:Name="SettingsButtonToggle"
+                                  Content="{DynamicResource Loc.PanelSettingsShowSettingsButton}"
+                                  Style="{StaticResource AccentCheckBox}"
+                                  Margin="0,8,0,0"/>
                     </StackPanel>
+                </Border>
 
-                    <TextBlock Grid.Row="5" Grid.Column="0"
-                               Text="{DynamicResource Loc.PanelSettingsMovement}"
-                               Foreground="{StaticResource Muted}"
-                               FontSize="12"
-                               Margin="0,12,0,0"/>
-                    <TextBlock Grid.Row="5" Grid.Column="1"
-                               Text="{DynamicResource Loc.PanelSettingsSearchVisibility}"
-                               Foreground="{StaticResource Muted}"
-                               FontSize="12"
-                               Margin="0,12,0,0"/>
-                    <ComboBox x:Name="MovementModeSelect"
-                              Grid.Row="6" Grid.Column="0"
-                              Height="34"
-                              Style="{StaticResource FlatCombo}"
-                              Margin="0,4,10,0">
-                        <ComboBoxItem Content="{DynamicResource Loc.MovementTitlebar}" Tag="titlebar"/>
-                        <ComboBoxItem Content="{DynamicResource Loc.MovementButton}" Tag="button"/>
-                        <ComboBoxItem Content="{DynamicResource Loc.MovementLocked}" Tag="locked"/>
-                    </ComboBox>
-                    <ComboBox x:Name="SearchVisibilitySelect"
-                              Grid.Row="6" Grid.Column="1"
-                              Height="34"
-                              Style="{StaticResource FlatCombo}"
-                              Margin="0,4,0,0">
-                        <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSearchAlways}" Tag="always"/>
-                        <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSearchExpandedOnly}" Tag="expanded"/>
-                        <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSearchHidden}" Tag="hidden"/>
-                    </ComboBox>
-                    <CheckBox x:Name="SettingsButtonToggle"
-                              Grid.Row="7" Grid.Column="0"
-                              Content="{DynamicResource Loc.PanelSettingsShowSettingsButton}"
-                              Style="{StaticResource AccentCheckBox}"
-                              Margin="0,10,0,0"/>
-                    <Button x:Name="FitContentButton"
-                            Grid.Row="7" Grid.Column="1"
-                            Height="34"
-                            Margin="0,10,0,0"
-                            Content="{DynamicResource Loc.PanelSettingsFitContent}"
-                            Style="{StaticResource GhostButton}"
-                            Click="FitContent_Click"/>
-                </Grid>
+                <!-- Section: Verhalten (Movement, Search, Hover) -->
+                <Border Background="#1F242C"
+                        BorderBrush="#2B313D"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="14,10"
+                        Margin="0,8,0,0">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
 
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+                            <TextBlock Grid.Row="0" Grid.Column="0"
+                                       Text="{DynamicResource Loc.PanelSettingsMovement}"
+                                       Foreground="{StaticResource Muted}" FontSize="12"/>
+                            <ComboBox x:Name="MovementModeSelect"
+                                      Grid.Row="1" Grid.Column="0"
+                                      Height="34"
+                                      Style="{StaticResource FlatCombo}"
+                                      Margin="0,4,0,0">
+                                <ComboBoxItem Content="{DynamicResource Loc.MovementTitlebar}" Tag="titlebar"/>
+                                <ComboBoxItem Content="{DynamicResource Loc.MovementButton}" Tag="button"/>
+                                <ComboBoxItem Content="{DynamicResource Loc.MovementLocked}" Tag="locked"/>
+                            </ComboBox>
+
+                            <TextBlock Grid.Row="0" Grid.Column="2"
+                                       Text="{DynamicResource Loc.PanelSettingsSearchVisibility}"
+                                       Foreground="{StaticResource Muted}" FontSize="12"/>
+                            <ComboBox x:Name="SearchVisibilitySelect"
+                                      Grid.Row="1" Grid.Column="2"
+                                      Height="34"
+                                      Style="{StaticResource FlatCombo}"
+                                      Margin="0,4,0,0">
+                                <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSearchAlways}" Tag="always"/>
+                                <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSearchExpandedOnly}" Tag="expanded"/>
+                                <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSearchHidden}" Tag="hidden"/>
+                            </ComboBox>
+                        </Grid>
+
+                        <Grid Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox x:Name="HoverToggle"
+                                      Grid.Column="0"
+                                      Content="{DynamicResource Loc.PanelSettingsExpandOnHover}"
+                                      Style="{StaticResource AccentCheckBox}"
+                                      VerticalAlignment="Center"/>
+                            <Button x:Name="FitContentButton"
+                                    Grid.Column="2"
+                                    Height="34"
+                                    Content="{DynamicResource Loc.PanelSettingsFitContent}"
+                                    Style="{StaticResource GhostButton}"
+                                    Click="FitContent_Click"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- Footer: Cancel / Save -->
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
                     <Button Content="{DynamicResource Loc.PanelSettingsCancel}" Width="96" Margin="0,0,8,0" Style="{StaticResource GhostButton}" Click="Cancel_Click"/>
                     <Button Content="{DynamicResource Loc.PanelSettingsSave}" Width="96" Style="{StaticResource PrimaryButton}" Click="Save_Click"/>
                 </StackPanel>

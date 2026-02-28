@@ -49,8 +49,7 @@ namespace DesktopPlus
             NameLabel.Visibility = Visibility.Collapsed;
             NameInput.Visibility = Visibility.Collapsed;
             PresetLabel.Text = MainWindow.GetString("Loc.LayoutsDefaultPreset");
-            DefaultFolderLabel.Visibility = Visibility.Collapsed;
-            DefaultFolderRow.Visibility = Visibility.Collapsed;
+            FolderSection.Visibility = Visibility.Collapsed;
             ResetPresetToStandardButton.Visibility = Visibility.Collapsed;
             FitContentButton.Visibility = Visibility.Collapsed;
             Height = 430;

@@ -343,11 +343,12 @@
                                   SizeChanged="ContentContainer_SizeChanged">
                         <Grid x:Name="SelectionHost">
                             <ListBox Name="FileList"
-                                     Background="Transparent"
-                                     BorderThickness="0"
-                                     FocusVisualStyle="{x:Null}"
-                                     Foreground="{StaticResource PanelText}"
-                                     ItemContainerStyle="{StaticResource PanelFileListItemStyle}"
+                                      Background="Transparent"
+                                      BorderThickness="0"
+                                      Padding="0"
+                                      FocusVisualStyle="{x:Null}"
+                                      Foreground="{StaticResource PanelText}"
+                                      ItemContainerStyle="{StaticResource PanelFileListItemStyle}"
                                      SelectionMode="Extended"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                      ScrollViewer.VerticalScrollBarVisibility="Disabled"

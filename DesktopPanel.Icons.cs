@@ -235,35 +235,32 @@ namespace DesktopPlus
             }
 
             Rect workArea = GetWorkAreaForPanel();
+            double startWidth = Width;
+            int baselineItemsPerRow = GetMaxItemsPerRow(FileList, wrapPanel);
             bool widthChanged = false;
             bool heightChanged = false;
+            double minWindowWidth = Math.Max(220, MinWidth > 0 ? MinWidth : 0);
+            double maxWindowWidth = Math.Max(minWindowWidth, workArea.Right - Left);
 
             // --- Width fitting ---
             // Measure how much horizontal space items actually need.
             // We use item count × item width for precision, avoiding sub-pixel drift.
-            double currentViewportWidth = GetContentViewportWidth();
-            if (currentViewportWidth > 1)
+            double currentLayoutWidth = GetContentLayoutWidth();
+            if (currentLayoutWidth > 1)
             {
-                double itemWidth = GetMaxItemWidth(FileList);
-                int itemsPerRow = CountItemsInFirstRow(FileList, wrapPanel);
+                double neededWrapWidth = GetVisibleItemRightEdge(FileList, wrapPanel);
 
-                if (itemWidth > 0 && itemsPerRow > 0)
+                if (neededWrapWidth > 0)
                 {
-                    // The WrapPanel has Margin="4" inside the ScrollViewer.
-                    // wrapPanel.Width is set to ViewportWidth, but the WrapPanel's
-                    // Margin="4" means its content area is offset by 4px on each side
-                    // within the ScrollViewer. For wrapping purposes, the explicit Width
-                    // is used, so we need: wrapPanel.Width >= itemsPerRow * itemWidth.
-                    // Since wrapPanel.Width = ViewportWidth, we need:
-                    //   ViewportWidth >= itemsPerRow * itemWidth
-                    // The relationship: ViewportWidth = WindowWidth - chrome
-                    // So: targetWindowWidth = chrome + itemsPerRow * itemWidth + padding
-                    double neededWrapWidth = itemsPerRow * itemWidth;
-                    double chrome = Width - currentViewportWidth;
-                    double targetWidth = chrome + neededWrapWidth + 10;
+                    // Use the actual right-most rendered item edge for width fitting.
+                    // This avoids overestimating with count * max-width and keeps
+                    // scrollbar overlay changes out of the fit calculation.
+                    double wrapHorizontalMargin = GetHorizontalMargin(wrapPanel);
+                    const double layoutSafetyPixels = 1;
+                    double neededContentWidth = Math.Ceiling(neededWrapWidth + wrapHorizontalMargin + layoutSafetyPixels);
+                    double chrome = Width - currentLayoutWidth;
+                    double targetWidth = chrome + neededContentWidth;
 
-                    double minWindowWidth = Math.Max(220, MinWidth > 0 ? MinWidth : 0);
-                    double maxWindowWidth = Math.Max(minWindowWidth, workArea.Right - Left);
                     targetWidth = Math.Max(minWindowWidth, Math.Min(targetWidth, maxWindowWidth));
 
                     if (Math.Abs(targetWidth - Width) > 0.5)
@@ -279,11 +276,52 @@ namespace DesktopPlus
                 UpdateLayout();
                 UpdateWrapPanelWidth();
                 UpdateLayout();
+
+                // Guard against accidental row loss from threshold/rounding drift.
+                // If the candidate width reduced items-per-row, widen minimally.
+                if (baselineItemsPerRow > 0 && Width < startWidth - 0.5)
+                {
+                    int fittedItemsPerRow = GetMaxItemsPerRow(FileList, wrapPanel);
+                    if (fittedItemsPerRow < baselineItemsPerRow)
+                    {
+                        double low = Width;
+                        double high = Math.Max(low, Math.Min(startWidth, maxWindowWidth));
+
+                        for (int i = 0; i < 10 && high - low > 0.5; i++)
+                        {
+                            double mid = (low + high) / 2.0;
+                            Width = mid;
+                            UpdateLayout();
+                            UpdateWrapPanelWidth();
+                            UpdateLayout();
+
+                            int probeItemsPerRow = GetMaxItemsPerRow(FileList, wrapPanel);
+                            if (probeItemsPerRow >= baselineItemsPerRow)
+                            {
+                                high = mid;
+                            }
+                            else
+                            {
+                                low = mid;
+                            }
+                        }
+
+                        double correctedWidth = Math.Ceiling(high);
+                        correctedWidth = Math.Max(minWindowWidth, Math.Min(correctedWidth, maxWindowWidth));
+                        if (Math.Abs(correctedWidth - Width) > 0.5)
+                        {
+                            Width = correctedWidth;
+                            UpdateLayout();
+                            UpdateWrapPanelWidth();
+                            UpdateLayout();
+                        }
+                    }
+                }
             }
 
             // --- Height fitting ---
             // After width is settled, measure content height at the final width.
-            double finalWrapWidth = wrapPanel.Width > 0 ? wrapPanel.Width : GetContentViewportWidth();
+            double finalWrapWidth = wrapPanel.Width > 0 ? wrapPanel.Width : GetContentLayoutWidth();
             if (finalWrapWidth <= 1)
             {
                 if (widthChanged)
@@ -334,8 +372,34 @@ namespace DesktopPlus
             double targetHeight2 = verticalChrome + desiredWrapHeight + 6;
             double collapsedHeight = GetCollapsedHeight();
             double minWindowHeight = Math.Max(collapsedHeight, MinHeight > 0 ? MinHeight : 0);
-            double maxWindowHeight = Math.Max(minWindowHeight, workArea.Bottom - Top);
-            targetHeight2 = Math.Max(minWindowHeight, Math.Min(targetHeight2, maxWindowHeight));
+            double maxWindowHeightInWorkArea = Math.Max(minWindowHeight, workArea.Height);
+            targetHeight2 = Math.Max(minWindowHeight, Math.Min(targetHeight2, maxWindowHeightInWorkArea));
+
+            double targetTop = Top;
+            double maxHeightAtCurrentTop = Math.Max(minWindowHeight, workArea.Bottom - targetTop);
+
+            // Special case: panel is at (or near) the bottom edge and cannot grow downward.
+            // Shift upward so fit-to-content can still reach the target height.
+            if (targetHeight2 > maxHeightAtCurrentTop + 0.5)
+            {
+                double shiftedTop = workArea.Bottom - targetHeight2;
+                targetTop = ClampTopToWorkArea(workArea, targetHeight2, shiftedTop);
+
+                double maxHeightAtShiftedTop = Math.Max(minWindowHeight, workArea.Bottom - targetTop);
+                targetHeight2 = Math.Max(minWindowHeight, Math.Min(targetHeight2, maxHeightAtShiftedTop));
+            }
+            else
+            {
+                targetTop = ClampTopToWorkArea(workArea, targetHeight2, targetTop);
+            }
+
+            SnapWindowVerticalBounds(ref targetTop, ref targetHeight2);
+
+            if (Math.Abs(targetTop - Top) > 0.5)
+            {
+                Top = targetTop;
+                heightChanged = true;
+            }
 
             if (Math.Abs(targetHeight2 - Height) > 0.5)
             {
@@ -368,8 +432,8 @@ namespace DesktopPlus
             var wrapPanel = FindVisualChild<WrapPanel>(FileList);
             if (wrapPanel != null)
             {
-                double baseWidth = GetContentViewportWidth();
-                double availableWidth = Math.Max(0, baseWidth);
+                double baseWidth = GetContentLayoutWidth();
+                double availableWidth = Math.Max(0, baseWidth - GetHorizontalMargin(wrapPanel));
                 if (availableWidth > 0)
                 {
                     if (Math.Abs(wrapPanel.Width - availableWidth) > 0.5)
@@ -383,11 +447,18 @@ namespace DesktopPlus
             }
         }
 
-        private double GetContentViewportWidth()
+        private double GetContentLayoutWidth()
         {
             if (ContentContainer == null)
             {
                 return 0;
+            }
+
+            // `ActualWidth` remains stable even when the vertical scrollbar toggles.
+            // This keeps wrapping and fit-to-content independent from scrollbar width.
+            if (ContentContainer.ActualWidth > 0)
+            {
+                return ContentContainer.ActualWidth;
             }
 
             if (ContentContainer.ViewportWidth > 0)
@@ -395,49 +466,66 @@ namespace DesktopPlus
                 return ContentContainer.ViewportWidth;
             }
 
-            if (ContentContainer.ActualWidth > 0)
-            {
-                return ContentContainer.ActualWidth;
-            }
-
             return 0;
         }
 
-        private static double GetMaxItemWidth(System.Windows.Controls.ListBox fileList)
+        private static double GetHorizontalMargin(FrameworkElement element)
         {
-            double maxWidth = 0;
-            foreach (var item in fileList.Items)
-            {
-                if (fileList.ItemContainerGenerator.ContainerFromItem(item) is not ListBoxItem container)
-                    continue;
-                if (container.Visibility != Visibility.Visible)
-                    continue;
-                double w = container.ActualWidth > 0 ? container.ActualWidth : container.RenderSize.Width;
-                if (w > maxWidth) maxWidth = w;
-            }
-            return maxWidth;
+            return element.Margin.Left + element.Margin.Right;
         }
 
-        private static int CountItemsInFirstRow(System.Windows.Controls.ListBox fileList, WrapPanel wrapPanel)
+        private static int GetMaxItemsPerRow(System.Windows.Controls.ListBox fileList, WrapPanel wrapPanel)
         {
-            double firstRowY = double.NaN;
-            int count = 0;
+            const double rowTolerance = 2.0;
+            double currentRowY = double.NaN;
+            int currentRowCount = 0;
+            int maxItemsPerRow = 0;
+
             foreach (var item in fileList.Items)
             {
                 if (fileList.ItemContainerGenerator.ContainerFromItem(item) is not ListBoxItem container)
-                    continue;
-                if (container.Visibility != Visibility.Visible)
-                    continue;
-                var pos = container.TranslatePoint(new System.Windows.Point(0, 0), wrapPanel);
-                if (double.IsNaN(firstRowY))
                 {
-                    firstRowY = pos.Y;
+                    continue;
                 }
-                if (Math.Abs(pos.Y - firstRowY) > 2)
-                    break;
-                count++;
+
+                if (container.Visibility != Visibility.Visible)
+                {
+                    continue;
+                }
+
+                double itemWidth = container.ActualWidth > 0
+                    ? container.ActualWidth
+                    : container.RenderSize.Width;
+                if (itemWidth <= 0)
+                {
+                    continue;
+                }
+
+                var topLeft = container.TranslatePoint(new System.Windows.Point(0, 0), wrapPanel);
+                if (double.IsNaN(currentRowY))
+                {
+                    currentRowY = topLeft.Y;
+                }
+                else if (Math.Abs(topLeft.Y - currentRowY) > rowTolerance)
+                {
+                    if (currentRowCount > maxItemsPerRow)
+                    {
+                        maxItemsPerRow = currentRowCount;
+                    }
+
+                    currentRowY = topLeft.Y;
+                    currentRowCount = 0;
+                }
+
+                currentRowCount++;
             }
-            return count;
+
+            if (currentRowCount > maxItemsPerRow)
+            {
+                maxItemsPerRow = currentRowCount;
+            }
+
+            return maxItemsPerRow;
         }
 
         private static double GetVisibleItemRightEdge(System.Windows.Controls.ListBox fileList, WrapPanel wrapPanel)
