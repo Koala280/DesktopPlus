@@ -60,7 +60,7 @@ namespace DesktopPlus
 
             var accentBrush = CreateBrush(appearance.AccentColor, 1.0, MediaColor.FromRgb(90, 200, 250));
             PanelTitle.Foreground = accentBrush;
-            SearchBox.CaretBrush = accentBrush;
+            SearchBox.CaretBrush = new SolidColorBrush(MediaColor.FromRgb(242, 245, 250));
             PanelTitle.FontSize = Math.Max(12, appearance.TitleFontSize);
             SearchBox.FontSize = Math.Max(10, appearance.ItemFontSize - 1);
 

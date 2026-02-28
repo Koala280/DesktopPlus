@@ -40,6 +40,7 @@
                          BorderBrush="{StaticResource DialogInputBorder}"
                          BorderThickness="1"
                          Foreground="{StaticResource DialogText}"
+                         CaretBrush="#F2F5FA"
                          FontSize="14"
                          Padding="8,6"/>
                 <StackPanel Grid.Row="3"

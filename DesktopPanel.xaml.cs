@@ -21,11 +21,11 @@ namespace DesktopPlus
         public double baseTopPosition;
         private Point _dragStartPoint;
         public static bool StartCollapsedByDefault = true;
-        public static bool ExpandOnHover = true;
+        public static bool ExpandOnHover = false;
         public string assignedPresetName = "";
         public bool showHiddenItems = false;
         public bool showFileExtensions = true;
-        public bool expandOnHover = true;
+        public bool expandOnHover = false;
         public bool openFoldersExternally = false;
         public bool showSettingsButton = true;
         public string defaultFolderPath = "";
@@ -67,8 +67,12 @@ namespace DesktopPlus
         public const string SearchVisibilityAlways = "always";
         public const string SearchVisibilityExpanded = "expanded";
         public const string SearchVisibilityHidden = "hidden";
-        private const double HeaderSearchWidth = 230;
+        private const double HeaderSearchWidth = 154;
         private const double HeaderSearchSpacerWidth = 8;
+        private const double HeaderTitleMinWidth = 96;
+        private const double HeaderHorizontalPadding = 24;
+        private const double HeaderCoreFixedWidth = 64; // fixed spacer (8) + collapse (28) + close (28)
+        private const int SearchVisibilityAnimationMs = 170;
         private const double BottomAnchorTolerance = 3.0;
         private const double ResizeGripHitSize = 18.0;
         private const int WmNcHitTest = 0x0084;
@@ -183,11 +187,34 @@ namespace DesktopPlus
 
         private double GetCollapsedHeight()
         {
-            double headerHeight = (HeaderBar != null && HeaderBar.ActualHeight > 0) ? HeaderBar.ActualHeight : 52;
+            double headerHeight = 46;
+            if (HeaderBar != null && HeaderBar.ActualHeight > 0)
+            {
+                headerHeight = HeaderBar.ActualHeight;
+            }
+            else if (HeaderRow != null)
+            {
+                if (HeaderRow.ActualHeight > 0)
+                {
+                    headerHeight = HeaderRow.ActualHeight;
+                }
+                else if (!double.IsNaN(HeaderRow.Height.Value) &&
+                         !double.IsInfinity(HeaderRow.Height.Value) &&
+                         HeaderRow.Height.Value > 0)
+                {
+                    headerHeight = HeaderRow.Height.Value;
+                }
+            }
+
             double padding = CollapsedChromePadding.Top + CollapsedChromePadding.Bottom;
             double border = CollapsedChromeBorderThickness.Top + CollapsedChromeBorderThickness.Bottom;
             double raw = Math.Max(headerHeight, headerHeight + padding + border);
             return SnapVerticalDipToDevicePixel(raw);
+        }
+
+        public double GetCollapsedHeightForRestore()
+        {
+            return GetCollapsedHeight();
         }
 
         private Rect GetWorkAreaForPanel()
@@ -502,11 +529,36 @@ namespace DesktopPlus
 
         private bool ShouldAnchorToBottom(double collapsedHeight)
         {
-            return false;
+            if (!isContentVisible)
+            {
+                return false;
+            }
+
+            double currentHeight = ActualHeight > 0 ? ActualHeight : Height;
+            // Only anchor as a special case when the panel is actually expanded.
+            if (currentHeight <= collapsedHeight + 0.5)
+            {
+                return false;
+            }
+
+            return IsBottomAligned(Top, currentHeight);
         }
 
         private bool ShouldUseBottomAnchorOnExpand(double collapsedHeight)
         {
+            if (_isBottomAnchored)
+            {
+                return true;
+            }
+
+            // If a collapsed panel sits at the bottom edge, expand upward so
+            // hover-expand/collapse keeps the title bar at the screen bottom.
+            double currentHeight = ActualHeight > 0 ? ActualHeight : Height;
+            if (currentHeight <= collapsedHeight + 0.5)
+            {
+                return IsBottomAligned(Top, currentHeight);
+            }
+
             return false;
         }
 
@@ -825,6 +877,11 @@ namespace DesktopPlus
 
         private IntPtr DesktopPanelWindowProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
+            if (TryHandleShellContextMenuWindowMessage(msg, wParam, lParam, ref handled, out IntPtr shellMenuResult))
+            {
+                return shellMenuResult;
+            }
+
             if (msg == WmNcLButtonDblClk)
             {
                 handled = true;
@@ -853,31 +910,33 @@ namespace DesktopPlus
         private void DesktopPanel_LocationChanged(object? sender, EventArgs e)
         {
             if (_isDragMoveActive) return;
+            if (_isCollapseAnimationRunning) return;
 
-            if (!_isCollapseAnimationRunning)
+            if (EnsurePanelInsideVerticalWorkArea())
             {
-                if (EnsurePanelInsideVerticalWorkArea())
-                {
-                    return;
-                }
-                SyncAnchoringFromCurrentBounds();
+                return;
             }
+            SyncAnchoringFromCurrentBounds();
             MainWindow.SaveSettings();
         }
 
         private void DesktopPanel_Activated(object? sender, EventArgs e)
         {
             SendPanelToBack();
+            if (SearchBox != null && SearchBox.IsKeyboardFocusWithin)
+            {
+                FocusManager.SetFocusedElement(this, this);
+                Keyboard.Focus(this);
+            }
         }
 
         private void DesktopPanel_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             if (_isDragMoveActive) return;
+            if (_isCollapseAnimationRunning) return;
 
-            if (!_isCollapseAnimationRunning)
-            {
-                SyncAnchoringFromCurrentBounds();
-            }
+            ApplySearchVisibility(animate: false);
+            SyncAnchoringFromCurrentBounds();
             MainWindow.SaveSettings();
         }
 
@@ -1328,7 +1387,6 @@ namespace DesktopPlus
             else
             {
                 SetContentScrollbarsFrozen(false);
-                SetContentLayerVisibility(false);
                 double targetHeight = Math.Max(collapsedHeight, expandedHeight);
                 bool anchorToBottom = ShouldUseBottomAnchorOnExpand(collapsedHeight);
                 double referenceTop = GetCollapseReferenceTop();
@@ -1351,13 +1409,21 @@ namespace DesktopPlus
                 ApplyCollapsedVisualState(collapsed: false, animateCorners: true, duration);
                 AnimateShadow(expanding: true);
 
+                // Make content visible immediately but transparent, so it fades in WITH the height animation
+                if (ContentFrame != null)
+                {
+                    ContentFrame.BeginAnimation(OpacityProperty, null);
+                    ContentFrame.Visibility = Visibility.Visible;
+                    ContentFrame.Opacity = 0;
+                }
+                if (ContentContainer != null) ContentContainer.Visibility = Visibility.Visible;
+                Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Render);
+                AnimateContentIn();
+
                 Action onComplete = () =>
                 {
                     this.Top = targetTop;
                     this.Height = targetHeight;
-                    AnimateContentIn();
-                    if (ContentContainer != null) ContentContainer.Visibility = Visibility.Visible;
-                    Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Render);
                     isContentVisible = true;
                     _isBottomAnchored = anchorToBottom;
                     _isExpandedShiftedByBounds = shiftedUpByBounds;
@@ -1486,28 +1552,185 @@ namespace DesktopPlus
             return true;
         }
 
-        private void ApplySearchVisibility()
+        private void ApplySearchVisibility(bool animate = true)
         {
             bool showSearch = ShouldShowSearch();
-
-            if (SearchContainer != null)
-            {
-                SearchContainer.Visibility = showSearch ? Visibility.Visible : Visibility.Collapsed;
-            }
+            bool shouldAnimate = animate && IsLoaded;
 
             if (SearchColumn != null)
             {
-                SearchColumn.Width = showSearch
-                    ? new GridLength(HeaderSearchWidth)
-                    : new GridLength(0);
+                SearchColumn.Width = GridLength.Auto;
             }
 
             if (SearchSpacerColumn != null)
             {
-                SearchSpacerColumn.Width = showSearch
-                    ? new GridLength(HeaderSearchSpacerWidth)
-                    : new GridLength(0);
+                SearchSpacerColumn.Width = GridLength.Auto;
             }
+
+            if (SearchContainer == null || SearchSpacer == null)
+            {
+                return;
+            }
+
+            GetAdaptiveHeaderSearchWidths(out double adaptiveSearchWidth, out double adaptiveSpacerWidth);
+            double targetSearchWidth = showSearch ? adaptiveSearchWidth : 0;
+            double targetSpacerWidth = showSearch ? adaptiveSpacerWidth : 0;
+
+            if (!shouldAnimate)
+            {
+                SearchContainer.BeginAnimation(FrameworkElement.WidthProperty, null);
+                SearchContainer.BeginAnimation(UIElement.OpacityProperty, null);
+                SearchSpacer.BeginAnimation(FrameworkElement.WidthProperty, null);
+
+                SearchContainer.Width = targetSearchWidth;
+                SearchContainer.Opacity = showSearch ? 1 : 0;
+                SearchContainer.Visibility = showSearch ? Visibility.Visible : Visibility.Collapsed;
+
+                SearchSpacer.Width = targetSpacerWidth;
+                SearchSpacer.Visibility = showSearch ? Visibility.Visible : Visibility.Collapsed;
+                return;
+            }
+
+            double currentSearchWidth = ResolveCurrentWidth(SearchContainer, targetSearchWidth);
+            double currentSpacerWidth = ResolveCurrentWidth(SearchSpacer, targetSpacerWidth);
+            double targetOpacity = showSearch ? 1 : 0;
+
+            SearchContainer.BeginAnimation(FrameworkElement.WidthProperty, null);
+            SearchContainer.BeginAnimation(UIElement.OpacityProperty, null);
+            SearchSpacer.BeginAnimation(FrameworkElement.WidthProperty, null);
+
+            SearchContainer.Width = currentSearchWidth;
+            SearchSpacer.Width = currentSpacerWidth;
+
+            if (showSearch)
+            {
+                SearchContainer.Visibility = Visibility.Visible;
+                SearchSpacer.Visibility = Visibility.Visible;
+            }
+
+            var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+            var duration = TimeSpan.FromMilliseconds(SearchVisibilityAnimationMs);
+
+            var widthAnimation = new DoubleAnimation
+            {
+                To = targetSearchWidth,
+                Duration = duration,
+                EasingFunction = easing,
+                FillBehavior = FillBehavior.HoldEnd
+            };
+            widthAnimation.Completed += (_, _) =>
+            {
+                SearchContainer.BeginAnimation(FrameworkElement.WidthProperty, null);
+                SearchContainer.Width = targetSearchWidth;
+                SearchContainer.Visibility = showSearch ? Visibility.Visible : Visibility.Collapsed;
+            };
+
+            var spacerAnimation = new DoubleAnimation
+            {
+                To = targetSpacerWidth,
+                Duration = duration,
+                EasingFunction = easing,
+                FillBehavior = FillBehavior.HoldEnd
+            };
+            spacerAnimation.Completed += (_, _) =>
+            {
+                SearchSpacer.BeginAnimation(FrameworkElement.WidthProperty, null);
+                SearchSpacer.Width = targetSpacerWidth;
+                SearchSpacer.Visibility = showSearch ? Visibility.Visible : Visibility.Collapsed;
+            };
+
+            var opacityAnimation = new DoubleAnimation
+            {
+                To = targetOpacity,
+                Duration = TimeSpan.FromMilliseconds(showSearch ? SearchVisibilityAnimationMs : SearchVisibilityAnimationMs - 40),
+                EasingFunction = easing,
+                FillBehavior = FillBehavior.HoldEnd
+            };
+            opacityAnimation.Completed += (_, _) =>
+            {
+                SearchContainer.BeginAnimation(UIElement.OpacityProperty, null);
+                SearchContainer.Opacity = targetOpacity;
+            };
+
+            SearchContainer.BeginAnimation(FrameworkElement.WidthProperty, widthAnimation, HandoffBehavior.SnapshotAndReplace);
+            SearchSpacer.BeginAnimation(FrameworkElement.WidthProperty, spacerAnimation, HandoffBehavior.SnapshotAndReplace);
+            SearchContainer.BeginAnimation(UIElement.OpacityProperty, opacityAnimation, HandoffBehavior.SnapshotAndReplace);
+        }
+
+        private void GetAdaptiveHeaderSearchWidths(out double searchWidth, out double spacerWidth)
+        {
+            double available = GetHeaderSearchAvailableWidth();
+            if (available <= 0.5)
+            {
+                searchWidth = 0;
+                spacerWidth = 0;
+                return;
+            }
+
+            searchWidth = Math.Min(HeaderSearchWidth, available);
+            spacerWidth = Math.Min(HeaderSearchSpacerWidth, Math.Max(0, available - searchWidth));
+        }
+
+        private double GetHeaderSearchAvailableWidth()
+        {
+            double headerWidth = 0;
+            if (HeaderBar != null && HeaderBar.ActualWidth > 0)
+            {
+                headerWidth = HeaderBar.ActualWidth;
+            }
+            else if (ActualWidth > 0)
+            {
+                headerWidth = ActualWidth;
+            }
+
+            if (headerWidth <= 1)
+            {
+                return HeaderSearchWidth + HeaderSearchSpacerWidth;
+            }
+
+            double reservedWidth = HeaderHorizontalPadding + HeaderCoreFixedWidth;
+            reservedWidth += GetVisibleElementWidth(MoveButton, 34);
+            reservedWidth += GetVisibleElementWidth(SettingsButton, 24);
+
+            return Math.Max(0, headerWidth - reservedWidth - HeaderTitleMinWidth);
+        }
+
+        private static double GetVisibleElementWidth(FrameworkElement? element, double fallbackWidth)
+        {
+            if (element == null || element.Visibility != Visibility.Visible)
+            {
+                return 0;
+            }
+
+            double width = element.ActualWidth;
+            if (width <= 0)
+            {
+                if (!double.IsNaN(element.Width) && !double.IsInfinity(element.Width) && element.Width > 0)
+                {
+                    width = element.Width;
+                }
+                else
+                {
+                    width = fallbackWidth;
+                }
+            }
+
+            return Math.Max(0, width + element.Margin.Left + element.Margin.Right);
+        }
+
+        private static double ResolveCurrentWidth(FrameworkElement element, double fallback)
+        {
+            if (!double.IsNaN(element.Width) && !double.IsInfinity(element.Width))
+            {
+                return Math.Max(0, element.Width);
+            }
+
+            if (element.ActualWidth > 0)
+            {
+                return element.ActualWidth;
+            }
+
+            return fallback;
         }
 
         private void Collapse_Click(object sender, RoutedEventArgs e)

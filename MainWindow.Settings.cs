@@ -143,7 +143,8 @@ namespace DesktopPlus
                     var kind = ResolvePanelKind(winData);
                     if (kind == PanelKind.Folder)
                     {
-                        if (!Directory.Exists(winData.FolderPath)) continue;
+                        string folderPath = ResolvePreferredFolderPath(winData);
+                        if (!Directory.Exists(folderPath)) continue;
                     }
                     else if (kind == PanelKind.None)
                     {

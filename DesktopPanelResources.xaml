@@ -117,15 +117,15 @@
             <Setter.Value>
                 <ControlTemplate TargetType="Thumb">
                     <Border x:Name="ThumbBody"
-                            Background="#7A8FA5B9"
-                            CornerRadius="2"
-                            Margin="0.5"/>
+                            Background="#50A0B4C8"
+                            CornerRadius="3"
+                            Margin="1"/>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="ThumbBody" Property="Background" Value="#A3B9CEE3"/>
+                            <Setter TargetName="ThumbBody" Property="Background" Value="#80B8CCE0"/>
                         </Trigger>
                         <Trigger Property="IsDragging" Value="True">
-                            <Setter TargetName="ThumbBody" Property="Background" Value="#D3DCECFA"/>
+                            <Setter TargetName="ThumbBody" Property="Background" Value="#A0D0E0F0"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -134,16 +134,16 @@
     </Style>
 
     <Style x:Key="ThinScrollBar" TargetType="ScrollBar">
-        <Setter Property="Width" Value="3"/>
-        <Setter Property="Background" Value="#22000000"/>
-        <Setter Property="Opacity" Value="0.58"/>
-        <Setter Property="Margin" Value="0,1,0,1"/>
+        <Setter Property="Width" Value="6"/>
+        <Setter Property="MinWidth" Value="6"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Margin" Value="0,2,0,2"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ScrollBar">
                     <Border x:Name="Rail"
                             Background="{TemplateBinding Background}"
-                            CornerRadius="2">
+                            CornerRadius="3">
                         <Track x:Name="PART_Track"
                                IsDirectionReversed="True">
                             <Track.Thumb>
@@ -156,18 +156,47 @@
         </Setter>
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
-                <Setter Property="Opacity" Value="0.9"/>
-                <Setter Property="Background" Value="#2E000000"/>
+                <Setter Property="Width" Value="8"/>
+                <Setter Property="MinWidth" Value="8"/>
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
-                <Setter Property="Opacity" Value="0.25"/>
+                <Setter Property="Visibility" Value="Collapsed"/>
             </Trigger>
             <Trigger Property="Orientation" Value="Horizontal">
                 <Setter Property="Width" Value="Auto"/>
-                <Setter Property="Height" Value="3"/>
-                <Setter Property="Margin" Value="1,0,1,0"/>
+                <Setter Property="Height" Value="6"/>
+                <Setter Property="MinHeight" Value="6"/>
+                <Setter Property="Margin" Value="4,0,4,2"/>
             </Trigger>
         </Style.Triggers>
+    </Style>
+
+    <Style x:Key="ThinScrollViewer" TargetType="ScrollViewer">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ScrollViewer">
+                    <Grid>
+                        <ScrollContentPresenter/>
+                        <ScrollBar x:Name="PART_VerticalScrollBar"
+                                   Orientation="Vertical"
+                                   Style="{StaticResource ThinScrollBar}"
+                                   HorizontalAlignment="Right"
+                                   Maximum="{TemplateBinding ScrollableHeight}"
+                                   Value="{TemplateBinding VerticalOffset}"
+                                   ViewportSize="{TemplateBinding ViewportHeight}"
+                                   Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"/>
+                        <ScrollBar x:Name="PART_HorizontalScrollBar"
+                                   Orientation="Horizontal"
+                                   Style="{StaticResource ThinScrollBar}"
+                                   VerticalAlignment="Bottom"
+                                   Maximum="{TemplateBinding ScrollableWidth}"
+                                   Value="{TemplateBinding HorizontalOffset}"
+                                   ViewportSize="{TemplateBinding ViewportWidth}"
+                                   Visibility="{TemplateBinding ComputedHorizontalScrollBarVisibility}"/>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <Style x:Key="PanelFileListItemStyle" TargetType="ListBoxItem">

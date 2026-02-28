@@ -1,10 +1,8 @@
 using System;
-using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media.Imaging;
 using WinForms = System.Windows.Forms;
 
 namespace DesktopPlus
@@ -38,19 +36,7 @@ namespace DesktopPlus
 
         private void TrySetWindowIcon()
         {
-            try
-            {
-                string iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "desktopplus_icon.ico");
-                if (!File.Exists(iconPath)) return;
-
-                using var stream = new FileStream(iconPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-                Icon = BitmapFrame.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-                Icon.Freeze();
-            }
-            catch
-            {
-                // Keep settings usable even if icon asset is missing.
-            }
+            AppIconLoader.TryApplyWindowIcon(this);
         }
 
         private void ConfigureGlobalLayoutMode()
@@ -116,7 +102,9 @@ namespace DesktopPlus
             }
 
             NameInput.Text = _panel.PanelTitle.Text;
-            FolderPathLabel.Text = string.IsNullOrWhiteSpace(_panel.currentFolderPath) ? MainWindow.GetString("Loc.PanelSettingsFolderUnset") : _panel.currentFolderPath;
+            FolderPathLabel.Text = string.IsNullOrWhiteSpace(_panel.defaultFolderPath)
+                ? MainWindow.GetString("Loc.PanelSettingsFolderUnset")
+                : _panel.defaultFolderPath;
             HoverToggle.IsChecked = _panel.expandOnHover;
             HiddenToggle.IsChecked = _panel.showHiddenItems;
             FileExtensionsToggle.IsChecked = _panel.showFileExtensions;

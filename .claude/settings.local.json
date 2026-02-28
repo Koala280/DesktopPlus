@@ -8,7 +8,8 @@
       "Bash(for file in *.cs)",
       "Bash(done)",
       "Bash(sort:*)",
-      "Bash(dotnet run)"
+      "Bash(dotnet run)",
+      "Bash(grep -n \"CreateListBoxItem\" DesktopPanel*.cs)"
     ]
   }
 }

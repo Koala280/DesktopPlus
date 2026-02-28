@@ -9,7 +9,7 @@ namespace DesktopPlus
         public string DefaultPanelPresetName { get; set; } = "";
         public bool PanelDefaultShowHidden { get; set; }
         public bool PanelDefaultShowFileExtensions { get; set; } = true;
-        public bool PanelDefaultExpandOnHover { get; set; } = true;
+        public bool PanelDefaultExpandOnHover { get; set; } = false;
         public bool PanelDefaultOpenFoldersExternally { get; set; }
         public bool PanelDefaultShowSettingsButton { get; set; } = true;
         public string PanelDefaultMovementMode { get; set; } = "titlebar";

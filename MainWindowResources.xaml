@@ -18,6 +18,7 @@
     <Style x:Key="FlatTextBox" TargetType="TextBox">
         <Setter Property="Padding" Value="10,7"/>
         <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+        <Setter Property="CaretBrush" Value="#F2F5FA"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Template">
             <Setter.Value>

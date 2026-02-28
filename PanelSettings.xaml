@@ -6,6 +6,7 @@
         Height="500"
         Width="520"
         WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
         Background="#1A1D23"
         Foreground="#F2F5FA"
         FontFamily="Segoe UI"

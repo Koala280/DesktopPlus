@@ -456,6 +456,12 @@ namespace DesktopPlus
 
         private void FileList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
+            if (_renameEditBox != null)
+            {
+                e.Handled = true;
+                return;
+            }
+
             if (FileList.SelectedItem is ListBoxItem selectedItem && selectedItem.Tag is string path)
             {
                 if (PanelType == PanelKind.List)
@@ -514,7 +520,15 @@ namespace DesktopPlus
                 return;
             }
 
-            BeginSearch(SearchBox.Text);
+            string currentSearchText = SearchBox?.Text ?? string.Empty;
+            if (!isContentVisible &&
+                !_isCollapseAnimationRunning &&
+                !string.IsNullOrWhiteSpace(currentSearchText))
+            {
+                ToggleCollapseAnimated();
+            }
+
+            BeginSearch(currentSearchText);
         }
 
         private void SearchClearButton_Click(object sender, RoutedEventArgs e)

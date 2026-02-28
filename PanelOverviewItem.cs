@@ -10,7 +10,6 @@ namespace DesktopPlus
         public bool IsOpen { get; set; }
         public bool IsHidden { get; set; }
         public bool ToggleIsShow { get; set; }
-        public string ActionLabel { get; set; } = "";
         public string ToggleLabel { get; set; } = "";
         public DesktopPanel? Panel { get; set; }
         public string FolderPath { get; set; } = "";

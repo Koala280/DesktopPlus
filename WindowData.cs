@@ -23,7 +23,7 @@ namespace DesktopPlus
         public string PresetName { get; set; } = "";
         public bool ShowHidden { get; set; }
         public bool ShowSettingsButton { get; set; } = true;
-        public bool ExpandOnHover { get; set; } = true;
+        public bool ExpandOnHover { get; set; } = false;
         public bool OpenFoldersExternally { get; set; }
         public bool ShowFileExtensions { get; set; } = true;
         public string MovementMode { get; set; } = "titlebar";

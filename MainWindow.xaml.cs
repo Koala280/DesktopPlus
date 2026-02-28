@@ -82,6 +82,22 @@ namespace DesktopPlus
             return PanelKind.None;
         }
 
+        private static string ResolvePreferredFolderPath(WindowData data)
+        {
+            if (data == null)
+            {
+                return string.Empty;
+            }
+
+            string preferred = data.DefaultFolderPath ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(preferred) && Directory.Exists(preferred))
+            {
+                return preferred;
+            }
+
+            return data.FolderPath ?? string.Empty;
+        }
+
         private static string GeneratePanelId()
         {
             return $"panel:{Guid.NewGuid():N}";
@@ -237,8 +253,9 @@ namespace DesktopPlus
                 ? panel.PinnedItems.ToList()
                 : new List<string>();
             double currentHeight = panel.ActualHeight > 0 ? panel.ActualHeight : panel.Height;
-            double expandedHeight = panel.isContentVisible ? currentHeight : panel.expandedHeight;
-            double persistedExpandedHeight = Math.Max(currentHeight, expandedHeight);
+            // Keep the last known expanded size even if a save happens mid-collapse animation.
+            double rememberedExpandedHeight = panel.expandedHeight > 0 ? panel.expandedHeight : currentHeight;
+            double persistedExpandedHeight = Math.Max(currentHeight, rememberedExpandedHeight);
 
             return new WindowData
             {
@@ -356,28 +373,28 @@ namespace DesktopPlus
 
         private static void PositionTrayMenu(Window menu)
         {
+            // Force layout so ActualHeight/ActualWidth are available (SizeToContent)
+            menu.Measure(new System.Windows.Size(menu.Width, double.PositiveInfinity));
+            menu.Arrange(new Rect(0, 0, menu.DesiredSize.Width, menu.DesiredSize.Height));
+            menu.UpdateLayout();
+
+            double menuW = menu.DesiredSize.Width > 0 ? menu.DesiredSize.Width : menu.Width;
+            double menuH = menu.DesiredSize.Height > 0 ? menu.DesiredSize.Height : 200;
+
             var mouse = WinForms.Control.MousePosition;
             var workArea = SystemParameters.WorkArea;
 
-            double x = mouse.X - menu.Width + 8;
-            double y = mouse.Y - menu.Height - 8;
+            double x = mouse.X - menuW + 8;
+            double y = mouse.Y - menuH - 8;
 
             if (x < workArea.Left + 8)
-            {
                 x = workArea.Left + 8;
-            }
-            if (x + menu.Width > workArea.Right - 8)
-            {
-                x = workArea.Right - menu.Width - 8;
-            }
+            if (x + menuW > workArea.Right - 8)
+                x = workArea.Right - menuW - 8;
             if (y < workArea.Top + 8)
-            {
                 y = mouse.Y + 8;
-            }
-            if (y + menu.Height > workArea.Bottom - 8)
-            {
-                y = workArea.Bottom - menu.Height - 8;
-            }
+            if (y + menuH > workArea.Bottom - 8)
+                y = workArea.Bottom - menuH - 8;
 
             menu.Left = x;
             menu.Top = y;
@@ -390,19 +407,7 @@ namespace DesktopPlus
 
         private void TrySetWindowIcon()
         {
-            try
-            {
-                string iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "desktopplus_icon.ico");
-                if (!File.Exists(iconPath)) return;
-
-                using var stream = new FileStream(iconPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-                Icon = BitmapFrame.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-                Icon.Freeze();
-            }
-            catch
-            {
-                // Ignore invalid or missing icon assets to keep the window usable.
-            }
+            AppIconLoader.TryApplyWindowIcon(this);
         }
 
         private static bool IsStartWithWindowsEnabled()

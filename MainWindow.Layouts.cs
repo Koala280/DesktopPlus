@@ -13,7 +13,7 @@ namespace DesktopPlus
         {
             public bool ShowHidden { get; set; }
             public bool ShowFileExtensions { get; set; } = true;
-            public bool ExpandOnHover { get; set; } = true;
+            public bool ExpandOnHover { get; set; } = false;
             public bool OpenFoldersExternally { get; set; }
             public bool ShowSettingsButton { get; set; } = true;
             public string MovementMode { get; set; } = "titlebar";
@@ -265,7 +265,7 @@ namespace DesktopPlus
                 DefaultPanelPresetName = layoutDefaultPresetName,
                 PanelDefaultShowHidden = false,
                 PanelDefaultShowFileExtensions = true,
-                PanelDefaultExpandOnHover = true,
+                PanelDefaultExpandOnHover = false,
                 PanelDefaultOpenFoldersExternally = false,
                 PanelDefaultShowSettingsButton = true,
                 PanelDefaultMovementMode = "titlebar",
@@ -293,7 +293,7 @@ namespace DesktopPlus
                 DefaultPanelPresetName = GetSelectedLayoutDefaultPresetName(),
                 PanelDefaultShowHidden = false,
                 PanelDefaultShowFileExtensions = true,
-                PanelDefaultExpandOnHover = true,
+                PanelDefaultExpandOnHover = false,
                 PanelDefaultOpenFoldersExternally = false,
                 PanelDefaultShowSettingsButton = true,
                 PanelDefaultMovementMode = "titlebar",

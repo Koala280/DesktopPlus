@@ -56,7 +56,6 @@ namespace DesktopPlus
                 string state = isOpen
                     ? (panel!.isContentVisible ? GetString("Loc.PanelStateOpen") : GetString("Loc.PanelStateCollapsed"))
                     : (isHidden ? GetString("Loc.PanelStateHidden") : GetString("Loc.PanelStateClosed"));
-                string actionLabel = GetString("Loc.PanelActionFocus");
                 string toggleLabel = toggleIsShow ? GetString("Loc.PanelsShow") : GetString("Loc.PanelsHide");
 
                 string folderLabel = kind == PanelKind.List
@@ -76,7 +75,6 @@ namespace DesktopPlus
                     IsOpen = isOpen,
                     IsHidden = isHidden,
                     ToggleIsShow = toggleIsShow,
-                    ActionLabel = actionLabel,
                     ToggleLabel = toggleLabel,
                     Panel = panel,
                     PresetName = string.IsNullOrWhiteSpace(s.PresetName) ? DefaultPresetName : s.PresetName
@@ -105,7 +103,6 @@ namespace DesktopPlus
                         IsOpen = true,
                         IsHidden = false,
                         ToggleIsShow = false,
-                        ActionLabel = GetString("Loc.PanelActionFocus"),
                         ToggleLabel = GetString("Loc.PanelsHide"),
                         Panel = panel,
                         PresetName = preset
@@ -136,6 +133,11 @@ namespace DesktopPlus
         {
             panel.showHiddenItems = data.ShowHidden;
             panel.showFileExtensions = data.ShowFileExtensions;
+            string resolvedDefaultFolderPath = !string.IsNullOrWhiteSpace(data.DefaultFolderPath)
+                ? data.DefaultFolderPath
+                : data.FolderPath;
+            data.DefaultFolderPath = resolvedDefaultFolderPath ?? "";
+            panel.defaultFolderPath = data.DefaultFolderPath;
             ApplyPanelContent(panel, data);
             if (!string.IsNullOrWhiteSpace(data.PanelTitle))
             {
@@ -150,7 +152,6 @@ namespace DesktopPlus
             panel.ApplyMovementMode(string.IsNullOrWhiteSpace(data.MovementMode) ? "titlebar" : data.MovementMode);
             panel.ApplySettingsButtonVisibility();
             panel.SetSearchVisibilityMode(data.SearchVisibilityMode);
-            panel.defaultFolderPath = data.DefaultFolderPath;
 
             double storedTop = data.Top;
             double storedBaseTop = (Math.Abs(data.BaseTop) < 0.01 && Math.Abs(storedTop) > 0.01) ? storedTop : data.BaseTop;
@@ -161,6 +162,7 @@ namespace DesktopPlus
             panel.Left = data.Left;
             panel.Top = data.IsCollapsed ? storedCollapsedTop : storedTop;
             panel.Width = data.Width;
+            double defaultExpandedHeight = panel.Height;
             double storedHeight = data.Height > 0 ? data.Height : panel.Height;
             panel.Height = storedHeight;
             double restoredExpandedHeight = data.ExpandedHeight;
@@ -170,6 +172,15 @@ namespace DesktopPlus
                     ? Math.Max(panel.expandedHeight, storedHeight)
                     : storedHeight;
             }
+
+            double collapsedHeight = panel.GetCollapsedHeightForRestore();
+            if (!data.IsCollapsed &&
+                storedHeight <= collapsedHeight + 0.5 &&
+                restoredExpandedHeight <= collapsedHeight + 0.5)
+            {
+                restoredExpandedHeight = Math.Max(restoredExpandedHeight, defaultExpandedHeight);
+            }
+
             panel.expandedHeight = Math.Max(storedHeight, restoredExpandedHeight);
             panel.IsBottomAnchored = data.IsBottomAnchored;
             panel.SetZoom(data.Zoom);
@@ -187,9 +198,10 @@ namespace DesktopPlus
 
             if (kind == PanelKind.Folder)
             {
-                if (!string.IsNullOrWhiteSpace(data.FolderPath))
+                string folderPath = ResolvePreferredFolderPath(data);
+                if (!string.IsNullOrWhiteSpace(folderPath))
                 {
-                    panel.LoadFolder(data.FolderPath, false);
+                    panel.LoadFolder(folderPath, false);
                 }
             }
             else if (kind == PanelKind.List)
@@ -240,39 +252,6 @@ namespace DesktopPlus
                 FolderPath = folderPath,
                 IsHidden = true
             });
-        }
-
-        private void FocusPanel_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is FrameworkElement fe && fe.Tag is PanelOverviewItem item)
-            {
-                string panelKey = !string.IsNullOrWhiteSpace(item.PanelKey)
-                    ? item.PanelKey
-                    : (item.Panel != null ? GetPanelKey(item.Panel) : "");
-                var existing = FindSavedWindow(panelKey);
-                if (item.Panel != null)
-                {
-                    item.Panel.Show();
-                    item.Panel.WindowState = WindowState.Normal;
-                    item.Panel.SendPanelToBack();
-                    if (existing != null && existing.IsHidden)
-                    {
-                        existing.IsHidden = false;
-                    }
-                    SaveSettings();
-                    NotifyPanelsChanged();
-                }
-                else
-                {
-                    if (existing != null)
-                    {
-                        existing.IsHidden = false;
-                        OpenPanelFromData(existing);
-                        SaveSettings();
-                        NotifyPanelsChanged();
-                    }
-                }
-            }
         }
 
         private void PanelTitle_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -482,6 +461,7 @@ namespace DesktopPlus
             var panel = new DesktopPanel();
             var appearance = GetPresetSettings(presetName);
             panel.ApplyAppearance(appearance);
+            panel.SetExpandOnHover(false);
             panel.assignedPresetName = string.IsNullOrWhiteSpace(presetName) ? DefaultPresetName : presetName;
             return panel;
         }

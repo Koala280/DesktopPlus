@@ -10,6 +10,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using Microsoft.VisualBasic.FileIO;
 using DataFormats = System.Windows.DataFormats;
 using DragDrop = System.Windows.DragDrop;
 using DragDropEffects = System.Windows.DragDropEffects;
@@ -17,6 +18,7 @@ using DragEventArgs = System.Windows.DragEventArgs;
 using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 using Point = System.Windows.Point;
 using WpfListBox = System.Windows.Controls.ListBox;
+using VBFileSystem = Microsoft.VisualBasic.FileIO.FileSystem;
 
 namespace DesktopPlus
 {
@@ -31,6 +33,14 @@ namespace DesktopPlus
         private Point _rubberBandStartPoint;
         private bool _internalReorderDropHandled;
         private readonly HashSet<object> _rubberBandSelectionSnapshot = new HashSet<object>();
+        private ListBoxItem? _renameEditItem;
+        private System.Windows.Controls.TextBox? _renameEditBox;
+        private TextBlock? _renameEditOriginalLabel;
+        private string _renameOriginalPath = string.Empty;
+        private string _renameOriginalDisplayName = string.Empty;
+        private ListBoxItem? _lastRenameClickItem;
+        private DateTime _lastRenameClickUtc = DateTime.MinValue;
+        private Point _lastRenameClickPosition;
 
         private sealed class InternalListReorderPayload
         {
@@ -95,6 +105,352 @@ namespace DesktopPlus
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Cast<string>()
                 .ToList();
+        }
+
+        private void RememberRenameClickCandidate(ListBoxItem? item, Point position)
+        {
+            _lastRenameClickItem = item;
+            _lastRenameClickUtc = DateTime.UtcNow;
+            _lastRenameClickPosition = position;
+        }
+
+        private bool TryBeginRenameBySlowSecondClick(ListBoxItem clickedItem, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton != MouseButton.Left || e.ClickCount != 1)
+            {
+                return false;
+            }
+
+            if (FileList == null || _renameEditBox != null)
+            {
+                return false;
+            }
+
+            Point clickPos = e.GetPosition(clickedItem);
+            DateTime now = DateTime.UtcNow;
+
+            bool selectedSingleItem = FileList.SelectedItems.Count == 1 &&
+                                      ReferenceEquals(FileList.SelectedItem, clickedItem);
+
+            bool sameItem = ReferenceEquals(_lastRenameClickItem, clickedItem);
+            bool nearPreviousClick = sameItem &&
+                                     (clickPos - _lastRenameClickPosition).Length <= 8;
+            double elapsedMs = (now - _lastRenameClickUtc).TotalMilliseconds;
+
+            int minDelayMs = Math.Max(420, System.Windows.Forms.SystemInformation.DoubleClickTime + 40);
+            const int maxDelayMs = 2200;
+
+            RememberRenameClickCandidate(clickedItem, clickPos);
+
+            if (!selectedSingleItem ||
+                !sameItem ||
+                !nearPreviousClick ||
+                elapsedMs < minDelayMs ||
+                elapsedMs > maxDelayMs)
+            {
+                return false;
+            }
+
+            if (!TryGetRenameItemContext(clickedItem, out _, out _, out _))
+            {
+                return false;
+            }
+
+            if (!BeginInlineRename(clickedItem))
+            {
+                return false;
+            }
+
+            _lastRenameClickItem = null;
+            _lastRenameClickUtc = DateTime.MinValue;
+            return true;
+        }
+
+        private bool CanRenameSelection()
+        {
+            if (FileList?.SelectedItems.Count != 1 || FileList.SelectedItem is not ListBoxItem item)
+            {
+                return false;
+            }
+
+            return TryGetRenameItemContext(item, out _, out _, out _);
+        }
+
+        private bool TryBeginRenameSelection()
+        {
+            if (FileList?.SelectedItems.Count != 1 || FileList.SelectedItem is not ListBoxItem item)
+            {
+                return false;
+            }
+
+            return BeginInlineRename(item);
+        }
+
+        private bool TryGetRenameItemContext(ListBoxItem item, out string path, out StackPanel panel, out TextBlock label)
+        {
+            path = string.Empty;
+            panel = null!;
+            label = null!;
+
+            if (item == null || item.Tag is not string itemPath || string.IsNullOrWhiteSpace(itemPath))
+            {
+                return false;
+            }
+
+            if (IsParentNavigationItem(item))
+            {
+                return false;
+            }
+
+            if (!File.Exists(itemPath) && !Directory.Exists(itemPath))
+            {
+                return false;
+            }
+
+            if (item.Content is not StackPanel contentPanel)
+            {
+                return false;
+            }
+
+            var textLabel = contentPanel.Children.OfType<TextBlock>().FirstOrDefault();
+            if (textLabel == null)
+            {
+                return false;
+            }
+
+            path = itemPath;
+            panel = contentPanel;
+            label = textLabel;
+            return true;
+        }
+
+        private bool BeginInlineRename(ListBoxItem item)
+        {
+            if (_renameEditBox != null)
+            {
+                return false;
+            }
+
+            if (!TryGetRenameItemContext(item, out string path, out StackPanel panel, out TextBlock label))
+            {
+                return false;
+            }
+
+            int labelIndex = panel.Children.IndexOf(label);
+            if (labelIndex < 0)
+            {
+                return false;
+            }
+
+            string originalDisplayName = string.IsNullOrWhiteSpace(label.Text)
+                ? GetDisplayNameForPath(path)
+                : label.Text.Trim();
+            if (string.IsNullOrWhiteSpace(originalDisplayName))
+            {
+                originalDisplayName = GetPathLeafName(path);
+            }
+
+            var editor = new System.Windows.Controls.TextBox
+            {
+                Text = originalDisplayName,
+                FontSize = label.FontSize,
+                FontFamily = label.FontFamily,
+                Foreground = label.Foreground,
+                Width = label.Width > 0 ? label.Width : 80,
+                MinWidth = 64,
+                Margin = label.Margin,
+                Padding = new Thickness(3, 1, 3, 1),
+                TextAlignment = TextAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+                BorderThickness = new Thickness(1),
+                Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(0x2A, 0x24, 0x2A, 0x34)),
+                BorderBrush = TryFindResource("PanelBorder") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.DimGray,
+                CaretBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(242, 245, 250))
+            };
+
+            editor.KeyDown += RenameEditor_KeyDown;
+            editor.LostKeyboardFocus += RenameEditor_LostKeyboardFocus;
+
+            panel.Children[labelIndex] = editor;
+
+            _renameEditItem = item;
+            _renameEditBox = editor;
+            _renameEditOriginalLabel = label;
+            _renameOriginalPath = path;
+            _renameOriginalDisplayName = originalDisplayName;
+
+            _ = Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (!ReferenceEquals(_renameEditBox, editor))
+                {
+                    return;
+                }
+
+                editor.Focus();
+                editor.SelectAll();
+            }), System.Windows.Threading.DispatcherPriority.Input);
+
+            return true;
+        }
+
+        private void RenameEditor_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if (!ReferenceEquals(sender, _renameEditBox))
+            {
+                return;
+            }
+
+            if (e.Key == Key.Enter)
+            {
+                EndInlineRenameSession(commit: true);
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Key == Key.Escape)
+            {
+                EndInlineRenameSession(commit: false);
+                e.Handled = true;
+            }
+        }
+
+        private void RenameEditor_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            if (ReferenceEquals(sender, _renameEditBox))
+            {
+                EndInlineRenameSession(commit: true);
+            }
+        }
+
+        private void EndInlineRenameSession(bool commit)
+        {
+            if (_renameEditBox == null || _renameEditItem == null || _renameEditOriginalLabel == null)
+            {
+                return;
+            }
+
+            var editor = _renameEditBox;
+            var item = _renameEditItem;
+            var originalLabel = _renameEditOriginalLabel;
+            string originalPath = _renameOriginalPath;
+            string originalDisplayName = _renameOriginalDisplayName;
+            string requestedDisplayName = editor.Text?.Trim() ?? string.Empty;
+
+            editor.KeyDown -= RenameEditor_KeyDown;
+            editor.LostKeyboardFocus -= RenameEditor_LostKeyboardFocus;
+
+            if (item.Content is StackPanel panel)
+            {
+                int editorIndex = panel.Children.IndexOf(editor);
+                if (editorIndex >= 0)
+                {
+                    panel.Children[editorIndex] = originalLabel;
+                }
+            }
+
+            originalLabel.Text = originalDisplayName;
+
+            _renameEditBox = null;
+            _renameEditItem = null;
+            _renameEditOriginalLabel = null;
+            _renameOriginalPath = string.Empty;
+            _renameOriginalDisplayName = string.Empty;
+
+            if (!commit || string.IsNullOrWhiteSpace(requestedDisplayName))
+            {
+                return;
+            }
+
+            if (string.Equals(requestedDisplayName, originalDisplayName, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            TryRenamePathFromInlineEditor(originalPath, requestedDisplayName);
+        }
+
+        private bool TryRenamePathFromInlineEditor(string sourcePath, string requestedDisplayName)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePath) || string.IsNullOrWhiteSpace(requestedDisplayName))
+            {
+                return false;
+            }
+
+            bool isDirectory = Directory.Exists(sourcePath);
+            bool isFile = !isDirectory && File.Exists(sourcePath);
+            if (!isDirectory && !isFile)
+            {
+                return false;
+            }
+
+            try
+            {
+                string sourceParent = Path.GetDirectoryName(sourcePath) ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(sourceParent) || !Directory.Exists(sourceParent))
+                {
+                    return false;
+                }
+
+                string targetName = requestedDisplayName.Trim();
+                if (isFile && !showFileExtensions)
+                {
+                    string sourceExtension = Path.GetExtension(sourcePath);
+                    if (!string.IsNullOrWhiteSpace(sourceExtension) &&
+                        string.IsNullOrWhiteSpace(Path.GetExtension(targetName)))
+                    {
+                        targetName += sourceExtension;
+                    }
+                }
+
+                string targetPath = Path.Combine(sourceParent, targetName);
+                if (string.Equals(sourcePath, targetPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+
+                if (isDirectory)
+                {
+                    Directory.Move(sourcePath, targetPath);
+                }
+                else
+                {
+                    File.Move(sourcePath, targetPath);
+                }
+
+                if (PanelType == PanelKind.Folder)
+                {
+                    if (!string.IsNullOrWhiteSpace(currentFolderPath) && Directory.Exists(currentFolderPath))
+                    {
+                        LoadFolder(currentFolderPath, saveSettings: false);
+                    }
+                }
+                else if (PanelType == PanelKind.List)
+                {
+                    for (int i = 0; i < PinnedItems.Count; i++)
+                    {
+                        if (string.Equals(PinnedItems[i], sourcePath, StringComparison.OrdinalIgnoreCase))
+                        {
+                            PinnedItems[i] = targetPath;
+                        }
+                    }
+
+                    LoadList(PinnedItems.ToArray(), saveSettings: false);
+                }
+
+                MainWindow.SaveSettings();
+                MainWindow.NotifyPanelsChanged();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                System.Windows.MessageBox.Show(
+                    string.Format(MainWindow.GetString("Loc.MsgRenameError"), ex.Message),
+                    MainWindow.GetString("Loc.MsgError"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return false;
+            }
         }
 
         private static void WritePreferredDropEffect(System.Windows.DataObject dataObject, DragDropEffects effect)
@@ -317,8 +673,300 @@ namespace DesktopPlus
             }
         }
 
+        private static bool ConfirmDeleteAction(bool panelOnly, int count, string singleItemName)
+        {
+            string message;
+            if (count <= 1)
+            {
+                string key = panelOnly ? "Loc.MsgDeletePanelOnlySingle" : "Loc.MsgDeleteRecycleSingle";
+                message = string.Format(MainWindow.GetString(key), singleItemName);
+            }
+            else
+            {
+                string key = panelOnly ? "Loc.MsgDeletePanelOnlyMulti" : "Loc.MsgDeleteRecycleMulti";
+                message = string.Format(MainWindow.GetString(key), count);
+            }
+
+            return System.Windows.MessageBox.Show(
+                message,
+                MainWindow.GetString("Loc.MsgDeleteConfirmTitle"),
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) == MessageBoxResult.Yes;
+        }
+
+        private static string GetSelectedItemDisplayName(ListBoxItem item)
+        {
+            if (item.Content is StackPanel panel)
+            {
+                var text = panel.Children.OfType<TextBlock>().FirstOrDefault();
+                if (text != null && !string.IsNullOrWhiteSpace(text.Text))
+                {
+                    return text.Text.Trim();
+                }
+            }
+
+            if (item.Tag is string path)
+            {
+                string fallback = GetPathLeafName(path);
+                if (!string.IsNullOrWhiteSpace(fallback))
+                {
+                    return fallback;
+                }
+            }
+
+            return MainWindow.GetString("Loc.Untitled");
+        }
+
+        private bool IsParentNavigationItem(ListBoxItem item)
+        {
+            if (PanelType != PanelKind.Folder ||
+                string.IsNullOrWhiteSpace(currentFolderPath) ||
+                item.Tag is not string path ||
+                string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            if (item.Content is StackPanel panel)
+            {
+                var text = panel.Children.OfType<TextBlock>().FirstOrDefault();
+                if (text != null && !string.IsNullOrWhiteSpace(text.Text) &&
+                    text.Text.TrimStart().StartsWith("↩", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            string? parentPath = Path.GetDirectoryName(currentFolderPath);
+            return !string.IsNullOrWhiteSpace(parentPath) &&
+                   string.Equals(path, parentPath, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool RemoveItemsFromPanel(IEnumerable<ListBoxItem> items)
+        {
+            bool changed = false;
+
+            foreach (var item in items)
+            {
+                if (item.Tag is not string path || string.IsNullOrWhiteSpace(path))
+                {
+                    continue;
+                }
+
+                if (FileList.Items.Contains(item))
+                {
+                    FileList.Items.Remove(item);
+                    changed = true;
+                }
+
+                _baseItemPaths.Remove(path);
+                _searchInjectedPaths.Remove(path);
+                _searchInjectedItems.Remove(item);
+                PinnedItems.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (changed)
+            {
+                UpdateDropZoneVisibility();
+                _ = Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Background);
+            }
+
+            return changed;
+        }
+
+        private static bool TryMovePathToRecycleBin(string path, out string? errorMessage)
+        {
+            errorMessage = null;
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            try
+            {
+                if (Directory.Exists(path))
+                {
+                    VBFileSystem.DeleteDirectory(
+                        path,
+                        UIOption.OnlyErrorDialogs,
+                        RecycleOption.SendToRecycleBin,
+                        UICancelOption.DoNothing);
+                    return true;
+                }
+
+                if (File.Exists(path))
+                {
+                    VBFileSystem.DeleteFile(
+                        path,
+                        UIOption.OnlyErrorDialogs,
+                        RecycleOption.SendToRecycleBin,
+                        UICancelOption.DoNothing);
+                    return true;
+                }
+
+                return false;
+            }
+            catch (Exception ex)
+            {
+                errorMessage = ex.Message;
+                return false;
+            }
+        }
+
+        private bool TryHandleDeleteSelection()
+        {
+            if (IsTextInputFocused() || FileList == null || FileList.SelectedItems.Count == 0)
+            {
+                return false;
+            }
+
+            var selectedItems = FileList.SelectedItems
+                .OfType<ListBoxItem>()
+                .Where(item => item.Tag is string)
+                .ToList();
+
+            if (selectedItems.Count == 0)
+            {
+                return false;
+            }
+
+            bool anyChanges = false;
+
+            if (PanelType == PanelKind.List)
+            {
+                string singleName = GetSelectedItemDisplayName(selectedItems[0]);
+                if (!ConfirmDeleteAction(panelOnly: true, selectedItems.Count, singleName))
+                {
+                    return true;
+                }
+
+                if (RemoveItemsFromPanel(selectedItems))
+                {
+                    anyChanges = true;
+                }
+            }
+            else
+            {
+                var realPaths = selectedItems
+                    .Where(item =>
+                    {
+                        if (item.Tag is not string path || string.IsNullOrWhiteSpace(path))
+                        {
+                            return false;
+                        }
+
+                        if (IsParentNavigationItem(item))
+                        {
+                            return false;
+                        }
+
+                        return File.Exists(path) || Directory.Exists(path);
+                    })
+                    .Select(item => (string)item.Tag)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                var pseudoItems = selectedItems
+                    .Where(item =>
+                    {
+                        if (item.Tag is not string path || string.IsNullOrWhiteSpace(path))
+                        {
+                            return false;
+                        }
+
+                        if (IsParentNavigationItem(item))
+                        {
+                            return true;
+                        }
+
+                        return !File.Exists(path) && !Directory.Exists(path);
+                    })
+                    .ToList();
+
+                if (realPaths.Count > 0)
+                {
+                    string singleName = GetDisplayNameForPath(realPaths[0]);
+                    if (string.IsNullOrWhiteSpace(singleName))
+                    {
+                        singleName = GetPathLeafName(realPaths[0]);
+                    }
+
+                    if (ConfirmDeleteAction(panelOnly: false, realPaths.Count, singleName))
+                    {
+                        var failures = new List<string>();
+                        bool deletedAny = false;
+
+                        foreach (var path in realPaths)
+                        {
+                            if (TryMovePathToRecycleBin(path, out string? error))
+                            {
+                                deletedAny = true;
+                                continue;
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(error))
+                            {
+                                string displayName = GetDisplayNameForPath(path);
+                                if (string.IsNullOrWhiteSpace(displayName))
+                                {
+                                    displayName = GetPathLeafName(path);
+                                }
+
+                                failures.Add($"{displayName}: {error}");
+                            }
+                        }
+
+                        if (deletedAny)
+                        {
+                            if (PanelType == PanelKind.Folder &&
+                                !string.IsNullOrWhiteSpace(currentFolderPath) &&
+                                Directory.Exists(currentFolderPath))
+                            {
+                                LoadFolder(currentFolderPath, saveSettings: false);
+                            }
+
+                            anyChanges = true;
+                        }
+
+                        if (failures.Count > 0)
+                        {
+                            System.Windows.MessageBox.Show(
+                                string.Format(MainWindow.GetString("Loc.MsgDeletePathError"), string.Join(Environment.NewLine, failures)),
+                                MainWindow.GetString("Loc.MsgError"),
+                                MessageBoxButton.OK,
+                                MessageBoxImage.Error);
+                        }
+                    }
+                }
+
+                if (pseudoItems.Count > 0)
+                {
+                    string singleName = GetSelectedItemDisplayName(pseudoItems[0]);
+                    if (ConfirmDeleteAction(panelOnly: true, pseudoItems.Count, singleName) &&
+                        RemoveItemsFromPanel(pseudoItems))
+                    {
+                        anyChanges = true;
+                    }
+                }
+            }
+
+            if (anyChanges)
+            {
+                MainWindow.SaveSettings();
+                MainWindow.NotifyPanelsChanged();
+            }
+
+            return true;
+        }
+
         private void DesktopPanel_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
         {
+            if (e.Key == Key.Delete && TryHandleDeleteSelection())
+            {
+                e.Handled = true;
+                return;
+            }
+
             if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control) ||
                 Keyboard.Modifiers.HasFlag(ModifierKeys.Alt))
             {
@@ -436,6 +1084,14 @@ namespace DesktopPlus
 
             if (clickedItem != null)
             {
+                if (!toggleModifier &&
+                    !rangeModifier &&
+                    TryBeginRenameBySlowSecondClick(clickedItem, e))
+                {
+                    e.Handled = true;
+                    return;
+                }
+
                 // ALT toggles selection just like CTRL.
                 if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control) &&
                     Keyboard.Modifiers.HasFlag(ModifierKeys.Alt))
@@ -446,6 +1102,9 @@ namespace DesktopPlus
                 }
                 return;
             }
+
+            _lastRenameClickItem = null;
+            _lastRenameClickUtc = DateTime.MinValue;
 
             if (!toggleModifier && !rangeModifier)
             {
@@ -476,6 +1135,11 @@ namespace DesktopPlus
 
         private void FileList_MouseMove(object sender, MouseEventArgs e)
         {
+            if (_renameEditBox != null)
+            {
+                return;
+            }
+
             if (_isRubberBandSelecting)
             {
                 if (SelectionHost != null)
@@ -519,7 +1183,9 @@ namespace DesktopPlus
 
                         var dataObject = new System.Windows.DataObject();
                         dataObject.SetFileDropList(fileDrop);
-                        WritePreferredDropEffect(dataObject, DragDropEffects.Copy);
+                        // Don't force a preferred drop effect for drag-and-drop.
+                        // Let the target (e.g. Explorer) choose native default behavior
+                        // like move on same volume and copy across volumes.
 
                         if (sourceItem != null)
                         {
@@ -638,6 +1304,10 @@ namespace DesktopPlus
                 return false;
             }
 
+            bool wasUninitializedBeforeDrop = PanelType == PanelKind.None &&
+                                              string.IsNullOrWhiteSpace(currentFolderPath) &&
+                                              PinnedItems.Count == 0;
+
             PanelKind effectiveType = PanelType;
             if (effectiveType == PanelKind.Folder && string.IsNullOrWhiteSpace(currentFolderPath))
             {
@@ -728,11 +1398,36 @@ namespace DesktopPlus
 
             if (folderChanged || listChanged)
             {
+                bool initializedByThisDrop = wasUninitializedBeforeDrop &&
+                                             ((PanelType == PanelKind.Folder && !string.IsNullOrWhiteSpace(currentFolderPath)) ||
+                                              (PanelType == PanelKind.List && PinnedItems.Count > 0));
+                if (initializedByThisDrop)
+                {
+                    ActivateHoverModeForInitializedPanel();
+                }
+
                 MainWindow.SaveSettings();
             }
 
             UpdateDropZoneVisibility();
             return folderChanged || listChanged;
+        }
+
+        private void ActivateHoverModeForInitializedPanel()
+        {
+            if (!expandOnHover || !isContentVisible || _isCollapseAnimationRunning)
+            {
+                return;
+            }
+
+            // Treat the first content drop as the moment where hover-mode becomes active.
+            RebaseHoverRestoreStateFromCurrentBounds();
+            _hoverExpanded = true;
+
+            if (!IsMouseOver && !IsCursorWithinPanelBounds())
+            {
+                RequestHoverCollapseAnimated();
+            }
         }
 
         private void Window_Drop(object sender, DragEventArgs e)
