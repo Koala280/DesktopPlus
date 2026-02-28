@@ -43,6 +43,7 @@ namespace DesktopPlus
         private const string PreviewPanelIdPrefix = "preview:";
         private const string StartupRegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
         private const string StartupRegistryValue = "DesktopPlus";
+        private const string StartupLaunchArgument = "--startup";
         public static string CurrentLanguageCode { get; private set; } = DefaultLanguageCode;
 
         private string _languageCode = DefaultLanguageCode;
@@ -548,6 +549,19 @@ namespace DesktopPlus
             }
         }
 
+        private static bool IsStartupLaunch()
+        {
+            try
+            {
+                return Environment.GetCommandLineArgs()
+                    .Any(arg => string.Equals(arg, StartupLaunchArgument, StringComparison.OrdinalIgnoreCase));
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static bool IsStartWithWindowsEnabled()
         {
             try
@@ -591,7 +605,7 @@ namespace DesktopPlus
                 {
                     string exePath = GetCurrentExecutablePath();
                     if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath)) return;
-                    key.SetValue(StartupRegistryValue, $"\"{exePath}\"");
+                    key.SetValue(StartupRegistryValue, $"\"{exePath}\" {StartupLaunchArgument}");
                 }
                 else
                 {

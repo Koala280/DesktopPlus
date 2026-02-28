@@ -170,7 +170,7 @@ namespace DesktopPlus
                         openedPanels++;
                     }
                 }
-                _hideMainWindowOnStartup = openedPanels > 0;
+                _hideMainWindowOnStartup = openedPanels > 0 && IsStartupLaunch();
 
                 AppearanceChanged?.Invoke();
                 NotifyPanelsChanged();
