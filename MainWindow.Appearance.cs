@@ -27,6 +27,11 @@ namespace DesktopPlus
         private bool _suppressPatternEditorApply;
         private readonly List<string> _fontFamilyChoices = new List<string>();
         private bool _fontFamilyChoicesInitialized;
+        private const string ThemeSectionHeader = "header";
+        private const string ThemeSectionBody = "body";
+        private const string ThemeSectionTabs = "tabs";
+        private string _activeThemeSection = ThemeSectionHeader;
+        private bool _appearancePreviewTabsVisible;
 
         private void EnsureFontFamilyChoices()
         {
@@ -72,6 +77,114 @@ namespace DesktopPlus
             return existing;
         }
 
+        private static string NormalizeThemeSection(string? section)
+        {
+            if (string.Equals(section, ThemeSectionBody, StringComparison.OrdinalIgnoreCase))
+            {
+                return ThemeSectionBody;
+            }
+
+            if (string.Equals(section, ThemeSectionTabs, StringComparison.OrdinalIgnoreCase))
+            {
+                return ThemeSectionTabs;
+            }
+
+            return ThemeSectionHeader;
+        }
+
+        private static void SetElementVisibility(UIElement? element, bool isVisible)
+        {
+            if (element == null) return;
+            element.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void ApplyThemeSectionButtonStyle(System.Windows.Controls.Button? button, bool isActive)
+        {
+            if (button == null) return;
+            object styleObject = TryFindResource(isActive ? "PrimaryButton" : "GhostButton");
+            if (styleObject is Style style)
+            {
+                button.Style = style;
+            }
+        }
+
+        private void SetThemeSection(string? section, bool updatePreview)
+        {
+            string normalized = NormalizeThemeSection(section);
+            _activeThemeSection = normalized;
+
+            bool isHeader = string.Equals(normalized, ThemeSectionHeader, StringComparison.OrdinalIgnoreCase);
+            bool isBody = string.Equals(normalized, ThemeSectionBody, StringComparison.OrdinalIgnoreCase);
+            bool isTabs = string.Equals(normalized, ThemeSectionTabs, StringComparison.OrdinalIgnoreCase);
+
+            ApplyThemeSectionButtonStyle(ThemeSectionHeaderButton, isHeader);
+            ApplyThemeSectionButtonStyle(ThemeSectionBodyButton, isBody);
+            ApplyThemeSectionButtonStyle(ThemeSectionTabsButton, isTabs);
+
+            SetElementVisibility(BodyFineTuneBackgroundLabelRow, isBody);
+            SetElementVisibility(BackgroundColorInput, isBody);
+            SetElementVisibility(BodyFineTuneOpacityLabel, isBody);
+            SetElementVisibility(OpacitySlider, isBody);
+
+            SetElementVisibility(HeaderFineTuneColorLabelRow, isHeader);
+            SetElementVisibility(HeaderColorInput, isHeader);
+            SetElementVisibility(HeaderFineTuneCornerLabel, isHeader);
+            SetElementVisibility(CornerRadiusSlider, isHeader);
+
+            SetElementVisibility(TabsFineTuneAccentLabelRow, isTabs);
+            SetElementVisibility(AccentColorInput, isTabs);
+
+            SetElementVisibility(FineTuneShadowGroupLabel, isHeader || isBody);
+            SetElementVisibility(FineTuneShadowGroup, isHeader || isBody);
+            SetElementVisibility(HeaderShadowCard, isHeader);
+            SetElementVisibility(BodyShadowCard, isBody);
+
+            SetElementVisibility(BackgroundModeCombo, isBody);
+            SetElementVisibility(GlassToggle, isHeader || isBody);
+            SetElementVisibility(TabsModeInfoText, isTabs);
+
+            if (isBody)
+            {
+                UpdateBackgroundEditorVisibility();
+            }
+            else
+            {
+                SetElementVisibility(PatternSection, false);
+                SetElementVisibility(PatternEditorSection, false);
+                SetElementVisibility(ImageSection, false);
+            }
+
+            SetElementVisibility(HeaderTypographyFontLabel, isHeader);
+            SetElementVisibility(FontFamilyCombo, isHeader);
+            SetElementVisibility(HeaderTypographyTextColorLabelRow, isHeader);
+            SetElementVisibility(TextColorInput, isHeader);
+            SetElementVisibility(HeaderTypographyTitleSizeLabel, isHeader);
+            SetElementVisibility(TitleFontSizeInput, isHeader);
+
+            SetElementVisibility(BodyTypographyFolderColorLabelRow, isBody);
+            SetElementVisibility(FolderColorInput, isBody);
+
+            SetElementVisibility(ItemTypographySizeLabel, isBody || isTabs);
+            SetElementVisibility(ItemFontSizeInput, isBody || isTabs);
+
+            SetElementVisibility(TabsTypographyActiveLabelRow, isTabs);
+            SetElementVisibility(TabActiveColorInput, isTabs);
+            SetElementVisibility(TabsTypographyInactiveLabelRow, isTabs);
+            SetElementVisibility(TabInactiveColorInput, isTabs);
+            SetElementVisibility(TabsTypographyHoverLabelRow, isTabs);
+            SetElementVisibility(TabHoverColorInput, isTabs);
+
+            if (!updatePreview) return;
+            var appearance = _isUiReady ? BuildAppearanceFromUi() : (Appearance ?? new AppearanceSettings());
+            UpdatePreview(appearance);
+        }
+
+        private void ThemeSectionButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not System.Windows.Controls.Button button) return;
+            SetThemeSection(button.Tag as string, updatePreview: true);
+        }
+
         private void PopulateAppearanceInputs(AppearanceSettings appearance)
         {
             if (appearance == null) return;
@@ -85,6 +198,24 @@ namespace DesktopPlus
                 FolderColorInput.Text = string.IsNullOrWhiteSpace(appearance.FolderTextColor)
                     ? appearance.AccentColor
                     : appearance.FolderTextColor;
+            }
+            if (TabActiveColorInput != null)
+            {
+                TabActiveColorInput.Text = string.IsNullOrWhiteSpace(appearance.TabActiveColor)
+                    ? FormatColorHex(ResolvePanelTabActiveColor(appearance))
+                    : appearance.TabActiveColor;
+            }
+            if (TabInactiveColorInput != null)
+            {
+                TabInactiveColorInput.Text = string.IsNullOrWhiteSpace(appearance.TabInactiveColor)
+                    ? FormatColorHex(ResolvePanelTabInactiveColor(appearance))
+                    : appearance.TabInactiveColor;
+            }
+            if (TabHoverColorInput != null)
+            {
+                TabHoverColorInput.Text = string.IsNullOrWhiteSpace(appearance.TabHoverColor)
+                    ? FormatColorHex(ResolvePanelTabHoverColor(appearance))
+                    : appearance.TabHoverColor;
             }
             if (FontFamilyCombo != null)
             {
@@ -188,6 +319,9 @@ namespace DesktopPlus
             else if (swatch == AccentSwatch) targetInput = AccentColorInput;
             else if (swatch == TextColorSwatch) targetInput = TextColorInput;
             else if (swatch == FolderColorSwatch) targetInput = FolderColorInput;
+            else if (swatch == TabActiveSwatch) targetInput = TabActiveColorInput;
+            else if (swatch == TabInactiveSwatch) targetInput = TabInactiveColorInput;
+            else if (swatch == TabHoverSwatch) targetInput = TabHoverColorInput;
             else if (swatch == PatternColorSwatch) targetInput = PatternColorInput;
 
             if (targetInput == null) return;
@@ -644,6 +778,85 @@ namespace DesktopPlus
             return Math.Max(min, Math.Min(max, value));
         }
 
+        private static PanelTabData CreatePreviewTabData(string tabName, string folderPath)
+        {
+            return new PanelTabData
+            {
+                TabId = Guid.NewGuid().ToString("N"),
+                TabName = tabName,
+                PanelType = PanelKind.Folder.ToString(),
+                FolderPath = folderPath,
+                DefaultFolderPath = folderPath,
+                ShowHidden = false,
+                ShowParentNavigationItem = true,
+                ShowFileExtensions = true,
+                OpenFoldersExternally = false,
+                ViewMode = "icons",
+                ShowMetadataType = true,
+                ShowMetadataSize = true,
+                ShowMetadataCreated = false,
+                ShowMetadataModified = true,
+                ShowMetadataDimensions = true,
+                MetadataOrder = new List<string>
+                {
+                    "type",
+                    "size",
+                    "created",
+                    "modified",
+                    "dimensions"
+                },
+                PinnedItems = new List<string>()
+            };
+        }
+
+        private void ConfigurePreviewSectionMode()
+        {
+            if (_appearancePreviewPanel == null) return;
+            if (string.IsNullOrWhiteSpace(_appearancePreviewFolderPath) || !Directory.Exists(_appearancePreviewFolderPath))
+            {
+                return;
+            }
+
+            bool showTabs = string.Equals(_activeThemeSection, ThemeSectionTabs, StringComparison.OrdinalIgnoreCase);
+            bool currentlyShowsTabs = _appearancePreviewPanel.Tabs.Count > 1;
+            if (_appearancePreviewTabsVisible == showTabs && currentlyShowsTabs == showTabs)
+            {
+                return;
+            }
+
+            string root = _appearancePreviewFolderPath;
+            string docsName = SanitizePreviewEntryName(GetString("Loc.PreviewFolderDocs"), "Documents");
+            string photosName = SanitizePreviewEntryName(GetString("Loc.PreviewFolderPhotos"), "Pictures");
+            string projectsName = SanitizePreviewEntryName(GetString("Loc.PreviewFolderProjects"), "Projects");
+
+            string docsPath = Path.Combine(root, docsName);
+            string photosPath = Path.Combine(root, photosName);
+            string projectsPath = Path.Combine(root, projectsName);
+
+            if (showTabs)
+            {
+                _appearancePreviewPanel.InitializeTabsFromData(new List<PanelTabData>
+                {
+                    CreatePreviewTabData(photosName, photosPath),
+                    CreatePreviewTabData(projectsName, projectsPath),
+                    CreatePreviewTabData(docsName, docsPath)
+                }, 0);
+
+                string loadTarget = Directory.Exists(photosPath) ? photosPath : root;
+                _appearancePreviewPanel.LoadFolder(loadTarget, saveSettings: false);
+            }
+            else
+            {
+                _appearancePreviewPanel.InitializeTabsFromData(new List<PanelTabData>
+                {
+                    CreatePreviewTabData(GetString("Loc.PanelDefaultTitle"), root)
+                }, 0);
+                _appearancePreviewPanel.LoadFolder(root, saveSettings: false);
+            }
+
+            _appearancePreviewTabsVisible = showTabs;
+        }
+
         private void EnsurePreviewPanel()
         {
             if (PreviewPanelHost == null) return;
@@ -691,6 +904,8 @@ namespace DesktopPlus
             {
                 _appearancePreviewPanel.LoadFolder(_appearancePreviewFolderPath, saveSettings: false);
             }
+
+            ConfigurePreviewSectionMode();
         }
 
         private string EnsurePreviewSampleFolder()
@@ -754,12 +969,18 @@ namespace DesktopPlus
                 ? appearance.AccentColor
                 : appearance.FolderTextColor;
             var folderBrush = BuildBrush(folderColor, 1.0, MediaColor.FromRgb(110, 139, 255));
+            var tabActiveBrush = new SolidColorBrush(ResolvePanelTabActiveColor(appearance));
+            var tabInactiveBrush = new SolidColorBrush(ResolvePanelTabInactiveColor(appearance));
+            var tabHoverBrush = new SolidColorBrush(ResolvePanelTabHoverColor(appearance));
 
             BackgroundSwatch.Background = BuildBrush(appearance.BackgroundColor, 1.0, MediaColor.FromRgb(30, 30, 30));
             HeaderSwatch.Background = headerSwatchBrush;
             AccentSwatch.Background = accentBrush;
             if (TextColorSwatch != null) TextColorSwatch.Background = textBrush;
             if (FolderColorSwatch != null) FolderColorSwatch.Background = folderBrush;
+            if (TabActiveSwatch != null) TabActiveSwatch.Background = tabActiveBrush;
+            if (TabInactiveSwatch != null) TabInactiveSwatch.Background = tabInactiveBrush;
+            if (TabHoverSwatch != null) TabHoverSwatch.Background = tabHoverBrush;
             if (PatternColorSwatch != null)
             {
                 string previewPatternColor = string.IsNullOrWhiteSpace(appearance.PatternColor) ? appearance.AccentColor : appearance.PatternColor;
@@ -825,6 +1046,12 @@ namespace DesktopPlus
                 ? current.AccentColor
                 : current.FolderTextColor;
             string folderColor = SanitizeColor(FolderColorInput?.Text ?? "", folderColorFallback);
+            string tabActiveColorFallback = FormatColorHex(ResolvePanelTabActiveColor(current));
+            string tabInactiveColorFallback = FormatColorHex(ResolvePanelTabInactiveColor(current));
+            string tabHoverColorFallback = FormatColorHex(ResolvePanelTabHoverColor(current));
+            string tabActiveColor = SanitizeColor(TabActiveColorInput?.Text ?? "", tabActiveColorFallback);
+            string tabInactiveColor = SanitizeColor(TabInactiveColorInput?.Text ?? "", tabInactiveColorFallback);
+            string tabHoverColor = SanitizeColor(TabHoverColorInput?.Text ?? "", tabHoverColorFallback);
             double headerShadowOpacity = HeaderShadowOpacitySlider != null ? HeaderShadowOpacitySlider.Value : ResolveHeaderShadowOpacity(current);
             double headerShadowBlur = HeaderShadowBlurSlider != null ? HeaderShadowBlurSlider.Value : ResolveHeaderShadowBlur(current);
             double bodyShadowOpacity = BodyShadowOpacitySlider != null ? BodyShadowOpacitySlider.Value : ResolveBodyShadowOpacity(current);
@@ -838,6 +1065,9 @@ namespace DesktopPlus
                 TextColor = textColor,
                 MutedTextColor = current.MutedTextColor,
                 FolderTextColor = folderColor,
+                TabActiveColor = tabActiveColor,
+                TabInactiveColor = tabInactiveColor,
+                TabHoverColor = tabHoverColor,
                 FontFamily = string.IsNullOrWhiteSpace(fontFamily) ? current.FontFamily ?? "Segoe UI" : fontFamily,
                 TitleFontSize = Math.Round(titleSize, 0),
                 ItemFontSize = Math.Round(itemSize, 0),
@@ -949,6 +1179,51 @@ namespace DesktopPlus
             var accent = ParseColorOrFallback(appearance.AccentColor, MediaColor.FromRgb(110, 139, 255));
             var mixed = BlendColor(header, accent, 0.24);
             return new SolidColorBrush(MediaColor.FromArgb(210, mixed.R, mixed.G, mixed.B));
+        }
+
+        public static MediaColor ResolvePanelTabActiveColor(AppearanceSettings appearance)
+        {
+            if (appearance == null)
+            {
+                return MediaColor.FromRgb(45, 76, 101);
+            }
+
+            var header = ParseColorOrFallback(appearance.HeaderColor, MediaColor.FromRgb(42, 48, 59));
+            var background = ParseColorOrFallback(appearance.BackgroundColor, MediaColor.FromRgb(36, 40, 51));
+            var accent = ParseColorOrFallback(appearance.AccentColor, MediaColor.FromRgb(110, 139, 255));
+            var fallback = BlendColor(BlendColor(header, accent, 0.2), background, 0.16);
+            return ParseColorOrFallback(appearance.TabActiveColor, fallback);
+        }
+
+        public static MediaColor ResolvePanelTabInactiveColor(AppearanceSettings appearance)
+        {
+            if (appearance == null)
+            {
+                return MediaColor.FromRgb(36, 42, 53);
+            }
+
+            var background = ParseColorOrFallback(appearance.BackgroundColor, MediaColor.FromRgb(36, 40, 51));
+            var header = ParseColorOrFallback(appearance.HeaderColor, MediaColor.FromRgb(42, 48, 59));
+            var fallback = BlendColor(background, header, 0.56);
+            return ParseColorOrFallback(appearance.TabInactiveColor, fallback);
+        }
+
+        public static MediaColor ResolvePanelTabHoverColor(AppearanceSettings appearance)
+        {
+            if (appearance == null)
+            {
+                return MediaColor.FromRgb(49, 60, 77);
+            }
+
+            var inactive = ResolvePanelTabInactiveColor(appearance);
+            var accent = ParseColorOrFallback(appearance.AccentColor, MediaColor.FromRgb(110, 139, 255));
+            var fallback = BlendColor(inactive, accent, 0.22);
+            return ParseColorOrFallback(appearance.TabHoverColor, fallback);
+        }
+
+        public static string FormatColorHex(MediaColor color)
+        {
+            return $"#{color.R:X2}{color.G:X2}{color.B:X2}";
         }
 
         private static bool TryBuildImageBrush(AppearanceSettings appearance, SolidColorBrush baseColorBrush, out System.Windows.Media.Brush result)

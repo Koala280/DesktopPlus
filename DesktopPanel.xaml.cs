@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
@@ -24,6 +25,7 @@ namespace DesktopPlus
         public static bool ExpandOnHover = false;
         public string assignedPresetName = "";
         public bool showHiddenItems = false;
+        public bool showParentNavigationItem = true;
         public bool showFileExtensions = true;
         public bool expandOnHover = false;
         public bool openFoldersExternally = false;
@@ -31,6 +33,13 @@ namespace DesktopPlus
         public string defaultFolderPath = "";
         public string movementMode = "titlebar";
         public string searchVisibilityMode = SearchVisibilityAlways;
+        public string viewMode = ViewModeIcons;
+        public bool showMetadataType = true;
+        public bool showMetadataSize = true;
+        public bool showMetadataCreated = false;
+        public bool showMetadataModified = true;
+        public bool showMetadataDimensions = true;
+        public List<string> metadataOrder = new List<string> { "type", "size", "created", "modified", "dimensions" };
         private bool _hoverTemporarilySuspendedByDoubleClick = false;
         private bool _hoverExpanded = false;
         private bool _hasHoverRestoreState = false;
@@ -43,11 +52,13 @@ namespace DesktopPlus
         private bool _hasForcedCollapseReturnTop = false;
         private double _forcedCollapseReturnTop;
         private bool _isBoundsCorrectionInProgress = false;
+        private bool _isTemporarilyForeground;
         private bool _isDragMoveActive = false;
         private bool _isManualResizeActive = false;
         private UIElement? _dragHandle;
         private Point _dragStartMouseScreen;
         private Point _dragStartWindowPosition;
+        private DesktopPanel? _mergeTargetPanel;
         private UIElement? _resizeHandle;
         private Point _resizeStartMouseScreen;
         private double _resizeStartWidth;
@@ -56,6 +67,8 @@ namespace DesktopPlus
         private CancellationTokenSource? _hoverLeaveCts;
         private bool? _queuedHoverTargetVisible;
         private CancellationTokenSource? _searchCts;
+        private bool _deferSortUntilSearchComplete;
+        private CancellationTokenSource? _folderLoadCts;
         private bool _suppressSearchTextChanged = false;
         private readonly HashSet<string> _searchInjectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly List<System.Windows.Controls.ListBoxItem> _searchInjectedItems = new List<System.Windows.Controls.ListBoxItem>();
@@ -67,6 +80,22 @@ namespace DesktopPlus
         public const string SearchVisibilityAlways = "always";
         public const string SearchVisibilityExpanded = "expanded";
         public const string SearchVisibilityHidden = "hidden";
+        public const string ViewModeIcons = "icons";
+        public const string ViewModeDetails = "details";
+        public const string ViewModePhotos = "photos";
+        public const string MetadataType = "type";
+        public const string MetadataSize = "size";
+        public const string MetadataCreated = "created";
+        public const string MetadataModified = "modified";
+        public const string MetadataDimensions = "dimensions";
+        private static readonly string[] DefaultMetadataOrder =
+        {
+            MetadataType,
+            MetadataSize,
+            MetadataCreated,
+            MetadataModified,
+            MetadataDimensions
+        };
         private const double HeaderSearchWidth = 154;
         private const double HeaderSearchSpacerWidth = 8;
         private const double HeaderTitleMinWidth = 96;
@@ -145,6 +174,9 @@ namespace DesktopPlus
                 _searchCts?.Cancel();
                 _searchCts?.Dispose();
                 _searchCts = null;
+                _folderLoadCts?.Cancel();
+                _folderLoadCts?.Dispose();
+                _folderLoadCts = null;
 
                 MainWindow.AppearanceChanged -= OnAppearanceChanged;
                 if (_windowSource != null)
@@ -861,6 +893,7 @@ namespace DesktopPlus
 
         internal void SendPanelToBack()
         {
+            if (_isTemporarilyForeground) return;
             if (IsPreviewPanel) return;
             IntPtr handle = _windowSource?.Handle ?? IntPtr.Zero;
             if (handle == IntPtr.Zero) return;
@@ -873,6 +906,20 @@ namespace DesktopPlus
                 0,
                 0,
                 SwpNoMove | SwpNoSize | SwpNoActivate | SwpNoOwnerZOrder);
+        }
+
+        public void SetTemporaryForegroundMode(bool enabled)
+        {
+            _isTemporarilyForeground = enabled;
+
+            if (enabled)
+            {
+                Topmost = true;
+                return;
+            }
+
+            Topmost = false;
+            SendPanelToBack();
         }
 
         private IntPtr DesktopPanelWindowProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -1222,6 +1269,15 @@ namespace DesktopPlus
             bool wasDragging = _isDragMoveActive;
             _isDragMoveActive = false;
 
+            // Check for panel merge before normal commit
+            if (commitPosition && wasDragging && _mergeTargetPanel != null)
+            {
+                MergePanelIntoTarget();
+                return;
+            }
+
+            ClearMergeTarget();
+
             if (commitPosition && wasDragging)
             {
                 const double dragCommitThreshold = 1.5;
@@ -1248,6 +1304,36 @@ namespace DesktopPlus
             }
         }
 
+        /// <summary>
+        /// Merges all tabs from this panel into the merge target panel, then closes this panel.
+        /// </summary>
+        private void MergePanelIntoTarget()
+        {
+            var target = _mergeTargetPanel;
+            ClearMergeTarget();
+
+            if (target == null || !target.IsVisible) return;
+
+            // Save current state of all tabs
+            SaveActiveTabState();
+
+            // Transfer all tabs to the target panel
+            foreach (var tab in _tabs.ToList())
+            {
+                target.InsertTab(tab, switchTo: false);
+            }
+
+            // Switch target to the first newly added tab
+            if (target.Tabs.Count > 0)
+            {
+                target.SwitchToTab(target.Tabs.Count - _tabs.Count);
+            }
+
+            // Close this panel
+            Close();
+            MainWindow.SaveSettings();
+        }
+
         private void DragHandle_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
         {
             if (!_isDragMoveActive) return;
@@ -1265,6 +1351,58 @@ namespace DesktopPlus
             double currentHeight = ActualHeight > 0 ? ActualHeight : Height;
             double desiredTop = _dragStartWindowPosition.Y + deltaY;
             Top = ClampTopToWorkArea(GetWorkAreaForPanel(), currentHeight, desiredTop);
+
+            // Check for panel merge: is the mouse over another panel's header?
+            UpdateMergeTarget(current);
+        }
+
+        /// <summary>
+        /// During panel drag, checks if the mouse is over another panel's header area
+        /// and shows/hides merge feedback accordingly.
+        /// </summary>
+        private void UpdateMergeTarget(Point mouseScreenDip)
+        {
+            DesktopPanel? newTarget = null;
+
+            foreach (var other in System.Windows.Application.Current.Windows.OfType<DesktopPanel>())
+            {
+                if (other == this || !other.IsVisible) continue;
+
+                // Check if mouse is within the other panel's header bounds
+                double headerHeight = 46;
+                if (mouseScreenDip.X >= other.Left && mouseScreenDip.X <= other.Left + other.ActualWidth &&
+                    mouseScreenDip.Y >= other.Top && mouseScreenDip.Y <= other.Top + headerHeight)
+                {
+                    newTarget = other;
+                    break;
+                }
+            }
+
+            if (newTarget != _mergeTargetPanel)
+            {
+                // Hide indicator on old target
+                if (_mergeTargetPanel != null)
+                {
+                    _mergeTargetPanel.TabDropPreview.Visibility = Visibility.Collapsed;
+                }
+
+                _mergeTargetPanel = newTarget;
+
+                // Show indicator on new target
+                if (_mergeTargetPanel != null)
+                {
+                    _mergeTargetPanel.TabDropPreview.Visibility = Visibility.Visible;
+                }
+            }
+        }
+
+        private void ClearMergeTarget()
+        {
+            if (_mergeTargetPanel != null)
+            {
+                _mergeTargetPanel.TabDropPreview.Visibility = Visibility.Collapsed;
+                _mergeTargetPanel = null;
+            }
         }
 
         private void DragHandle_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -1286,29 +1424,37 @@ namespace DesktopPlus
             e.Handled = true;
         }
 
-        private DateTime _lastHeaderClickTime = DateTime.MinValue;
-        private Point _lastHeaderClickPos;
-
-        private void HeaderBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        private static bool ShouldIgnoreHeaderDoubleClick(DependencyObject? source)
         {
-            var now = DateTime.UtcNow;
-            var pos = e.GetPosition(HeaderBar);
-
-            bool isDoubleClick = (now - _lastHeaderClickTime).TotalMilliseconds <= 500
-                && Math.Abs(pos.X - _lastHeaderClickPos.X) <= 4
-                && Math.Abs(pos.Y - _lastHeaderClickPos.Y) <= 4;
-
-            _lastHeaderClickTime = now;
-            _lastHeaderClickPos = pos;
-
-            if (isDoubleClick)
+            if (source == null)
             {
-                _lastHeaderClickTime = DateTime.MinValue;
-                e.Handled = true;
-                HandleHeaderDoubleClickToggle();
+                return false;
+            }
+
+            return FindAncestor<System.Windows.Controls.Primitives.ButtonBase>(source) != null ||
+                   FindAncestor<System.Windows.Controls.Primitives.TextBoxBase>(source) != null ||
+                   FindAncestor<System.Windows.Controls.PasswordBox>(source) != null ||
+                   FindAncestor<System.Windows.Controls.ComboBox>(source) != null;
+        }
+
+        private void HeaderBar_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton != MouseButton.Left || e.ClickCount < 2)
+            {
                 return;
             }
 
+            if (ShouldIgnoreHeaderDoubleClick(e.OriginalSource as DependencyObject))
+            {
+                return;
+            }
+
+            e.Handled = true;
+            HandleHeaderDoubleClickToggle();
+        }
+
+        private void HeaderBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
             if (movementMode == "locked") return;
 
             if (movementMode == "titlebar" &&
@@ -1529,6 +1675,86 @@ namespace DesktopPlus
             }
 
             return SearchVisibilityAlways;
+        }
+
+        public static string NormalizeViewMode(string? mode)
+        {
+            if (string.Equals(mode, ViewModeDetails, StringComparison.OrdinalIgnoreCase))
+            {
+                return ViewModeDetails;
+            }
+
+            if (string.Equals(mode, ViewModePhotos, StringComparison.OrdinalIgnoreCase))
+            {
+                return ViewModePhotos;
+            }
+
+            return ViewModeIcons;
+        }
+
+        public static List<string> NormalizeMetadataOrder(IEnumerable<string>? order)
+        {
+            var normalized = new List<string>(DefaultMetadataOrder.Length);
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (order != null)
+            {
+                foreach (var item in order)
+                {
+                    string key = NormalizeMetadataKey(item);
+                    if (string.IsNullOrWhiteSpace(key) || !seen.Add(key))
+                    {
+                        continue;
+                    }
+
+                    normalized.Add(key);
+                }
+            }
+
+            foreach (var key in DefaultMetadataOrder)
+            {
+                if (seen.Add(key))
+                {
+                    normalized.Add(key);
+                }
+            }
+
+            return normalized;
+        }
+
+        private static string NormalizeMetadataKey(string? key)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return string.Empty;
+            }
+
+            if (string.Equals(key, MetadataType, StringComparison.OrdinalIgnoreCase))
+            {
+                return MetadataType;
+            }
+
+            if (string.Equals(key, MetadataSize, StringComparison.OrdinalIgnoreCase))
+            {
+                return MetadataSize;
+            }
+
+            if (string.Equals(key, MetadataCreated, StringComparison.OrdinalIgnoreCase))
+            {
+                return MetadataCreated;
+            }
+
+            if (string.Equals(key, MetadataModified, StringComparison.OrdinalIgnoreCase))
+            {
+                return MetadataModified;
+            }
+
+            if (string.Equals(key, MetadataDimensions, StringComparison.OrdinalIgnoreCase))
+            {
+                return MetadataDimensions;
+            }
+
+            return string.Empty;
         }
 
         public void SetSearchVisibilityMode(string? mode)

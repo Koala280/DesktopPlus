@@ -72,6 +72,7 @@ namespace DesktopPlus
             UpdateResourceBrush("PanelText", appearance.TextColor, MediaColor.FromRgb(242, 245, 250));
             UpdateResourceBrush("PanelMuted", appearance.MutedTextColor, MediaColor.FromRgb(167, 176, 192));
             UpdateListItemAppearance();
+            RebuildTabBar();
         }
 
         private void ApplyFontFamily(string? fontFamily)
@@ -106,11 +107,8 @@ namespace DesktopPlus
 
             foreach (var item in FileList.Items.OfType<ListBoxItem>())
             {
-                if (item.Content is StackPanel panel)
+                if (TryGetItemNameLabel(item, out var text))
                 {
-                    var text = panel.Children.OfType<TextBlock>().FirstOrDefault();
-                    if (text == null) continue;
-
                     bool isFolder = IsFolderItem(item.Tag);
                     text.Foreground = isFolder ? folderBrush : fileBrush;
                     text.FontSize = textSize;

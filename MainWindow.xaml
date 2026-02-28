@@ -30,7 +30,9 @@
         </LinearGradientBrush>
 
         <Style x:Key="FlatTextBox" TargetType="TextBox">
-            <Setter Property="Padding" Value="10,7"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="MinHeight" Value="34"/>
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
             <Setter Property="CaretBrush" Value="#F2F5FA"/>
             <Setter Property="BorderThickness" Value="1"/>
@@ -44,7 +46,8 @@
                                 CornerRadius="10"
                                 SnapsToDevicePixels="True">
                             <ScrollViewer x:Name="PART_ContentHost"
-                                          Margin="2"
+                                          Margin="{TemplateBinding Padding}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
                                           Focusable="False"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -543,11 +546,19 @@
                                     BorderThickness="1"
                                     Margin="0,0,8,0">
                                 <Path x:Name="Check"
-                                      Data="M 3 9 L 7 13 L 15 5"
+                                      Data="M 0.8 4.2 L 3.2 6.8 L 8.4 1.4"
+                                      Width="9"
+                                      Height="8"
+                                      Margin="-1,0,0,0"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Stretch="Fill"
                                       Stroke="{StaticResource Primary}"
-                                      StrokeThickness="2.2"
+                                      StrokeThickness="2.1"
                                       StrokeEndLineCap="Round"
                                       StrokeStartLineCap="Round"
+                                      StrokeLineJoin="Round"
+                                      SnapsToDevicePixels="True"
                                       Visibility="Collapsed"/>
                             </Border>
                             <ContentPresenter VerticalAlignment="Center"/>
@@ -571,29 +582,84 @@
 
         <Style TargetType="ScrollBar">
             <Setter Property="Width" Value="10"/>
+            <Setter Property="MinWidth" Value="10"/>
             <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Margin" Value="2"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ScrollBar">
-                        <Grid x:Name="Bg" Background="#1E232B">
+                        <Grid Background="Transparent">
+                            <Border x:Name="Rail"
+                                    Margin="1"
+                                    CornerRadius="5"
+                                    Background="#172134"
+                                    BorderBrush="#2B3A51"
+                                    BorderThickness="1"/>
                             <Track x:Name="PART_Track"
-                                   IsDirectionReversed="true">
+                                   Orientation="{TemplateBinding Orientation}"
+                                   Minimum="{TemplateBinding Minimum}"
+                                   Maximum="{TemplateBinding Maximum}"
+                                   Value="{TemplateBinding Value}"
+                                   ViewportSize="{TemplateBinding ViewportSize}"
+                                   IsDirectionReversed="True">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton x:Name="DecreaseButton"
+                                                  Opacity="0"
+                                                  IsTabStop="False"
+                                                  Command="{x:Static ScrollBar.PageUpCommand}"/>
+                                </Track.DecreaseRepeatButton>
                                 <Track.Thumb>
-                                    <Thumb Background="#3A414E"
-                                           BorderBrush="{StaticResource Primary}"
-                                           BorderThickness="0">
+                                    <Thumb x:Name="Thumb"
+                                           Background="#4B6287"
+                                           BorderBrush="#6E8DBE"
+                                           BorderThickness="1"
+                                           MinHeight="24"
+                                           MinWidth="12">
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
-                                                <Border Background="{TemplateBinding Background}"
+                                                <Border x:Name="ThumbBody"
+                                                        Background="{TemplateBinding Background}"
                                                         BorderBrush="{TemplateBinding BorderBrush}"
                                                         BorderThickness="{TemplateBinding BorderThickness}"
-                                                        CornerRadius="5"/>
+                                                        CornerRadius="4"
+                                                        Margin="1"/>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="ThumbBody" Property="Background" Value="#5A74A1"/>
+                                                        <Setter TargetName="ThumbBody" Property="BorderBrush" Value="#89ABDF"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsDragging" Value="True">
+                                                        <Setter TargetName="ThumbBody" Property="Background" Value="#6D8FCA"/>
+                                                        <Setter TargetName="ThumbBody" Property="BorderBrush" Value="#9FC2FF"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
                                             </ControlTemplate>
                                         </Thumb.Template>
                                     </Thumb>
                                 </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton x:Name="IncreaseButton"
+                                                  Opacity="0"
+                                                  IsTabStop="False"
+                                                  Command="{x:Static ScrollBar.PageDownCommand}"/>
+                                </Track.IncreaseRepeatButton>
                             </Track>
                         </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Orientation" Value="Horizontal">
+                                <Setter Property="Width" Value="Auto"/>
+                                <Setter Property="Height" Value="10"/>
+                                <Setter Property="MinHeight" Value="10"/>
+                                <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+                                <Setter TargetName="Thumb" Property="MinWidth" Value="24"/>
+                                <Setter TargetName="Thumb" Property="MinHeight" Value="8"/>
+                                <Setter TargetName="DecreaseButton" Property="Command" Value="{x:Static ScrollBar.PageLeftCommand}"/>
+                                <Setter TargetName="IncreaseButton" Property="Command" Value="{x:Static ScrollBar.PageRightCommand}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Rail" Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -612,9 +678,34 @@
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
-                            <ScrollContentPresenter Grid.Row="0" Grid.Column="0"/>
-                            <ScrollBar x:Name="PART_VerticalScrollBar" Grid.Row="0" Grid.Column="1" Orientation="Vertical" Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"/>
-                            <ScrollBar x:Name="PART_HorizontalScrollBar" Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Visibility="{TemplateBinding ComputedHorizontalScrollBarVisibility}"/>
+                            <ScrollContentPresenter x:Name="PART_ScrollContentPresenter"
+                                                    Grid.Row="0"
+                                                    Grid.Column="0"
+                                                    CanContentScroll="{TemplateBinding CanContentScroll}"
+                                                    ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                    Content="{TemplateBinding Content}"/>
+                            <ScrollBar x:Name="PART_VerticalScrollBar"
+                                       Grid.Row="0"
+                                       Grid.Column="1"
+                                       Orientation="Vertical"
+                                       Minimum="0"
+                                       Maximum="{TemplateBinding ScrollableHeight}"
+                                       Value="{TemplateBinding VerticalOffset}"
+                                       ViewportSize="{TemplateBinding ViewportHeight}"
+                                       Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"/>
+                            <ScrollBar x:Name="PART_HorizontalScrollBar"
+                                       Grid.Row="1"
+                                       Grid.Column="0"
+                                       Orientation="Horizontal"
+                                       Minimum="0"
+                                       Maximum="{TemplateBinding ScrollableWidth}"
+                                       Value="{TemplateBinding HorizontalOffset}"
+                                       ViewportSize="{TemplateBinding ViewportWidth}"
+                                       Visibility="{TemplateBinding ComputedHorizontalScrollBarVisibility}"/>
+                            <Border Grid.Row="1"
+                                    Grid.Column="1"
+                                    Background="Transparent"
+                                    Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"/>
                         </Grid>
                     </ControlTemplate>
                 </Setter.Value>
@@ -1317,6 +1408,39 @@
                                                 CornerRadius="10"
                                                 Padding="12"
                                                 BorderBrush="{StaticResource CardBorder}"
+                                                BorderThickness="1"
+                                                Margin="0,0,0,10">
+                                            <StackPanel>
+                                                <TextBlock Text="Bereich"
+                                                           FontSize="12"
+                                                           Foreground="{StaticResource Muted}"/>
+                                                <UniformGrid Columns="3"
+                                                             Margin="0,8,0,0">
+                                                    <Button x:Name="ThemeSectionHeaderButton"
+                                                            Content="Header"
+                                                            Tag="header"
+                                                            Style="{StaticResource PrimaryButton}"
+                                                            Margin="0,0,6,0"
+                                                            Click="ThemeSectionButton_Click"/>
+                                                    <Button x:Name="ThemeSectionBodyButton"
+                                                            Content="Body"
+                                                            Tag="body"
+                                                            Style="{StaticResource GhostButton}"
+                                                            Margin="0,0,6,0"
+                                                            Click="ThemeSectionButton_Click"/>
+                                                    <Button x:Name="ThemeSectionTabsButton"
+                                                            Content="Tabs"
+                                                            Tag="tabs"
+                                                            Style="{StaticResource GhostButton}"
+                                                            Click="ThemeSectionButton_Click"/>
+                                                </UniformGrid>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <Border Background="#1E232B"
+                                                CornerRadius="10"
+                                                Padding="12"
+                                                BorderBrush="{StaticResource CardBorder}"
                                                 BorderThickness="1">
                                             <StackPanel>
                                                 <TextBlock Text="{DynamicResource Loc.FineTuneTitle}"
@@ -1324,21 +1448,8 @@
                                                            FontWeight="SemiBold"
                                                            Foreground="White"
                                                            Margin="0,0,0,10"/>
-                                                <Grid>
-                                                    <Grid.RowDefinitions>
-                                                        <RowDefinition Height="Auto"/>
-                                                        <RowDefinition Height="Auto"/>
-                                                        <RowDefinition Height="Auto"/>
-                                                        <RowDefinition Height="Auto"/>
-                                                        <RowDefinition Height="Auto"/>
-                                                        <RowDefinition Height="Auto"/>
-                                                    </Grid.RowDefinitions>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="1*"/>
-                                                        <ColumnDefinition Width="1*"/>
-                                                    </Grid.ColumnDefinitions>
-
-                                                    <DockPanel Grid.Row="0" Grid.Column="0" LastChildFill="False" Margin="0,0,10,0">
+                                                <StackPanel>
+                                                    <DockPanel x:Name="BodyFineTuneBackgroundLabelRow" LastChildFill="False">
                                                         <TextBlock Text="{DynamicResource Loc.LabelBackgroundColor}"
                                                                    Foreground="{StaticResource Muted}"
                                                                    FontSize="11"/>
@@ -1353,14 +1464,12 @@
                                                                 MouseLeftButtonUp="Swatch_Click"/>
                                                     </DockPanel>
                                                     <TextBox x:Name="BackgroundColorInput"
-                                                             Grid.Row="1"
-                                                             Grid.Column="0"
                                                              Height="30"
                                                              Style="{StaticResource FlatTextBox}"
-                                                             Margin="0,4,10,10"
+                                                             Margin="0,4,0,10"
                                                              TextChanged="AppearanceInputChanged"/>
 
-                                                    <DockPanel Grid.Row="0" Grid.Column="1" LastChildFill="False">
+                                                    <DockPanel x:Name="HeaderFineTuneColorLabelRow" LastChildFill="False">
                                                         <TextBlock Text="{DynamicResource Loc.LabelHeaderColor}"
                                                                    Foreground="{StaticResource Muted}"
                                                                    FontSize="11"/>
@@ -1375,31 +1484,25 @@
                                                                 MouseLeftButtonUp="Swatch_Click"/>
                                                     </DockPanel>
                                                     <TextBox x:Name="HeaderColorInput"
-                                                             Grid.Row="1"
-                                                             Grid.Column="1"
                                                              Height="30"
                                                              Style="{StaticResource FlatTextBox}"
                                                              Margin="0,4,0,10"
                                                              TextChanged="AppearanceInputChanged"/>
 
-                                                    <TextBlock Grid.Row="2"
-                                                               Grid.Column="0"
+                                                    <TextBlock x:Name="BodyFineTuneOpacityLabel"
                                                                Text="{DynamicResource Loc.LabelOpacity}"
                                                                Foreground="{StaticResource Muted}"
-                                                               FontSize="11"
-                                                               Margin="0,0,10,0"/>
+                                                               FontSize="11"/>
                                                     <Slider x:Name="OpacitySlider"
-                                                            Grid.Row="3"
-                                                            Grid.Column="0"
                                                             Minimum="0.2"
                                                             Maximum="1"
                                                             TickFrequency="0.05"
                                                             IsSnapToTickEnabled="False"
-                                                            Margin="0,4,10,10"
+                                                            Margin="0,4,0,10"
                                                             Style="{StaticResource AccentSlider}"
                                                             ValueChanged="AppearanceInputChanged"/>
 
-                                                    <DockPanel Grid.Row="2" Grid.Column="1" LastChildFill="False">
+                                                    <DockPanel x:Name="TabsFineTuneAccentLabelRow" LastChildFill="False">
                                                         <TextBlock Text="{DynamicResource Loc.LabelAccentColor}"
                                                                    Foreground="{StaticResource Muted}"
                                                                    FontSize="11"/>
@@ -1414,36 +1517,29 @@
                                                                 MouseLeftButtonUp="Swatch_Click"/>
                                                     </DockPanel>
                                                     <TextBox x:Name="AccentColorInput"
-                                                             Grid.Row="3"
-                                                             Grid.Column="1"
                                                              Height="30"
                                                              Style="{StaticResource FlatTextBox}"
                                                              Margin="0,4,0,10"
                                                              TextChanged="AppearanceInputChanged"/>
 
-                                                    <TextBlock Grid.Row="4"
-                                                               Grid.Column="0"
+                                                    <TextBlock x:Name="HeaderFineTuneCornerLabel"
                                                                Text="{DynamicResource Loc.LabelCornerRadius}"
                                                                Foreground="{StaticResource Muted}"
-                                                               FontSize="11"
-                                                               Margin="0,0,10,0"/>
+                                                               FontSize="11"/>
                                                     <Slider x:Name="CornerRadiusSlider"
-                                                            Grid.Row="5"
-                                                            Grid.Column="0"
                                                             Minimum="4"
                                                             Maximum="28"
                                                             TickFrequency="1"
-                                                            Margin="0,4,10,0"
+                                                            Margin="0,4,0,10"
                                                             Style="{StaticResource AccentSlider}"
                                                             ValueChanged="AppearanceInputChanged"/>
 
-                                                    <TextBlock Grid.Row="4"
-                                                               Grid.Column="1"
+                                                    <TextBlock x:Name="FineTuneShadowGroupLabel"
                                                                Text="{DynamicResource Loc.LabelShadow}"
                                                                Foreground="{StaticResource Muted}"
                                                                FontSize="11"/>
-                                                    <StackPanel Grid.Row="5" Grid.Column="1" Margin="0,4,0,0">
-                                                        <Border Background="#1A202A"
+                                                    <StackPanel x:Name="FineTuneShadowGroup" Margin="0,4,0,0">
+                                                        <Border x:Name="HeaderShadowCard" Background="#1A202A"
                                                                 BorderBrush="{StaticResource CardBorder}"
                                                                 BorderThickness="1"
                                                                 CornerRadius="8"
@@ -1468,7 +1564,7 @@
                                                                         ValueChanged="AppearanceInputChanged"/>
                                                             </StackPanel>
                                                         </Border>
-                                                        <Border Background="#1A202A"
+                                                        <Border x:Name="BodyShadowCard" Background="#1A202A"
                                                                 BorderBrush="{StaticResource CardBorder}"
                                                                 BorderThickness="1"
                                                                 CornerRadius="8"
@@ -1493,7 +1589,7 @@
                                                             </StackPanel>
                                                         </Border>
                                                     </StackPanel>
-                                                </Grid>
+                                                </StackPanel>
                                             </StackPanel>
                                         </Border>
 
@@ -1525,6 +1621,13 @@
                                                           Margin="0,0,0,8"
                                                           Checked="AppearanceInputChanged"
                                                           Unchecked="AppearanceInputChanged"/>
+
+                                                <TextBlock x:Name="TabsModeInfoText"
+                                                           Text="Tabs verwenden den Modus aus dem Body-Bereich."
+                                                           Foreground="{StaticResource Muted}"
+                                                           FontSize="11"
+                                                           Margin="0,0,0,8"
+                                                           Visibility="Collapsed"/>
 
                                                 <Border x:Name="PatternSection"
                                                         Background="#1A202A"
@@ -1715,27 +1818,19 @@
                                                            FontWeight="SemiBold"
                                                            Foreground="White"
                                                            Margin="0,0,0,10"/>
-                                                <Grid>
-                                                    <Grid.RowDefinitions>
-                                                        <RowDefinition Height="Auto"/>
-                                                        <RowDefinition Height="Auto"/>
-                                                        <RowDefinition Height="Auto"/>
-                                                        <RowDefinition Height="Auto"/>
-                                                        <RowDefinition Height="Auto"/>
-                                                        <RowDefinition Height="Auto"/>
-                                                    </Grid.RowDefinitions>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="1*"/>
-                                                        <ColumnDefinition Width="1*"/>
-                                                    </Grid.ColumnDefinitions>
-
-                                                    <TextBlock Grid.Row="0"
-                                                               Grid.Column="0"
+                                                <StackPanel>
+                                                    <TextBlock x:Name="HeaderTypographyFontLabel"
                                                                Text="{DynamicResource Loc.LabelFontFamily}"
                                                                Foreground="{StaticResource Muted}"
-                                                               FontSize="11"
-                                                               Margin="0,0,10,0"/>
-                                                    <DockPanel Grid.Row="0" Grid.Column="1" LastChildFill="False">
+                                                               FontSize="11"/>
+                                                    <ComboBox x:Name="FontFamilyCombo"
+                                                              Style="{StaticResource FontCombo}"
+                                                              Margin="0,4,0,10"
+                                                              IsTextSearchEnabled="True"
+                                                              SelectionChanged="AppearanceInputChanged">
+                                                    </ComboBox>
+
+                                                    <DockPanel x:Name="HeaderTypographyTextColorLabelRow" LastChildFill="False">
                                                         <TextBlock Text="{DynamicResource Loc.LabelTextColor}"
                                                                    Foreground="{StaticResource Muted}"
                                                                    FontSize="11"/>
@@ -1749,28 +1844,23 @@
                                                                 Cursor="Hand"
                                                                 MouseLeftButtonUp="Swatch_Click"/>
                                                     </DockPanel>
-
-                                                    <ComboBox x:Name="FontFamilyCombo"
-                                                              Grid.Row="1" Grid.Column="0"
-                                                              Style="{StaticResource FontCombo}"
-                                                              Margin="0,4,10,10"
-                                                              IsTextSearchEnabled="True"
-                                                              SelectionChanged="AppearanceInputChanged">
-                                                    </ComboBox>
                                                     <TextBox x:Name="TextColorInput"
-                                                             Grid.Row="1" Grid.Column="1"
                                                              Height="30"
                                                              Style="{StaticResource FlatTextBox}"
                                                              Margin="0,4,0,10"
                                                              TextChanged="AppearanceInputChanged"/>
 
-                                                    <TextBlock Grid.Row="2"
-                                                               Grid.Column="0"
+                                                    <TextBlock x:Name="HeaderTypographyTitleSizeLabel"
                                                                Text="{DynamicResource Loc.LabelTitleSize}"
                                                                Foreground="{StaticResource Muted}"
-                                                               FontSize="11"
-                                                               Margin="0,0,10,0"/>
-                                                    <DockPanel Grid.Row="2" Grid.Column="1" LastChildFill="False">
+                                                               FontSize="11"/>
+                                                    <TextBox x:Name="TitleFontSizeInput"
+                                                             Height="30"
+                                                             Style="{StaticResource FlatTextBox}"
+                                                             Margin="0,4,0,10"
+                                                             TextChanged="AppearanceInputChanged"/>
+
+                                                    <DockPanel x:Name="BodyTypographyFolderColorLabelRow" LastChildFill="False">
                                                         <TextBlock Text="{DynamicResource Loc.LabelFolderColor}"
                                                                    Foreground="{StaticResource Muted}"
                                                                    FontSize="11"/>
@@ -1784,33 +1874,82 @@
                                                                 Cursor="Hand"
                                                                 MouseLeftButtonUp="Swatch_Click"/>
                                                     </DockPanel>
-
-                                                    <TextBox x:Name="TitleFontSizeInput"
-                                                             Grid.Row="3" Grid.Column="0"
-                                                             Height="30"
-                                                             Style="{StaticResource FlatTextBox}"
-                                                             Margin="0,4,10,10"
-                                                             TextChanged="AppearanceInputChanged"/>
                                                     <TextBox x:Name="FolderColorInput"
-                                                             Grid.Row="3" Grid.Column="1"
                                                              Height="30"
                                                              Style="{StaticResource FlatTextBox}"
                                                              Margin="0,4,0,10"
                                                              TextChanged="AppearanceInputChanged"/>
 
-                                                    <TextBlock Grid.Row="4"
-                                                               Grid.Column="0"
+                                                    <TextBlock x:Name="ItemTypographySizeLabel"
                                                                Text="{DynamicResource Loc.LabelItemSize}"
                                                                Foreground="{StaticResource Muted}"
-                                                               FontSize="11"
-                                                               Margin="0,0,10,0"/>
+                                                               FontSize="11"/>
                                                     <TextBox x:Name="ItemFontSizeInput"
-                                                             Grid.Row="5" Grid.Column="0"
                                                              Height="30"
                                                              Style="{StaticResource FlatTextBox}"
-                                                             Margin="0,4,10,0"
+                                                             Margin="0,4,0,10"
                                                              TextChanged="AppearanceInputChanged"/>
-                                                </Grid>
+
+                                                    <DockPanel x:Name="TabsTypographyActiveLabelRow" LastChildFill="False">
+                                                        <TextBlock Text="{DynamicResource Loc.LabelTabActiveColor}"
+                                                                   Foreground="{StaticResource Muted}"
+                                                                   FontSize="11"/>
+                                                        <Border x:Name="TabActiveSwatch"
+                                                                Width="20"
+                                                                Height="20"
+                                                                HorizontalAlignment="Right"
+                                                                CornerRadius="4"
+                                                                Background="#2D4C65"
+                                                                Margin="6,0,0,0"
+                                                                Cursor="Hand"
+                                                                MouseLeftButtonUp="Swatch_Click"/>
+                                                    </DockPanel>
+                                                    <TextBox x:Name="TabActiveColorInput"
+                                                             Height="30"
+                                                             Style="{StaticResource FlatTextBox}"
+                                                             Margin="0,4,0,10"
+                                                             TextChanged="AppearanceInputChanged"/>
+
+                                                    <DockPanel x:Name="TabsTypographyInactiveLabelRow" LastChildFill="False">
+                                                        <TextBlock Text="{DynamicResource Loc.LabelTabInactiveColor}"
+                                                                   Foreground="{StaticResource Muted}"
+                                                                   FontSize="11"/>
+                                                        <Border x:Name="TabInactiveSwatch"
+                                                                Width="20"
+                                                                Height="20"
+                                                                HorizontalAlignment="Right"
+                                                                CornerRadius="4"
+                                                                Background="#242A35"
+                                                                Margin="6,0,0,0"
+                                                                Cursor="Hand"
+                                                                MouseLeftButtonUp="Swatch_Click"/>
+                                                    </DockPanel>
+                                                    <TextBox x:Name="TabInactiveColorInput"
+                                                             Height="30"
+                                                             Style="{StaticResource FlatTextBox}"
+                                                             Margin="0,4,0,10"
+                                                             TextChanged="AppearanceInputChanged"/>
+
+                                                    <DockPanel x:Name="TabsTypographyHoverLabelRow" LastChildFill="False">
+                                                        <TextBlock Text="{DynamicResource Loc.LabelTabHoverColor}"
+                                                                   Foreground="{StaticResource Muted}"
+                                                                   FontSize="11"/>
+                                                        <Border x:Name="TabHoverSwatch"
+                                                                Width="20"
+                                                                Height="20"
+                                                                HorizontalAlignment="Right"
+                                                                CornerRadius="4"
+                                                                Background="#314253"
+                                                                Margin="6,0,0,0"
+                                                                Cursor="Hand"
+                                                                MouseLeftButtonUp="Swatch_Click"/>
+                                                    </DockPanel>
+                                                    <TextBox x:Name="TabHoverColorInput"
+                                                             Height="30"
+                                                             Style="{StaticResource FlatTextBox}"
+                                                             Margin="0,4,0,0"
+                                                             TextChanged="AppearanceInputChanged"/>
+                                                </StackPanel>
                                             </StackPanel>
                                         </Border>
                                     </StackPanel>
@@ -1849,8 +1988,354 @@
                         </StackPanel>
                     </TabItem>
 
-                    <TabItem Header="{DynamicResource Loc.TabShortcuts}">
+                    <TabItem Header="{DynamicResource Loc.TabAutoSort}">
                         <StackPanel Margin="0,12,0,0">
+                            <Border Background="{StaticResource CardBackground}"
+                                    CornerRadius="12"
+                                    Padding="16"
+                                    BorderBrush="{StaticResource CardBorder}"
+                                    BorderThickness="1">
+                                <StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="{DynamicResource Loc.AutoSortTitle}"
+                                                       FontSize="16"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="White"/>
+                                            <TextBlock Text="{DynamicResource Loc.AutoSortDesc}"
+                                                       FontSize="12"
+                                                       Foreground="{StaticResource Muted}"
+                                                       Margin="0,6,0,0"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Content="{DynamicResource Loc.AutoSortResetRules}"
+                                                    Style="{StaticResource GhostButton}"
+                                                    Padding="10,6"
+                                                    Click="ResetAutoSortRules_Click"/>
+                                            <Button Content="{DynamicResource Loc.AutoSortRunNow}"
+                                                    Style="{StaticResource PrimaryButton}"
+                                                    Padding="12,6"
+                                                    Margin="8,0,0,0"
+                                                    Click="SortDesktopNow_Click"/>
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <CheckBox x:Name="AutoSortToggle"
+                                              Content="{DynamicResource Loc.AutoSortToggle}"
+                                              Style="{StaticResource AccentCheckBox}"
+                                              Margin="0,12,0,0"
+                                              Checked="AutoSortToggle_Changed"
+                                              Unchecked="AutoSortToggle_Changed"/>
+
+                                    <TextBlock x:Name="AutoSortStatusText"
+                                               FontSize="12"
+                                               Foreground="{StaticResource Primary}"
+                                               Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <Border Grid.Column="0"
+                                        Background="{StaticResource CardBackground}"
+                                        CornerRadius="12"
+                                        Padding="14"
+                                        BorderBrush="{StaticResource CardBorder}"
+                                        BorderThickness="1"
+                                        Margin="0,0,8,0">
+                                    <StackPanel>
+                                        <TextBlock Text="{DynamicResource Loc.AutoSortBuiltInTitle}"
+                                                   FontSize="14"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="White"/>
+                                        <ScrollViewer Margin="0,8,0,0"
+                                                      HorizontalScrollBarVisibility="Auto"
+                                                      VerticalScrollBarVisibility="Auto"
+                                                      CanContentScroll="False">
+                                            <StackPanel Grid.IsSharedSizeScope="True">
+                                                <Grid MinWidth="870" Margin="0,0,0,6">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" MinWidth="200" SharedSizeGroup="AutoSortTypeColumn"/>
+                                                        <ColumnDefinition Width="Auto" MinWidth="460" SharedSizeGroup="AutoSortExtensionsColumn"/>
+                                                        <ColumnDefinition Width="Auto" MinWidth="210" SharedSizeGroup="AutoSortTargetColumn"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0"
+                                                               Text="{DynamicResource Loc.AutoSortRuleType}"
+                                                               FontSize="11"
+                                                               Foreground="{StaticResource Muted}"/>
+                                                    <TextBlock Grid.Column="1"
+                                                               Text="{DynamicResource Loc.AutoSortRuleExtensions}"
+                                                               FontSize="11"
+                                                               Foreground="{StaticResource Muted}"/>
+                                                    <TextBlock Grid.Column="2"
+                                                               Text="{DynamicResource Loc.AutoSortRuleTarget}"
+                                                               FontSize="11"
+                                                               Foreground="{StaticResource Muted}"/>
+                                                </Grid>
+                                                <ListBox x:Name="AutoSortBuiltInRulesList"
+                                                         Background="Transparent"
+                                                         BorderThickness="0"
+                                                         Foreground="White"
+                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                         ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                                         ScrollViewer.CanContentScroll="False">
+                                                    <ListBox.ItemContainerStyle>
+                                                        <Style TargetType="ListBoxItem">
+                                                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                                            <Setter Property="Padding" Value="0"/>
+                                                            <Setter Property="Margin" Value="0,0,0,8"/>
+                                                            <Setter Property="Background" Value="Transparent"/>
+                                                            <Setter Property="BorderThickness" Value="0"/>
+                                                            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                                                            <Setter Property="Focusable" Value="False"/>
+                                                            <Setter Property="Template">
+                                                                <Setter.Value>
+                                                                    <ControlTemplate TargetType="ListBoxItem">
+                                                                        <Border Background="Transparent"
+                                                                                CornerRadius="10"
+                                                                                SnapsToDevicePixels="True">
+                                                                            <ContentPresenter/>
+                                                                        </Border>
+                                                                    </ControlTemplate>
+                                                                </Setter.Value>
+                                                            </Setter>
+                                                        </Style>
+                                                    </ListBox.ItemContainerStyle>
+                                                    <ListBox.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Border x:Name="BuiltInRuleCard"
+                                                                    Background="#1E232B"
+                                                                    CornerRadius="10"
+                                                                    BorderBrush="{StaticResource CardBorder}"
+                                                                    BorderThickness="1"
+                                                                    Padding="10">
+                                                                <Grid MinWidth="850">
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="Auto" MinWidth="200" SharedSizeGroup="AutoSortTypeColumn"/>
+                                                                        <ColumnDefinition Width="Auto" MinWidth="440" SharedSizeGroup="AutoSortExtensionsColumn"/>
+                                                                        <ColumnDefinition Width="Auto" MinWidth="210" SharedSizeGroup="AutoSortTargetColumn"/>
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <CheckBox Grid.Column="0"
+                                                                              IsChecked="{Binding Enabled}"
+                                                                              Content="{Binding DisplayName}"
+                                                                              Tag="{Binding RuleId}"
+                                                                              Style="{StaticResource AccentCheckBox}"
+                                                                              Margin="0"
+                                                                              VerticalAlignment="Center"
+                                                                              Checked="AutoSortRuleEnabled_Changed"
+                                                                              Unchecked="AutoSortRuleEnabled_Changed"/>
+                                                                    <TextBlock Grid.Column="1"
+                                                                               Text="{Binding ExtensionsSummary}"
+                                                                               Foreground="{StaticResource Muted}"
+                                                                               FontSize="12"
+                                                                               VerticalAlignment="Center"
+                                                                               Margin="8,0,8,0"
+                                                                               TextWrapping="NoWrap"/>
+                                                                    <TextBox Grid.Column="2"
+                                                                             Style="{StaticResource FlatTextBox}"
+                                                                             Height="32"
+                                                                             Text="{Binding TargetPanelName}"
+                                                                             Tag="{Binding RuleId}"
+                                                                             Loaded="AutoSortTargetTextBox_Loaded"
+                                                                             GotKeyboardFocus="AutoSortTargetTextBox_GotKeyboardFocus"
+                                                                             LostKeyboardFocus="AutoSortTargetTextBox_LostKeyboardFocus"
+                                                                             PreviewKeyDown="AutoSortTargetTextBox_PreviewKeyDown"
+                                                                             TextChanged="AutoSortRuleTarget_TextChanged"/>
+                                                                </Grid>
+                                                            </Border>
+                                                            <DataTemplate.Triggers>
+                                                                <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsMouseOver}"
+                                                                             Value="True">
+                                                                    <Setter TargetName="BuiltInRuleCard" Property="Background" Value="#25324A"/>
+                                                                    <Setter TargetName="BuiltInRuleCard" Property="BorderBrush" Value="#5771A1"/>
+                                                                </DataTrigger>
+                                                            </DataTemplate.Triggers>
+                                                        </DataTemplate>
+                                                    </ListBox.ItemTemplate>
+                                                </ListBox>
+                                            </StackPanel>
+                                        </ScrollViewer>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Grid.Column="1"
+                                        Background="{StaticResource CardBackground}"
+                                        CornerRadius="12"
+                                        Padding="14"
+                                        BorderBrush="{StaticResource CardBorder}"
+                                        BorderThickness="1"
+                                        Margin="8,0,0,0">
+                                    <StackPanel>
+                                        <TextBlock Text="{DynamicResource Loc.AutoSortCustomTitle}"
+                                                   FontSize="14"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="White"/>
+                                        <TextBlock Text="{DynamicResource Loc.AutoSortCustomHint}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource Muted}"
+                                                   Margin="0,6,0,0"/>
+
+                                        <Grid Margin="0,10,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="180"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="{DynamicResource Loc.AutoSortCustomExtensionsLabel}"
+                                                           FontSize="11"
+                                                           Foreground="{StaticResource Muted}"
+                                                           Margin="0,0,0,4"/>
+                                                <TextBox x:Name="AutoSortCustomExtensionsInput"
+                                                         Height="32"
+                                                         Style="{StaticResource FlatTextBox}"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                                                <TextBlock Text="{DynamicResource Loc.AutoSortCustomTargetLabel}"
+                                                           FontSize="11"
+                                                           Foreground="{StaticResource Muted}"
+                                                           Margin="0,0,0,4"/>
+                                                <TextBox x:Name="AutoSortCustomTargetInput"
+                                                         Height="32"
+                                                         Style="{StaticResource FlatTextBox}"
+                                                         Loaded="AutoSortTargetTextBox_Loaded"
+                                                         GotKeyboardFocus="AutoSortTargetTextBox_GotKeyboardFocus"
+                                                         LostKeyboardFocus="AutoSortTargetTextBox_LostKeyboardFocus"
+                                                         PreviewKeyDown="AutoSortTargetTextBox_PreviewKeyDown"
+                                                         TextChanged="AutoSortCustomTargetInput_TextChanged"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="2"
+                                                    Content="{DynamicResource Loc.AutoSortCustomAdd}"
+                                                    Style="{StaticResource PrimaryButton}"
+                                                    Margin="8,18,0,0"
+                                                    Padding="12,6"
+                                                    Click="AddCustomSortRule_Click"/>
+                                        </Grid>
+
+                                        <Grid Margin="0,12,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="170"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="180"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{DynamicResource Loc.AutoSortRuleType}"
+                                                       FontSize="11"
+                                                       Foreground="{StaticResource Muted}"/>
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{DynamicResource Loc.AutoSortRuleExtensions}"
+                                                       FontSize="11"
+                                                       Foreground="{StaticResource Muted}"/>
+                                            <TextBlock Grid.Column="2"
+                                                       Text="{DynamicResource Loc.AutoSortRuleTarget}"
+                                                       FontSize="11"
+                                                       Foreground="{StaticResource Muted}"/>
+                                        </Grid>
+
+                                        <ListBox x:Name="AutoSortCustomRulesList"
+                                                 Background="Transparent"
+                                                 BorderThickness="0"
+                                                 Foreground="White">
+                                            <ListBox.ItemContainerStyle>
+                                                <Style TargetType="ListBoxItem">
+                                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                                    <Setter Property="Padding" Value="0"/>
+                                                    <Setter Property="Margin" Value="0,0,0,8"/>
+                                                    <Setter Property="Background" Value="Transparent"/>
+                                                    <Setter Property="BorderThickness" Value="0"/>
+                                                    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                                                    <Setter Property="Focusable" Value="False"/>
+                                                    <Setter Property="Template">
+                                                        <Setter.Value>
+                                                            <ControlTemplate TargetType="ListBoxItem">
+                                                                <Border Background="Transparent"
+                                                                        CornerRadius="10"
+                                                                        SnapsToDevicePixels="True">
+                                                                    <ContentPresenter/>
+                                                                </Border>
+                                                            </ControlTemplate>
+                                                        </Setter.Value>
+                                                    </Setter>
+                                                </Style>
+                                            </ListBox.ItemContainerStyle>
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border x:Name="CustomRuleCard"
+                                                            Background="#1E232B"
+                                                            CornerRadius="10"
+                                                            BorderBrush="{StaticResource CardBorder}"
+                                                            BorderThickness="1"
+                                                            Padding="10">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="170"/>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="180"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <CheckBox Grid.Column="0"
+                                                                      IsChecked="{Binding Enabled}"
+                                                                      Content="{Binding DisplayName}"
+                                                                      Tag="{Binding RuleId}"
+                                                                      Style="{StaticResource AccentCheckBox}"
+                                                                      Margin="0"
+                                                                      VerticalAlignment="Center"
+                                                                      Checked="AutoSortRuleEnabled_Changed"
+                                                                      Unchecked="AutoSortRuleEnabled_Changed"/>
+                                                            <TextBlock Grid.Column="1"
+                                                                       Text="{Binding ExtensionsSummary}"
+                                                                       Foreground="{StaticResource Muted}"
+                                                                       FontSize="12"
+                                                                       VerticalAlignment="Center"
+                                                                       Margin="8,0,8,0"
+                                                                       TextTrimming="CharacterEllipsis"/>
+                                                            <TextBox Grid.Column="2"
+                                                                     Style="{StaticResource FlatTextBox}"
+                                                                     Height="32"
+                                                                     Text="{Binding TargetPanelName}"
+                                                                     Tag="{Binding RuleId}"
+                                                                     Loaded="AutoSortTargetTextBox_Loaded"
+                                                                     GotKeyboardFocus="AutoSortTargetTextBox_GotKeyboardFocus"
+                                                                     LostKeyboardFocus="AutoSortTargetTextBox_LostKeyboardFocus"
+                                                                     PreviewKeyDown="AutoSortTargetTextBox_PreviewKeyDown"
+                                                                     TextChanged="AutoSortRuleTarget_TextChanged"/>
+                                                            <Button Grid.Column="3"
+                                                                    Content="{DynamicResource Loc.AutoSortRemove}"
+                                                                    Style="{StaticResource GhostButton}"
+                                                                    Margin="8,0,0,0"
+                                                                    Padding="10,6"
+                                                                    Tag="{Binding RuleId}"
+                                                                    Click="RemoveCustomSortRule_Click"/>
+                                                        </Grid>
+                                                    </Border>
+                                                    <DataTemplate.Triggers>
+                                                        <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsMouseOver}"
+                                                                     Value="True">
+                                                            <Setter TargetName="CustomRuleCard" Property="Background" Value="#25324A"/>
+                                                            <Setter TargetName="CustomRuleCard" Property="BorderBrush" Value="#5771A1"/>
+                                                        </DataTrigger>
+                                                    </DataTemplate.Triggers>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </StackPanel>
+                    </TabItem>
+
+                    <TabItem Header="{DynamicResource Loc.TabShortcuts}">
+                        <StackPanel Margin="0,12,0,0"
+                                    PreviewMouseLeftButtonDown="ShortcutsTabRoot_PreviewMouseLeftButtonDown">
                             <Border Background="{StaticResource CardBackground}"
                                     CornerRadius="12"
                                     Padding="16"
@@ -1865,6 +2350,153 @@
                                                FontSize="12"
                                                Foreground="{StaticResource Muted}"
                                                Margin="0,8,0,0"/>
+
+                                    <TextBlock Text="{DynamicResource Loc.ShortcutsGlobalTitle}"
+                                               FontSize="13"
+                                               FontWeight="SemiBold"
+                                               Foreground="White"
+                                               Margin="0,14,0,6"/>
+                                    <TextBlock Text="{DynamicResource Loc.ShortcutsGlobalHint}"
+                                               FontSize="11"
+                                               Foreground="{StaticResource Muted}"/>
+                                    <Grid Margin="0,8,0,0">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="170"/>
+                                            <ColumnDefinition Width="190"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock Grid.Row="0"
+                                                   Grid.Column="0"
+                                                   Text="{DynamicResource Loc.ShortcutsInputHide}"
+                                                   Foreground="{StaticResource Muted}"
+                                                   FontSize="12"
+                                                   Margin="0,2,8,2"/>
+                                        <TextBox x:Name="HidePanelsHotkeyInput"
+                                                 Grid.Row="0"
+                                                 Grid.Column="1"
+                                                 Height="30"
+                                                 Style="{StaticResource FlatTextBox}"
+                                                 IsReadOnly="True"
+                                                 FontFamily="Consolas"
+                                                 VerticalContentAlignment="Center"
+                                                 PreviewKeyDown="GlobalHotkeyInput_PreviewKeyDown"/>
+                                        <TextBlock Grid.Row="0"
+                                                   Grid.Column="2"
+                                                   Text="{DynamicResource Loc.ShortcutHideAllPanels}"
+                                                   Foreground="{StaticResource Muted}"
+                                                   FontSize="12"
+                                                   Margin="8,2,0,2"/>
+
+                                        <TextBlock Grid.Row="1"
+                                                   Grid.Column="0"
+                                                   Text="{DynamicResource Loc.ShortcutsInputForeground}"
+                                                   Foreground="{StaticResource Muted}"
+                                                   FontSize="12"
+                                                   Margin="0,10,8,2"/>
+                                        <TextBox x:Name="ForegroundPanelsHotkeyInput"
+                                                 Grid.Row="1"
+                                                 Grid.Column="1"
+                                                 Height="30"
+                                                 Margin="0,8,0,0"
+                                                 Style="{StaticResource FlatTextBox}"
+                                                 IsReadOnly="True"
+                                                 FontFamily="Consolas"
+                                                 VerticalContentAlignment="Center"
+                                                 PreviewKeyDown="GlobalHotkeyInput_PreviewKeyDown"/>
+                                        <TextBlock Grid.Row="1"
+                                                   Grid.Column="2"
+                                                   Text="{DynamicResource Loc.ShortcutTemporaryForeground}"
+                                                   Foreground="{StaticResource Muted}"
+                                                   FontSize="12"
+                                                   Margin="8,10,0,2"/>
+
+                                        <StackPanel Grid.Row="2"
+                                                    Grid.Column="1"
+                                                    Orientation="Horizontal"
+                                                    Margin="0,10,0,0">
+                                            <Button Content="{DynamicResource Loc.ShortcutsApply}"
+                                                    Style="{StaticResource PrimaryButton}"
+                                                    Padding="12,6"
+                                                    Click="ApplyGlobalShortcuts_Click"/>
+                                            <Button Content="{DynamicResource Loc.ShortcutsReset}"
+                                                    Style="{StaticResource GhostButton}"
+                                                    Margin="8,0,0,0"
+                                                    Padding="10,6"
+                                                    Click="ResetGlobalShortcuts_Click"/>
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <TextBlock Text="{DynamicResource Loc.ShortcutsExistingTitle}"
+                                               FontSize="13"
+                                               FontWeight="SemiBold"
+                                               Foreground="White"
+                                               Margin="0,14,0,6"/>
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Delete" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{DynamicResource Loc.ShortcutDeleteSelection}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Ctrl + C" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{DynamicResource Loc.ShortcutCopySelection}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Ctrl + X" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{DynamicResource Loc.ShortcutCutSelection}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Ctrl + V" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{DynamicResource Loc.ShortcutPasteSelection}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Ctrl + Mouse Wheel" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="4" Grid.Column="1" Text="{DynamicResource Loc.ShortcutPanelZoom}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Ctrl/Alt + Click" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="5" Grid.Column="1" Text="{DynamicResource Loc.ShortcutAdditiveSelection}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Shift + Click" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="6" Grid.Column="1" Text="{DynamicResource Loc.ShortcutRangeSelection}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="7" Grid.Column="0" Text="Shift + Right Click" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="7" Grid.Column="1" Text="{DynamicResource Loc.ShortcutClassicContextMenu}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="8" Grid.Column="0" Text="Ctrl + Drag" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="8" Grid.Column="1" Text="{DynamicResource Loc.ShortcutDragCopy}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="9" Grid.Column="0" Text="Shift + Drag" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="9" Grid.Column="1" Text="{DynamicResource Loc.ShortcutDragMove}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="10" Grid.Column="0" Text="Ctrl + Shift + Drag" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="10" Grid.Column="1" Text="{DynamicResource Loc.ShortcutDragLink}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="11" Grid.Column="0" Text="Esc" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="11" Grid.Column="1" Text="{DynamicResource Loc.ShortcutTrayClose}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="12" Grid.Column="0" Text="Double Click Resize Grip" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="12" Grid.Column="1" Text="{DynamicResource Loc.ShortcutFitContent}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+                                    </Grid>
                                 </StackPanel>
                             </Border>
                         </StackPanel>

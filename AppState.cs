@@ -13,5 +13,7 @@ namespace DesktopPlus
         public string Language { get; set; } = "de";
         public bool StartWithWindows { get; set; }
         public string CloseBehavior { get; set; } = "Minimize";
+        public DesktopAutoSortSettings DesktopAutoSort { get; set; } = new DesktopAutoSortSettings();
+        public GlobalShortcutSettings GlobalShortcuts { get; set; } = new GlobalShortcutSettings();
     }
 }

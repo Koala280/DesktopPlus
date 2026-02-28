@@ -16,7 +16,9 @@
     </LinearGradientBrush>
 
     <Style x:Key="FlatTextBox" TargetType="TextBox">
-        <Setter Property="Padding" Value="10,7"/>
+        <Setter Property="Padding" Value="10,0"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="MinHeight" Value="34"/>
         <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
         <Setter Property="CaretBrush" Value="#F2F5FA"/>
         <Setter Property="BorderThickness" Value="1"/>
@@ -30,7 +32,8 @@
                             CornerRadius="10"
                             SnapsToDevicePixels="True">
                         <ScrollViewer x:Name="PART_ContentHost"
-                                      Margin="2"
+                                      Margin="{TemplateBinding Padding}"
+                                      VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
                                       Focusable="False"/>
                     </Border>
                     <ControlTemplate.Triggers>
@@ -294,11 +297,19 @@
                                 BorderThickness="1"
                                 Margin="0,0,8,0">
                             <Path x:Name="Check"
-                                  Data="M 3 9 L 7 13 L 15 5"
+                                  Data="M 0.8 4.2 L 3.2 6.8 L 8.4 1.4"
+                                  Width="9"
+                                  Height="8"
+                                  Margin="-1,0,0,0"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"
+                                  Stretch="Fill"
                                   Stroke="{StaticResource Primary}"
-                                  StrokeThickness="2.2"
+                                  StrokeThickness="2.1"
                                   StrokeEndLineCap="Round"
                                   StrokeStartLineCap="Round"
+                                  StrokeLineJoin="Round"
+                                  SnapsToDevicePixels="True"
                                   Visibility="Collapsed"/>
                         </Border>
                         <ContentPresenter VerticalAlignment="Center"/>

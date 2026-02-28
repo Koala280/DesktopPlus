@@ -215,6 +215,8 @@ namespace DesktopPlus
             if (data == null) return;
             data.PinnedItems ??= new List<string>();
             data.SearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(data.SearchVisibilityMode);
+            data.ViewMode = DesktopPanel.NormalizeViewMode(data.ViewMode);
+            data.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(data.MetadataOrder);
             if (!data.IsCollapsed)
             {
                 if (data.ExpandedHeight <= 0 || data.ExpandedHeight < data.Height)
@@ -232,6 +234,25 @@ namespace DesktopPlus
                 data.PanelType = kind.ToString();
             }
             EnsurePanelId(data);
+
+            if (data.Tabs != null)
+            {
+                foreach (var tab in data.Tabs)
+                {
+                    tab.PinnedItems ??= new List<string>();
+                    tab.ViewMode = DesktopPanel.NormalizeViewMode(tab.ViewMode);
+                    tab.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(tab.MetadataOrder);
+                }
+
+                if (data.Tabs.Count > 0)
+                {
+                    data.ActiveTabIndex = Math.Max(0, Math.Min(data.ActiveTabIndex, data.Tabs.Count - 1));
+                }
+                else
+                {
+                    data.ActiveTabIndex = 0;
+                }
+            }
         }
 
         private static WindowData BuildWindowDataFromPanel(DesktopPanel panel)
@@ -247,6 +268,8 @@ namespace DesktopPlus
                 };
             }
 
+            panel.SaveActiveTabState();
+
             var kind = ResolvePanelKind(panel);
             var folderPath = kind == PanelKind.Folder ? panel.currentFolderPath : "";
             var pinnedItems = kind == PanelKind.List
@@ -257,7 +280,7 @@ namespace DesktopPlus
             double rememberedExpandedHeight = panel.expandedHeight > 0 ? panel.expandedHeight : currentHeight;
             double persistedExpandedHeight = Math.Max(currentHeight, rememberedExpandedHeight);
 
-            return new WindowData
+            var wd = new WindowData
             {
                 PanelId = string.IsNullOrWhiteSpace(panel.PanelId) ? (panel.PanelId = GeneratePanelId()) : panel.PanelId,
                 PanelType = kind.ToString(),
@@ -270,29 +293,67 @@ namespace DesktopPlus
                 ExpandedHeight = persistedExpandedHeight,
                 Zoom = panel.zoomFactor,
                 IsCollapsed = !panel.isContentVisible,
-                IsHidden = false,
+                IsHidden = !panel.IsVisible,
                 CollapsedTop = panel.collapsedTopPosition,
                 BaseTop = panel.baseTopPosition,
                 IsBottomAnchored = panel.IsBottomAnchored,
                 PanelTitle = panel.PanelTitle.Text,
                 PresetName = string.IsNullOrWhiteSpace(panel.assignedPresetName) ? DefaultPresetName : panel.assignedPresetName,
                 ShowHidden = panel.showHiddenItems,
+                ShowParentNavigationItem = panel.showParentNavigationItem,
                 ShowFileExtensions = panel.showFileExtensions,
                 ShowSettingsButton = panel.showSettingsButton,
                 ExpandOnHover = panel.expandOnHover,
                 OpenFoldersExternally = panel.openFoldersExternally,
+                ViewMode = panel.viewMode,
+                ShowMetadataType = panel.showMetadataType,
+                ShowMetadataSize = panel.showMetadataSize,
+                ShowMetadataCreated = panel.showMetadataCreated,
+                ShowMetadataModified = panel.showMetadataModified,
+                ShowMetadataDimensions = panel.showMetadataDimensions,
+                MetadataOrder = DesktopPanel.NormalizeMetadataOrder(panel.metadataOrder),
                 MovementMode = panel.movementMode,
                 SearchVisibilityMode = panel.searchVisibilityMode,
                 PinnedItems = pinnedItems
             };
+
+            if (panel.Tabs.Count > 1)
+            {
+                wd.Tabs = panel.Tabs.Select(t => new PanelTabData
+                {
+                    TabId = t.TabId,
+                    TabName = t.TabName,
+                    PanelType = t.PanelType,
+                    FolderPath = t.FolderPath,
+                    DefaultFolderPath = t.DefaultFolderPath,
+                    ShowHidden = t.ShowHidden,
+                    ShowParentNavigationItem = t.ShowParentNavigationItem,
+                    ShowFileExtensions = t.ShowFileExtensions,
+                    OpenFoldersExternally = t.OpenFoldersExternally,
+                    ViewMode = t.ViewMode,
+                    ShowMetadataType = t.ShowMetadataType,
+                    ShowMetadataSize = t.ShowMetadataSize,
+                    ShowMetadataCreated = t.ShowMetadataCreated,
+                    ShowMetadataModified = t.ShowMetadataModified,
+                    ShowMetadataDimensions = t.ShowMetadataDimensions,
+                    MetadataOrder = DesktopPanel.NormalizeMetadataOrder(t.MetadataOrder),
+                    PinnedItems = t.PinnedItems?.ToList() ?? new List<string>()
+                }).ToList();
+                wd.ActiveTabIndex = panel.ActiveTabIndex;
+            }
+
+            return wd;
         }
 
         public MainWindow()
         {
             InitializeComponent();
+            InitializeGlobalShortcuts();
             AddHandler(MouseWheelEvent, new MouseWheelEventHandler(MainScrollViewer_PreviewMouseWheel), true);
             TrySetWindowIcon();
             LoadSettings();
+            RegisterGlobalShortcuts();
+            NormalizeDesktopAutoSortSettings();
             FileSearchIndex.EnsureStarted();
             ApplyLanguage(_languageCode);
             if (!Presets.Any())
@@ -305,7 +366,13 @@ namespace DesktopPlus
             this.StateChanged += OnWindowStateChanged;
             this.Loaded += (s, e) => RefreshPanelOverview();
             PanelsChanged += RefreshPanelOverview;
-            this.Closed += (s, e) => PanelsChanged -= RefreshPanelOverview;
+            this.Closed += (s, e) =>
+            {
+                PanelsChanged -= RefreshPanelOverview;
+                StopDesktopAutoSortWatcher();
+                CleanupGlobalShortcuts();
+            };
+            ConfigureDesktopAutoSortWatcher();
             ApplyStartupWindowVisibilityPreference();
 
         }
@@ -410,6 +477,77 @@ namespace DesktopPlus
             AppIconLoader.TryApplyWindowIcon(this);
         }
 
+        private static string GetCurrentExecutablePath()
+        {
+            string? processPath = Environment.ProcessPath;
+            if (!string.IsNullOrWhiteSpace(processPath))
+            {
+                return processPath;
+            }
+
+            try
+            {
+                using var currentProcess = Process.GetCurrentProcess();
+                processPath = currentProcess.MainModule?.FileName;
+                if (!string.IsNullOrWhiteSpace(processPath))
+                {
+                    return processPath;
+                }
+            }
+            catch
+            {
+            }
+
+            return string.Empty;
+        }
+
+        private static string ExtractExecutablePathFromStartupValue(string startupValue)
+        {
+            if (string.IsNullOrWhiteSpace(startupValue))
+            {
+                return string.Empty;
+            }
+
+            string value = startupValue.Trim();
+            if (value.StartsWith("\"", StringComparison.Ordinal))
+            {
+                int closingQuote = value.IndexOf('"', 1);
+                if (closingQuote > 1)
+                {
+                    return value.Substring(1, closingQuote - 1);
+                }
+            }
+
+            int separator = value.IndexOfAny(new[] { ' ', '\t' });
+            if (separator > 0)
+            {
+                return value.Substring(0, separator);
+            }
+
+            return value;
+        }
+
+        private static bool PathsPointToSameLocation(string left, string right)
+        {
+            if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+            {
+                return false;
+            }
+
+            try
+            {
+                string normalizedLeft = Path.GetFullPath(left)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string normalizedRight = Path.GetFullPath(right)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                return string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
         private static bool IsStartWithWindowsEnabled()
         {
             try
@@ -417,7 +555,24 @@ namespace DesktopPlus
                 using var key = Registry.CurrentUser.OpenSubKey(StartupRegistryKey, false);
                 if (key == null) return false;
                 var value = key.GetValue(StartupRegistryValue) as string;
-                return !string.IsNullOrWhiteSpace(value);
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    return false;
+                }
+
+                string configuredPath = ExtractExecutablePathFromStartupValue(value);
+                if (string.IsNullOrWhiteSpace(configuredPath) || !File.Exists(configuredPath))
+                {
+                    return false;
+                }
+
+                string currentPath = GetCurrentExecutablePath();
+                if (string.IsNullOrWhiteSpace(currentPath))
+                {
+                    return true;
+                }
+
+                return PathsPointToSameLocation(configuredPath, currentPath);
             }
             catch
             {
@@ -434,9 +589,8 @@ namespace DesktopPlus
 
                 if (enabled)
                 {
-                    string exePath = Process.GetCurrentProcess().MainModule?.FileName
-                        ?? System.Reflection.Assembly.GetExecutingAssembly().Location;
-                    if (string.IsNullOrWhiteSpace(exePath)) return;
+                    string exePath = GetCurrentExecutablePath();
+                    if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath)) return;
                     key.SetValue(StartupRegistryValue, $"\"{exePath}\"");
                 }
                 else
@@ -458,9 +612,18 @@ namespace DesktopPlus
         {
             CloseTrayMenuWindow();
             ShowInTaskbar = true;
-            this.Show();
-            this.WindowState = WindowState.Normal;
-            this.Activate();
+            if (WindowState != WindowState.Normal)
+            {
+                WindowState = WindowState.Normal;
+            }
+
+            if (!IsVisible)
+            {
+                Show();
+            }
+
+            Activate();
+            Focus();
         }
 
         private void ExitApplication()
@@ -468,6 +631,7 @@ namespace DesktopPlus
             _isExit = true;
             IsExiting = true;
             CloseTrayMenuWindow();
+            StopDesktopAutoSortWatcher();
             _notifyIcon?.Dispose();
             SaveSettingsImmediate();
             Application.Current.Shutdown();
@@ -532,6 +696,23 @@ namespace DesktopPlus
                     return true;
                 }
                 source = GetParentObject(source);
+            }
+
+            return false;
+        }
+
+        private static bool CanScrollVertically(System.Windows.Controls.ScrollViewer scrollViewer, int wheelDelta)
+        {
+            if (scrollViewer.ScrollableHeight <= 0) return false;
+
+            if (wheelDelta > 0)
+            {
+                return scrollViewer.VerticalOffset > 0;
+            }
+
+            if (wheelDelta < 0)
+            {
+                return scrollViewer.VerticalOffset < scrollViewer.ScrollableHeight;
             }
 
             return false;
@@ -634,7 +815,9 @@ namespace DesktopPlus
                     }
 
                     var sourceScrollViewer = FindAncestor<System.Windows.Controls.ScrollViewer>(source);
-                    if (sourceScrollViewer != null && !ReferenceEquals(sourceScrollViewer, MainScrollViewer))
+                    if (sourceScrollViewer != null &&
+                        !ReferenceEquals(sourceScrollViewer, MainScrollViewer) &&
+                        CanScrollVertically(sourceScrollViewer, e.Delta))
                     {
                         return;
                     }
@@ -735,6 +918,10 @@ namespace DesktopPlus
                 RefreshPanelOverview();
                 RefreshLayoutList();
                 RefreshPresetSelectors();
+                RefreshDesktopAutoSortRuleViews();
+                SetDesktopAutoSortStatus(_desktopAutoSort.AutoSortEnabled
+                    ? GetString("Loc.AutoSortStatusEnabled")
+                    : GetString("Loc.AutoSortStatusDisabled"));
                 SaveSettings();
             }
         }
@@ -760,10 +947,14 @@ namespace DesktopPlus
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             PopulateAppearanceInputs(Appearance);
+            SetThemeSection("header", updatePreview: false);
             UpdatePreview(Appearance);
             RefreshPresetSelectors();
             RefreshLayoutList();
             ApplyGeneralSettingsToUi();
+            ApplyDesktopAutoSortSettingsToUi();
+            ApplyGlobalShortcutSettingsToUi();
+            ConfigureDesktopAutoSortWatcher();
             _isUiReady = true;
             ApplyStartupWindowVisibilityPreference();
 
@@ -868,13 +1059,23 @@ namespace DesktopPlus
                 PanelTitle = source.PanelTitle ?? "",
                 PresetName = source.PresetName ?? "",
                 ShowHidden = source.ShowHidden,
+                ShowParentNavigationItem = source.ShowParentNavigationItem,
                 ShowFileExtensions = source.ShowFileExtensions,
                 ShowSettingsButton = source.ShowSettingsButton,
                 ExpandOnHover = source.ExpandOnHover,
                 OpenFoldersExternally = source.OpenFoldersExternally,
+                ViewMode = source.ViewMode ?? DesktopPanel.ViewModeIcons,
+                ShowMetadataType = source.ShowMetadataType,
+                ShowMetadataSize = source.ShowMetadataSize,
+                ShowMetadataCreated = source.ShowMetadataCreated,
+                ShowMetadataModified = source.ShowMetadataModified,
+                ShowMetadataDimensions = source.ShowMetadataDimensions,
+                MetadataOrder = DesktopPanel.NormalizeMetadataOrder(source.MetadataOrder),
                 MovementMode = source.MovementMode ?? "titlebar",
                 SearchVisibilityMode = source.SearchVisibilityMode ?? DesktopPanel.SearchVisibilityAlways,
-                PinnedItems = source.PinnedItems?.ToList() ?? new List<string>()
+                PinnedItems = source.PinnedItems?.ToList() ?? new List<string>(),
+                Tabs = source.Tabs?.Select(ClonePanelTabData).ToList(),
+                ActiveTabIndex = source.ActiveTabIndex
             };
         }
 
@@ -898,13 +1099,47 @@ namespace DesktopPlus
             target.PanelTitle = source.PanelTitle ?? "";
             target.PresetName = source.PresetName ?? "";
             target.ShowHidden = source.ShowHidden;
+            target.ShowParentNavigationItem = source.ShowParentNavigationItem;
             target.ShowFileExtensions = source.ShowFileExtensions;
             target.ShowSettingsButton = source.ShowSettingsButton;
             target.ExpandOnHover = source.ExpandOnHover;
             target.OpenFoldersExternally = source.OpenFoldersExternally;
+            target.ViewMode = source.ViewMode ?? DesktopPanel.ViewModeIcons;
+            target.ShowMetadataType = source.ShowMetadataType;
+            target.ShowMetadataSize = source.ShowMetadataSize;
+            target.ShowMetadataCreated = source.ShowMetadataCreated;
+            target.ShowMetadataModified = source.ShowMetadataModified;
+            target.ShowMetadataDimensions = source.ShowMetadataDimensions;
+            target.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(source.MetadataOrder);
             target.MovementMode = source.MovementMode ?? "titlebar";
             target.SearchVisibilityMode = source.SearchVisibilityMode ?? DesktopPanel.SearchVisibilityAlways;
             target.PinnedItems = source.PinnedItems?.ToList() ?? new List<string>();
+            target.Tabs = source.Tabs?.Select(ClonePanelTabData).ToList();
+            target.ActiveTabIndex = source.ActiveTabIndex;
+        }
+
+        private static PanelTabData ClonePanelTabData(PanelTabData source)
+        {
+            return new PanelTabData
+            {
+                TabId = source.TabId ?? "",
+                TabName = source.TabName ?? "",
+                PanelType = source.PanelType ?? "",
+                FolderPath = source.FolderPath ?? "",
+                DefaultFolderPath = source.DefaultFolderPath ?? "",
+                ShowHidden = source.ShowHidden,
+                ShowParentNavigationItem = source.ShowParentNavigationItem,
+                ShowFileExtensions = source.ShowFileExtensions,
+                OpenFoldersExternally = source.OpenFoldersExternally,
+                ViewMode = source.ViewMode ?? DesktopPanel.ViewModeIcons,
+                ShowMetadataType = source.ShowMetadataType,
+                ShowMetadataSize = source.ShowMetadataSize,
+                ShowMetadataCreated = source.ShowMetadataCreated,
+                ShowMetadataModified = source.ShowMetadataModified,
+                ShowMetadataDimensions = source.ShowMetadataDimensions,
+                MetadataOrder = DesktopPanel.NormalizeMetadataOrder(source.MetadataOrder),
+                PinnedItems = source.PinnedItems?.ToList() ?? new List<string>()
+            };
         }
 
         private static AppearanceSettings CloneAppearance(AppearanceSettings source)
@@ -918,6 +1153,9 @@ namespace DesktopPlus
                 TextColor = source.TextColor,
                 MutedTextColor = source.MutedTextColor,
                 FolderTextColor = source.FolderTextColor,
+                TabActiveColor = source.TabActiveColor,
+                TabInactiveColor = source.TabInactiveColor,
+                TabHoverColor = source.TabHoverColor,
                 FontFamily = source.FontFamily,
                 TitleFontSize = source.TitleFontSize,
                 ItemFontSize = source.ItemFontSize,

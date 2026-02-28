@@ -36,6 +36,8 @@ namespace DesktopPlus
         private ListBoxItem? _renameEditItem;
         private System.Windows.Controls.TextBox? _renameEditBox;
         private TextBlock? _renameEditOriginalLabel;
+        private System.Windows.Controls.Panel? _renameEditOriginalHostPanel;
+        private int _renameEditOriginalHostIndex = -1;
         private string _renameOriginalPath = string.Empty;
         private string _renameOriginalDisplayName = string.Empty;
         private ListBoxItem? _lastRenameClickItem;
@@ -151,7 +153,7 @@ namespace DesktopPlus
                 return false;
             }
 
-            if (!TryGetRenameItemContext(clickedItem, out _, out _, out _))
+            if (!TryGetRenameItemContext(clickedItem, out _, out _, out _, out _))
             {
                 return false;
             }
@@ -173,7 +175,7 @@ namespace DesktopPlus
                 return false;
             }
 
-            return TryGetRenameItemContext(item, out _, out _, out _);
+            return TryGetRenameItemContext(item, out _, out _, out _, out _);
         }
 
         private bool TryBeginRenameSelection()
@@ -186,11 +188,17 @@ namespace DesktopPlus
             return BeginInlineRename(item);
         }
 
-        private bool TryGetRenameItemContext(ListBoxItem item, out string path, out StackPanel panel, out TextBlock label)
+        private bool TryGetRenameItemContext(
+            ListBoxItem item,
+            out string path,
+            out System.Windows.Controls.Panel hostPanel,
+            out TextBlock label,
+            out int labelIndex)
         {
             path = string.Empty;
-            panel = null!;
+            hostPanel = null!;
             label = null!;
+            labelIndex = -1;
 
             if (item == null || item.Tag is not string itemPath || string.IsNullOrWhiteSpace(itemPath))
             {
@@ -207,20 +215,15 @@ namespace DesktopPlus
                 return false;
             }
 
-            if (item.Content is not StackPanel contentPanel)
-            {
-                return false;
-            }
-
-            var textLabel = contentPanel.Children.OfType<TextBlock>().FirstOrDefault();
-            if (textLabel == null)
+            if (!TryGetEditableNameHost(item, out var editableHost, out var editableLabel, out int editableIndex))
             {
                 return false;
             }
 
             path = itemPath;
-            panel = contentPanel;
-            label = textLabel;
+            hostPanel = editableHost;
+            label = editableLabel;
+            labelIndex = editableIndex;
             return true;
         }
 
@@ -231,13 +234,7 @@ namespace DesktopPlus
                 return false;
             }
 
-            if (!TryGetRenameItemContext(item, out string path, out StackPanel panel, out TextBlock label))
-            {
-                return false;
-            }
-
-            int labelIndex = panel.Children.IndexOf(label);
-            if (labelIndex < 0)
+            if (!TryGetRenameItemContext(item, out string path, out System.Windows.Controls.Panel hostPanel, out TextBlock label, out int labelIndex))
             {
                 return false;
             }
@@ -272,11 +269,13 @@ namespace DesktopPlus
             editor.KeyDown += RenameEditor_KeyDown;
             editor.LostKeyboardFocus += RenameEditor_LostKeyboardFocus;
 
-            panel.Children[labelIndex] = editor;
+            hostPanel.Children[labelIndex] = editor;
 
             _renameEditItem = item;
             _renameEditBox = editor;
             _renameEditOriginalLabel = label;
+            _renameEditOriginalHostPanel = hostPanel;
+            _renameEditOriginalHostIndex = labelIndex;
             _renameOriginalPath = path;
             _renameOriginalDisplayName = originalDisplayName;
 
@@ -325,14 +324,19 @@ namespace DesktopPlus
 
         private void EndInlineRenameSession(bool commit)
         {
-            if (_renameEditBox == null || _renameEditItem == null || _renameEditOriginalLabel == null)
+            if (_renameEditBox == null ||
+                _renameEditItem == null ||
+                _renameEditOriginalLabel == null ||
+                _renameEditOriginalHostPanel == null ||
+                _renameEditOriginalHostIndex < 0)
             {
                 return;
             }
 
             var editor = _renameEditBox;
-            var item = _renameEditItem;
             var originalLabel = _renameEditOriginalLabel;
+            var originalHostPanel = _renameEditOriginalHostPanel;
+            int originalHostIndex = _renameEditOriginalHostIndex;
             string originalPath = _renameOriginalPath;
             string originalDisplayName = _renameOriginalDisplayName;
             string requestedDisplayName = editor.Text?.Trim() ?? string.Empty;
@@ -340,13 +344,10 @@ namespace DesktopPlus
             editor.KeyDown -= RenameEditor_KeyDown;
             editor.LostKeyboardFocus -= RenameEditor_LostKeyboardFocus;
 
-            if (item.Content is StackPanel panel)
+            if (originalHostPanel.Children.Count > originalHostIndex &&
+                ReferenceEquals(originalHostPanel.Children[originalHostIndex], editor))
             {
-                int editorIndex = panel.Children.IndexOf(editor);
-                if (editorIndex >= 0)
-                {
-                    panel.Children[editorIndex] = originalLabel;
-                }
+                originalHostPanel.Children[originalHostIndex] = originalLabel;
             }
 
             originalLabel.Text = originalDisplayName;
@@ -354,6 +355,8 @@ namespace DesktopPlus
             _renameEditBox = null;
             _renameEditItem = null;
             _renameEditOriginalLabel = null;
+            _renameEditOriginalHostPanel = null;
+            _renameEditOriginalHostIndex = -1;
             _renameOriginalPath = string.Empty;
             _renameOriginalDisplayName = string.Empty;
 
@@ -694,15 +697,12 @@ namespace DesktopPlus
                 MessageBoxImage.Warning) == MessageBoxResult.Yes;
         }
 
-        private static string GetSelectedItemDisplayName(ListBoxItem item)
+        private string GetSelectedItemDisplayName(ListBoxItem item)
         {
-            if (item.Content is StackPanel panel)
+            if (TryGetItemNameLabel(item, out var text) &&
+                !string.IsNullOrWhiteSpace(text.Text))
             {
-                var text = panel.Children.OfType<TextBlock>().FirstOrDefault();
-                if (text != null && !string.IsNullOrWhiteSpace(text.Text))
-                {
-                    return text.Text.Trim();
-                }
+                return text.Text.Trim();
             }
 
             if (item.Tag is string path)
@@ -727,19 +727,14 @@ namespace DesktopPlus
                 return false;
             }
 
-            if (item.Content is StackPanel panel)
+            if (TryGetItemNameLabel(item, out var text) &&
+                !string.IsNullOrWhiteSpace(text.Text) &&
+                text.Text.TrimStart().StartsWith(ParentNavigationTextPrefix, StringComparison.Ordinal))
             {
-                var text = panel.Children.OfType<TextBlock>().FirstOrDefault();
-                if (text != null && !string.IsNullOrWhiteSpace(text.Text) &&
-                    text.Text.TrimStart().StartsWith("↩", StringComparison.Ordinal))
-                {
-                    return true;
-                }
+                return true;
             }
 
-            string? parentPath = Path.GetDirectoryName(currentFolderPath);
-            return !string.IsNullOrWhiteSpace(parentPath) &&
-                   string.Equals(path, parentPath, StringComparison.OrdinalIgnoreCase);
+            return IsParentNavigationPath(path);
         }
 
         private bool RemoveItemsFromPanel(IEnumerable<ListBoxItem> items)
@@ -1198,9 +1193,9 @@ namespace DesktopPlus
                                 });
                         }
 
-                        if (sourceItem?.Content is StackPanel panel)
+                        if (sourceItem?.Content is UIElement contentElement)
                         {
-                            panel.Opacity = 0.8;
+                            contentElement.Opacity = 0.8;
                         }
 
                         _internalReorderDropHandled = false;
@@ -1209,9 +1204,9 @@ namespace DesktopPlus
                             dataObject,
                             DragDropEffects.Copy | DragDropEffects.Move | DragDropEffects.Link);
 
-                        if (sourceItem?.Content is StackPanel releasedPanel)
+                        if (sourceItem?.Content is UIElement releasedElement)
                         {
-                            releasedPanel.Opacity = 1.0;
+                            releasedElement.Opacity = 1.0;
                         }
 
                         if (_internalReorderDropHandled)
@@ -1432,6 +1427,12 @@ namespace DesktopPlus
 
         private void Window_Drop(object sender, DragEventArgs e)
         {
+            // Let tab drag events pass through to TabBar_Drop
+            if (e.Data.GetDataPresent(TabDragFormat))
+            {
+                return;
+            }
+
             var droppedItems = ExtractFileDropPaths(e.Data);
             if (droppedItems.Count == 0) return;
 
@@ -1451,6 +1452,15 @@ namespace DesktopPlus
 
         private void Window_DragOver(object sender, DragEventArgs e)
         {
+            // For tab drags: set Move effect but don't mark as handled,
+            // so the HeaderBar's DragOver can still fire for insert indicator positioning.
+            if (e.Data.GetDataPresent(TabDragFormat))
+            {
+                e.Effects = DragDropEffects.Move;
+                // Don't set e.Handled — let TabBar_DragOver handle positioning
+                return;
+            }
+
             if (e.Data.GetDataPresent(InternalListReorderFormat) &&
                 e.Data.GetData(InternalListReorderFormat) is InternalListReorderPayload payload &&
                 string.Equals(payload.SourcePanelId, PanelId, StringComparison.OrdinalIgnoreCase))
@@ -1538,3 +1548,4 @@ namespace DesktopPlus
         }
     }
 }
+

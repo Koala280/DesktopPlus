@@ -7,6 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
 
 namespace DesktopPlus
 {
@@ -16,10 +18,38 @@ namespace DesktopPlus
         private const int SearchMinCharsForDeepLookup = 2;
         private const int SearchFilterBatchSize = 220;
         private const int SearchResultBatchSize = 10;
+        private const int FolderUiBatchSizeDefault = 8;
+        private const int FolderUiBatchSizePhotos = 3;
+        private const int FolderUiBatchDelayMs = 1;
 
         private bool IsSearchRequestCurrent(CancellationTokenSource cts)
         {
             return ReferenceEquals(_searchCts, cts);
+        }
+
+        private bool IsFolderLoadRequestCurrent(CancellationTokenSource cts, string folderPath)
+        {
+            return ReferenceEquals(_folderLoadCts, cts) &&
+                PanelType == PanelKind.Folder &&
+                string.Equals(currentFolderPath, folderPath, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private CancellationTokenSource BeginFolderLoad()
+        {
+            var previousCts = _folderLoadCts;
+            _folderLoadCts = null;
+            previousCts?.Cancel();
+
+            var currentCts = new CancellationTokenSource();
+            _folderLoadCts = currentCts;
+            return currentCts;
+        }
+
+        private void CancelPendingFolderLoad()
+        {
+            var pendingLoadCts = _folderLoadCts;
+            _folderLoadCts = null;
+            pendingLoadCts?.Cancel();
         }
 
         private bool MoveFolderIntoCurrent(string sourcePath, bool refreshAfterChange = true)
@@ -335,6 +365,7 @@ namespace DesktopPlus
         {
             if (!Directory.Exists(folderPath)) return;
 
+            var loadCts = BeginFolderLoad();
             ResetSearchState(clearSearchBox: true);
             PanelType = PanelKind.Folder;
             currentFolderPath = folderPath;
@@ -352,31 +383,21 @@ namespace DesktopPlus
             _searchInjectedItems.Clear();
             _searchInjectedPaths.Clear();
 
-            if (parentFolderPath != null)
+            if (showParentNavigationItem && parentFolderPath != null)
             {
-                string parentFolderName = GetDisplayNameForPath(parentFolderPath);
+                string parentFolderName = BuildParentNavigationDisplayName(parentFolderPath);
                 ListBoxItem backItem = new ListBoxItem
                 {
-                    Content = CreateListBoxItem("↩ " + parentFolderName, parentFolderPath, true, _currentAppearance),
+                    Content = CreateListBoxItem(parentFolderName, parentFolderPath, true, _currentAppearance),
                     Tag = parentFolderPath
                 };
                 FileList.Items.Add(backItem);
                 _baseItemPaths.Add(parentFolderPath);
             }
 
-            foreach (var dir in Directory.GetDirectories(folderPath).Where(ShouldShowPath))
-            {
-                FileList.Items.Add(new ListBoxItem { Content = CreateListBoxItem(GetDisplayNameForPath(dir), dir, false, _currentAppearance), Tag = dir });
-                _baseItemPaths.Add(dir);
-            }
-            foreach (var file in Directory.GetFiles(folderPath).Where(ShouldShowPath))
-            {
-                FileList.Items.Add(new ListBoxItem { Content = CreateListBoxItem(GetDisplayNameForPath(file), file, false, _currentAppearance), Tag = file });
-                _baseItemPaths.Add(file);
-            }
-
             _ = Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Loaded);
             UpdateDropZoneVisibility();
+            _ = RunFolderLoadAsync(folderPath, loadCts);
 
             if (saveSettings)
             {
@@ -386,6 +407,7 @@ namespace DesktopPlus
 
         public void LoadList(IEnumerable<string> items, bool saveSettings = true)
         {
+            CancelPendingFolderLoad();
             ResetSearchState(clearSearchBox: true);
             PanelType = PanelKind.List;
             currentFolderPath = "";
@@ -411,6 +433,7 @@ namespace DesktopPlus
 
         public void ClearPanelItems()
         {
+            CancelPendingFolderLoad();
             ResetSearchState(clearSearchBox: true);
             PanelType = PanelKind.None;
             currentFolderPath = "";
@@ -422,15 +445,212 @@ namespace DesktopPlus
             UpdateDropZoneVisibility();
         }
 
-        private void AddFileToList(string filePath, bool trackItem)
+        private async Task RunFolderLoadAsync(string folderPath, CancellationTokenSource cts)
         {
-            if (string.IsNullOrWhiteSpace(filePath)) return;
+            var token = cts.Token;
+
+            try
+            {
+                List<string> entries = await Task.Run(() => EnumerateVisibleFolderEntries(folderPath, token), token);
+                token.ThrowIfCancellationRequested();
+
+                if (!IsFolderLoadRequestCurrent(cts, folderPath) || entries.Count == 0)
+                {
+                    return;
+                }
+
+                int uiBatchSize = GetFolderLoadBatchSize();
+                for (int start = 0; start < entries.Count; start += uiBatchSize)
+                {
+                    token.ThrowIfCancellationRequested();
+                    string[] batch = entries
+                        .Skip(start)
+                        .Take(uiBatchSize)
+                        .ToArray();
+
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (!IsFolderLoadRequestCurrent(cts, folderPath))
+                        {
+                            return;
+                        }
+
+                        string activeFilter = SearchBox?.Text?.Trim() ?? string.Empty;
+                        bool hasFilter = !string.IsNullOrWhiteSpace(activeFilter);
+                        foreach (string entryPath in batch)
+                        {
+                            string displayName = GetDisplayNameForPath(entryPath);
+                            if (string.IsNullOrWhiteSpace(displayName))
+                            {
+                                displayName = entryPath;
+                            }
+
+                            var listItem = new ListBoxItem
+                            {
+                                Content = CreateListBoxItem(displayName, entryPath, false, _currentAppearance),
+                                Tag = entryPath
+                            };
+
+                            if (hasFilter &&
+                                displayName.IndexOf(activeFilter, StringComparison.OrdinalIgnoreCase) < 0)
+                            {
+                                listItem.Visibility = Visibility.Collapsed;
+                            }
+
+                            FileList.Items.Add(listItem);
+                            _baseItemPaths.Add(entryPath);
+                        }
+                    }, System.Windows.Threading.DispatcherPriority.ContextIdle, token);
+
+                    if (start + uiBatchSize < entries.Count)
+                    {
+                        await Task.Delay(FolderUiBatchDelayMs, token);
+                    }
+                }
+
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    if (!IsFolderLoadRequestCurrent(cts, folderPath))
+                    {
+                        return;
+                    }
+
+                    SortCurrentFolderItemsInPlace();
+                    _ = Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Background);
+                    UpdateDropZoneVisibility();
+                }, System.Windows.Threading.DispatcherPriority.Background, token);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                if (ReferenceEquals(_folderLoadCts, cts))
+                {
+                    _folderLoadCts = null;
+                }
+
+                cts.Dispose();
+            }
+        }
+
+        private int GetFolderLoadBatchSize()
+        {
+            string normalizedViewMode = NormalizeViewMode(viewMode);
+            if (string.Equals(normalizedViewMode, ViewModePhotos, StringComparison.OrdinalIgnoreCase))
+            {
+                return FolderUiBatchSizePhotos;
+            }
+
+            return FolderUiBatchSizeDefault;
+        }
+
+        private List<string> EnumerateVisibleFolderEntries(string folderPath, CancellationToken token)
+        {
+            var entries = new List<string>(256);
+            try
+            {
+                foreach (string directoryPath in Directory.EnumerateDirectories(folderPath))
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (ShouldShowPath(directoryPath))
+                    {
+                        entries.Add(directoryPath);
+                    }
+                }
+
+                foreach (string filePath in Directory.EnumerateFiles(folderPath))
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (ShouldShowPath(filePath))
+                    {
+                        entries.Add(filePath);
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+            }
+
+            return entries;
+        }
+
+        public void AppendItemsToList(IEnumerable<string> filePaths, bool animateEntries)
+        {
+            if (filePaths == null)
+            {
+                return;
+            }
+
+            if (PanelType != PanelKind.List)
+            {
+                LoadList(Array.Empty<string>(), saveSettings: false);
+            }
+
+            int animationOrder = 0;
+            bool addedAny = false;
+            foreach (string path in filePaths.Where(p => !string.IsNullOrWhiteSpace(p)))
+            {
+                bool added = AddFileToList(path, trackItem: true, entryAnimationOrder: animateEntries ? animationOrder : -1);
+                if (added)
+                {
+                    addedAny = true;
+                    animationOrder++;
+                }
+            }
+
+            if (!addedAny)
+            {
+                return;
+            }
+
+            _ = Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Background);
+            UpdateDropZoneVisibility();
+        }
+
+        public void AnimateListItemsForPaths(IEnumerable<string> filePaths)
+        {
+            if (filePaths == null || FileList == null)
+            {
+                return;
+            }
+
+            var targetPaths = new HashSet<string>(
+                filePaths.Where(p => !string.IsNullOrWhiteSpace(p)),
+                StringComparer.OrdinalIgnoreCase);
+            if (targetPaths.Count == 0)
+            {
+                return;
+            }
+
+            int animationOrder = 0;
+            foreach (ListBoxItem item in FileList.Items.OfType<ListBoxItem>())
+            {
+                if (item.Tag is not string path || !targetPaths.Contains(path))
+                {
+                    continue;
+                }
+
+                AnimateListItemEntry(item, animationOrder++);
+            }
+        }
+
+        private bool AddFileToList(string filePath, bool trackItem, int entryAnimationOrder = -1)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+            {
+                return false;
+            }
 
             if (trackItem)
             {
                 if (PinnedItems.Any(p => string.Equals(p, filePath, StringComparison.OrdinalIgnoreCase)))
                 {
-                    return;
+                    return false;
                 }
                 if (PanelType == PanelKind.None)
                 {
@@ -452,6 +672,86 @@ namespace DesktopPlus
             };
             FileList.Items.Add(item);
             _baseItemPaths.Add(filePath);
+            if (entryAnimationOrder >= 0)
+            {
+                AnimateListItemEntry(item, entryAnimationOrder);
+            }
+
+            return true;
+        }
+
+        private void AnimateListItemEntry(ListBoxItem item, int order)
+        {
+            if (item.Content is not UIElement content)
+            {
+                return;
+            }
+
+            var translate = new TranslateTransform();
+            var scale = new ScaleTransform(0.94, 0.94);
+            var transforms = new TransformGroup();
+            transforms.Children.Add(scale);
+            transforms.Children.Add(translate);
+
+            content.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
+            content.RenderTransform = transforms;
+            content.BeginAnimation(UIElement.OpacityProperty, null);
+            content.Opacity = 0;
+
+            double panelCenterX = Left + (ActualWidth > 0 ? ActualWidth : Width) / 2.0;
+            double screenCenterX = SystemParameters.WorkArea.Left + (SystemParameters.WorkArea.Width / 2.0);
+            double fromX = panelCenterX >= screenCenterX ? 54 : -54;
+
+            var delay = TimeSpan.FromMilliseconds(Math.Min(320, Math.Max(0, order) * 26));
+            var moveEase = new CubicEase { EasingMode = EasingMode.EaseOut };
+            var fadeEase = new CubicEase { EasingMode = EasingMode.EaseOut };
+
+            var moveX = new DoubleAnimation
+            {
+                From = fromX,
+                To = 0,
+                Duration = TimeSpan.FromMilliseconds(340),
+                BeginTime = delay,
+                EasingFunction = moveEase
+            };
+            var moveY = new DoubleAnimation
+            {
+                From = -16,
+                To = 0,
+                Duration = TimeSpan.FromMilliseconds(340),
+                BeginTime = delay,
+                EasingFunction = moveEase
+            };
+            var fade = new DoubleAnimation
+            {
+                From = 0,
+                To = 1,
+                Duration = TimeSpan.FromMilliseconds(240),
+                BeginTime = delay,
+                EasingFunction = fadeEase
+            };
+            var scaleX = new DoubleAnimation
+            {
+                From = 0.94,
+                To = 1,
+                Duration = TimeSpan.FromMilliseconds(320),
+                BeginTime = delay,
+                EasingFunction = moveEase
+            };
+            var scaleY = new DoubleAnimation
+            {
+                From = 0.94,
+                To = 1,
+                Duration = TimeSpan.FromMilliseconds(320),
+                BeginTime = delay,
+                EasingFunction = moveEase
+            };
+
+            translate.BeginAnimation(TranslateTransform.XProperty, moveX, HandoffBehavior.SnapshotAndReplace);
+            translate.BeginAnimation(TranslateTransform.YProperty, moveY, HandoffBehavior.SnapshotAndReplace);
+            content.BeginAnimation(UIElement.OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleX, HandoffBehavior.SnapshotAndReplace);
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleY, HandoffBehavior.SnapshotAndReplace);
         }
 
         private void FileList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -593,9 +893,21 @@ namespace DesktopPlus
             }
             finally
             {
+                bool shouldApplyDeferredSort = ReferenceEquals(_searchCts, cts) && _deferSortUntilSearchComplete;
                 if (ReferenceEquals(_searchCts, cts))
                 {
                     _searchCts = null;
+                }
+
+                if (shouldApplyDeferredSort)
+                {
+                    _deferSortUntilSearchComplete = false;
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        SortCurrentFolderItemsInPlace();
+                        RefreshParentNavigationItemVisual();
+                        _ = Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Background);
+                    }, System.Windows.Threading.DispatcherPriority.Background);
                 }
 
                 cts.Dispose();
@@ -607,6 +919,7 @@ namespace DesktopPlus
             var pendingSearchCts = _searchCts;
             _searchCts = null;
             pendingSearchCts?.Cancel();
+            _deferSortUntilSearchComplete = false;
             RemoveInjectedSearchItems();
 
             if (!clearSearchBox || SearchBox == null || string.IsNullOrEmpty(SearchBox.Text))
@@ -670,7 +983,8 @@ namespace DesktopPlus
                     for (int i = start; i < end; i++)
                     {
                         var item = items[i];
-                        bool isVisible = showAll ||
+                        bool isVisible = IsParentNavigationItem(item) ||
+                            showAll ||
                             GetSearchCandidateText(item).IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
                         var target = isVisible ? Visibility.Visible : Visibility.Collapsed;
                         if (item.Visibility != target)
@@ -686,6 +1000,7 @@ namespace DesktopPlus
                 }
             }
 
+            SortCurrentFolderItemsInPlace();
             _ = Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Background);
         }
 
@@ -767,10 +1082,22 @@ namespace DesktopPlus
                 }
             }
 
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (!IsSearchRequestCurrent(cts))
+                {
+                    return;
+                }
+
+                SortCurrentFolderItemsInPlace();
+                RefreshParentNavigationItemVisual();
+                _deferSortUntilSearchComplete = false;
+            }, System.Windows.Threading.DispatcherPriority.Background, token);
+
             _ = Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Background);
         }
 
-        private static string GetSearchCandidateText(ListBoxItem item)
+        private string GetSearchCandidateText(ListBoxItem item)
         {
             if (item.Tag is string path && !string.IsNullOrWhiteSpace(path))
             {
@@ -778,8 +1105,7 @@ namespace DesktopPlus
                 return string.IsNullOrWhiteSpace(displayName) ? path : displayName;
             }
 
-            if (item.Content is StackPanel panel &&
-                panel.Children.OfType<TextBlock>().FirstOrDefault() is TextBlock text &&
+            if (TryGetItemNameLabel(item, out var text) &&
                 !string.IsNullOrWhiteSpace(text.Text))
             {
                 return text.Text;
@@ -818,3 +1144,4 @@ namespace DesktopPlus
         }
     }
 }
+

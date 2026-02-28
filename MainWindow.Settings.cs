@@ -62,6 +62,11 @@ namespace DesktopPlus
                 Appearance = state.Appearance ?? new AppearanceSettings();
                 Layouts = state.Layouts ?? new List<LayoutDefinition>();
                 _languageCode = string.IsNullOrWhiteSpace(state.Language) ? DefaultLanguageCode : state.Language;
+                if (!LocalizationData.ContainsKey(_languageCode))
+                {
+                    _languageCode = DefaultLanguageCode;
+                }
+                CurrentLanguageCode = _languageCode;
                 _closeBehavior = string.IsNullOrWhiteSpace(state.CloseBehavior) ? CloseBehaviorMinimize : state.CloseBehavior;
                 if (!string.Equals(_closeBehavior, CloseBehaviorMinimize, StringComparison.OrdinalIgnoreCase) &&
                     !string.Equals(_closeBehavior, CloseBehaviorExit, StringComparison.OrdinalIgnoreCase))
@@ -70,6 +75,14 @@ namespace DesktopPlus
                 }
                 bool registryStartup = IsStartWithWindowsEnabled();
                 _startWithWindows = state.StartWithWindows || registryStartup;
+                if (_startWithWindows && !registryStartup)
+                {
+                    SetStartWithWindows(true);
+                }
+                _desktopAutoSort = state.DesktopAutoSort ?? new DesktopAutoSortSettings();
+                NormalizeDesktopAutoSortSettings();
+                _globalShortcuts = state.GlobalShortcuts ?? new GlobalShortcutSettings();
+                NormalizeGlobalShortcutSettings();
                 _layoutDefaultPresetName = string.IsNullOrWhiteSpace(state.LayoutDefaultPresetName)
                     ? DefaultPresetName
                     : state.LayoutDefaultPresetName;
@@ -233,6 +246,8 @@ namespace DesktopPlus
                 string language = mainWindow?._languageCode ?? CurrentLanguageCode;
                 bool startWithWindows = mainWindow?._startWithWindows ?? IsStartWithWindowsEnabled();
                 string closeBehavior = mainWindow?._closeBehavior ?? CloseBehaviorMinimize;
+                DesktopAutoSortSettings desktopAutoSort = mainWindow?._desktopAutoSort ?? new DesktopAutoSortSettings();
+                GlobalShortcutSettings globalShortcuts = mainWindow?._globalShortcuts ?? new GlobalShortcutSettings();
                 string layoutDefaultPreset = mainWindow?._layoutDefaultPresetName ?? DefaultPresetName;
                 if (string.IsNullOrWhiteSpace(layoutDefaultPreset))
                 {
@@ -250,7 +265,13 @@ namespace DesktopPlus
                     ActiveLayoutName = activeLayoutName,
                     Language = language,
                     StartWithWindows = startWithWindows,
-                    CloseBehavior = closeBehavior
+                    CloseBehavior = closeBehavior,
+                    DesktopAutoSort = desktopAutoSort,
+                    GlobalShortcuts = new GlobalShortcutSettings
+                    {
+                        HidePanelsHotkey = globalShortcuts.HidePanelsHotkey,
+                        ForegroundPanelsHotkey = globalShortcuts.ForegroundPanelsHotkey
+                    }
                 };
 
                 string json = JsonSerializer.Serialize(

@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -10,7 +12,13 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using Brush = System.Windows.Media.Brush;
+using Brushes = System.Windows.Media.Brushes;
+using Color = System.Windows.Media.Color;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
 using MediaColor = System.Windows.Media.Color;
+using Orientation = System.Windows.Controls.Orientation;
+using Panel = System.Windows.Controls.Panel;
 
 namespace DesktopPlus
 {
@@ -56,6 +64,29 @@ namespace DesktopPlus
 
         [DllImport("gdi32.dll")]
         private static extern bool DeleteObject(IntPtr hObject);
+        private const string ItemNameTextTag = "DesktopPlus.ItemName";
+        private const string ParentNavigationTextPrefix = "↩ ";
+        private static readonly HashSet<string> PhotoFileExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff", ".heic", ".heif"
+        };
+        private static readonly Dictionary<string, (int Width, int Height)> PhotoDimensionsCache =
+            new Dictionary<string, (int Width, int Height)>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, ImageSource> PhotoPreviewCache =
+            new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
+
+        private enum DetailsSortColumn
+        {
+            Name,
+            Type,
+            Size,
+            Created,
+            Modified,
+            Dimensions
+        }
+
+        private DetailsSortColumn _detailsSortColumn = DetailsSortColumn.Name;
+        private bool _detailsSortAscending = true;
 
         private ImageSource? LoadExplorerStyleIcon(string filePath, int size = 256)
         {
@@ -88,7 +119,61 @@ namespace DesktopPlus
             return null;
         }
 
-        private StackPanel CreateListBoxItem(string displayName, string path, bool isBackButton, AppearanceSettings? appearance = null)
+        private static ImageSource? LoadPhotoPreviewSource(string path, int decodePixelWidth)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path) || !IsPhotoPath(path))
+            {
+                return null;
+            }
+
+            lock (PhotoPreviewCache)
+            {
+                if (PhotoPreviewCache.TryGetValue(path, out var cached))
+                {
+                    return cached;
+                }
+            }
+
+            try
+            {
+                var bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.UriSource = new Uri(path, UriKind.Absolute);
+                bitmap.DecodePixelWidth = Math.Max(96, decodePixelWidth);
+                bitmap.EndInit();
+                bitmap.Freeze();
+
+                lock (PhotoPreviewCache)
+                {
+                    PhotoPreviewCache[path] = bitmap;
+                }
+
+                return bitmap;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private FrameworkElement CreateListBoxItem(string displayName, string path, bool isBackButton, AppearanceSettings? appearance = null)
+        {
+            string normalizedViewMode = NormalizeViewMode(viewMode);
+            if (string.Equals(normalizedViewMode, ViewModeDetails, StringComparison.OrdinalIgnoreCase))
+            {
+                return CreateDetailsListBoxItem(displayName, path, isBackButton, appearance);
+            }
+
+            if (string.Equals(normalizedViewMode, ViewModePhotos, StringComparison.OrdinalIgnoreCase))
+            {
+                return CreatePhotoListBoxItem(displayName, path, isBackButton, appearance);
+            }
+
+            return CreateIconListBoxItem(displayName, path, isBackButton, appearance);
+        }
+
+        private FrameworkElement CreateIconListBoxItem(string displayName, string path, bool isBackButton, AppearanceSettings? appearance = null)
         {
             var activeAppearance = appearance ?? _currentAppearance ?? MainWindow.Appearance;
             double iconSize = 48 * zoomFactor;
@@ -121,39 +206,1071 @@ namespace DesktopPlus
             };
             RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
 
-            TextBlock text = new TextBlock
-            {
-                Text = displayName,
-                FontSize = textSize,
-                TextAlignment = TextAlignment.Center,
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-                TextWrapping = TextWrapping.Wrap,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                Width = panelWidth - 10,
-                Foreground = textBrush,
-                Opacity = 0.92
-            };
+            TextBlock text = CreateItemNameTextBlock(
+                displayName,
+                textSize,
+                textBrush,
+                TextAlignment.Center,
+                new Thickness(0, 0, 0, 0));
+            text.HorizontalAlignment = System.Windows.HorizontalAlignment.Center;
+            text.TextWrapping = TextWrapping.Wrap;
+            text.TextTrimming = TextTrimming.CharacterEllipsis;
+            text.Width = panelWidth - 10;
+            text.Opacity = 0.92;
 
             panel.Children.Add(icon);
             panel.Children.Add(text);
-            panel.PreviewMouseLeftButtonDown += (s, e) =>
+            AttachPressedOpacity(panel, baseOpacity);
+            return panel;
+        }
+
+        private bool IsMetadataColumnVisible(string metadataKey)
+        {
+            if (string.Equals(metadataKey, MetadataType, StringComparison.OrdinalIgnoreCase))
             {
-                panel.Opacity = Math.Max(0.45, baseOpacity - 0.2);
+                return showMetadataType;
+            }
+
+            if (string.Equals(metadataKey, MetadataSize, StringComparison.OrdinalIgnoreCase))
+            {
+                return showMetadataSize;
+            }
+
+            if (string.Equals(metadataKey, MetadataCreated, StringComparison.OrdinalIgnoreCase))
+            {
+                return showMetadataCreated;
+            }
+
+            if (string.Equals(metadataKey, MetadataModified, StringComparison.OrdinalIgnoreCase))
+            {
+                return showMetadataModified;
+            }
+
+            if (string.Equals(metadataKey, MetadataDimensions, StringComparison.OrdinalIgnoreCase))
+            {
+                return showMetadataDimensions;
+            }
+
+            return false;
+        }
+
+        private List<string> GetOrderedVisibleMetadataColumns()
+        {
+            var ordered = NormalizeMetadataOrder(metadataOrder);
+            return ordered.Where(IsMetadataColumnVisible).ToList();
+        }
+
+        private static GridLength GetMetadataColumnWidth(string metadataKey)
+        {
+            if (string.Equals(metadataKey, MetadataType, StringComparison.OrdinalIgnoreCase))
+            {
+                return new GridLength(110);
+            }
+
+            if (string.Equals(metadataKey, MetadataSize, StringComparison.OrdinalIgnoreCase))
+            {
+                return new GridLength(95);
+            }
+
+            if (string.Equals(metadataKey, MetadataCreated, StringComparison.OrdinalIgnoreCase))
+            {
+                return new GridLength(130);
+            }
+
+            if (string.Equals(metadataKey, MetadataModified, StringComparison.OrdinalIgnoreCase))
+            {
+                return new GridLength(130);
+            }
+
+            if (string.Equals(metadataKey, MetadataDimensions, StringComparison.OrdinalIgnoreCase))
+            {
+                return new GridLength(110);
+            }
+
+            return new GridLength(100);
+        }
+
+        private string GetMetadataColumnLabelText(string metadataKey)
+        {
+            if (string.Equals(metadataKey, MetadataType, StringComparison.OrdinalIgnoreCase))
+            {
+                return MainWindow.GetString("Loc.PanelSettingsMetaType");
+            }
+
+            if (string.Equals(metadataKey, MetadataSize, StringComparison.OrdinalIgnoreCase))
+            {
+                return MainWindow.GetString("Loc.PanelSettingsMetaSize");
+            }
+
+            if (string.Equals(metadataKey, MetadataCreated, StringComparison.OrdinalIgnoreCase))
+            {
+                return MainWindow.GetString("Loc.PanelSettingsMetaCreated");
+            }
+
+            if (string.Equals(metadataKey, MetadataModified, StringComparison.OrdinalIgnoreCase))
+            {
+                return MainWindow.GetString("Loc.PanelSettingsMetaModified");
+            }
+
+            if (string.Equals(metadataKey, MetadataDimensions, StringComparison.OrdinalIgnoreCase))
+            {
+                return MainWindow.GetString("Loc.PanelSettingsMetaDimensions");
+            }
+
+            return metadataKey;
+        }
+
+        private string GetMetadataColumnHeaderText(string metadataKey)
+        {
+            string label = GetMetadataColumnLabelText(metadataKey);
+
+            DetailsSortColumn headerColumn = MapMetadataToSortColumn(metadataKey);
+            if (_detailsSortColumn == headerColumn)
+            {
+                label += _detailsSortAscending ? " [^]" : " [v]";
+            }
+
+            return label;
+        }
+
+        private string GetMetadataValueText(string metadataKey, string path, bool isFolder)
+        {
+            if (string.Equals(metadataKey, MetadataType, StringComparison.OrdinalIgnoreCase))
+            {
+                return GetItemTypeText(path, isBackButton: false, isFolder);
+            }
+
+            if (string.Equals(metadataKey, MetadataSize, StringComparison.OrdinalIgnoreCase))
+            {
+                return GetSizeText(path, isFolder);
+            }
+
+            if (string.Equals(metadataKey, MetadataCreated, StringComparison.OrdinalIgnoreCase))
+            {
+                return GetCreatedText(path, isFolder);
+            }
+
+            if (string.Equals(metadataKey, MetadataModified, StringComparison.OrdinalIgnoreCase))
+            {
+                return GetModifiedText(path, isFolder);
+            }
+
+            if (string.Equals(metadataKey, MetadataDimensions, StringComparison.OrdinalIgnoreCase))
+            {
+                return GetDimensionsText(path, isFolder);
+            }
+
+            return "-";
+        }
+
+        private static DetailsSortColumn MapMetadataToSortColumn(string metadataKey)
+        {
+            if (string.Equals(metadataKey, MetadataType, StringComparison.OrdinalIgnoreCase))
+            {
+                return DetailsSortColumn.Type;
+            }
+
+            if (string.Equals(metadataKey, MetadataSize, StringComparison.OrdinalIgnoreCase))
+            {
+                return DetailsSortColumn.Size;
+            }
+
+            if (string.Equals(metadataKey, MetadataCreated, StringComparison.OrdinalIgnoreCase))
+            {
+                return DetailsSortColumn.Created;
+            }
+
+            if (string.Equals(metadataKey, MetadataModified, StringComparison.OrdinalIgnoreCase))
+            {
+                return DetailsSortColumn.Modified;
+            }
+
+            if (string.Equals(metadataKey, MetadataDimensions, StringComparison.OrdinalIgnoreCase))
+            {
+                return DetailsSortColumn.Dimensions;
+            }
+
+            return DetailsSortColumn.Name;
+        }
+
+        private void MetadataHeader_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            e.Handled = true;
+        }
+
+        private void MetadataHeader_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is not TextBlock header || header.Tag is not string metadataKey)
+            {
+                return;
+            }
+
+            DetailsSortColumn clickedColumn = MapMetadataToSortColumn(metadataKey);
+            if (_detailsSortColumn == clickedColumn)
+            {
+                _detailsSortAscending = !_detailsSortAscending;
+            }
+            else
+            {
+                _detailsSortColumn = clickedColumn;
+                _detailsSortAscending = true;
+            }
+
+            bool hasActiveSearchRequest = _searchCts != null &&
+                PanelType == PanelKind.Folder &&
+                !string.IsNullOrWhiteSpace(SearchBox?.Text);
+            if (hasActiveSearchRequest)
+            {
+                // Avoid expensive full re-sorts while search is still streaming results.
+                _deferSortUntilSearchComplete = true;
+                RefreshParentNavigationItemVisual();
+                e.Handled = true;
+                return;
+            }
+
+            SortCurrentFolderItemsInPlace();
+            RebuildListItemVisuals();
+            e.Handled = true;
+        }
+
+        private void RefreshParentNavigationItemVisual()
+        {
+            if (FileList == null)
+            {
+                return;
+            }
+
+            var backItem = FileList.Items
+                .OfType<ListBoxItem>()
+                .FirstOrDefault(IsParentNavigationItem);
+            if (backItem?.Tag is not string parentPath || string.IsNullOrWhiteSpace(parentPath))
+            {
+                return;
+            }
+
+            string displayName = BuildParentNavigationDisplayName(parentPath);
+            backItem.Content = CreateListBoxItem(displayName, parentPath, isBackButton: true, _currentAppearance);
+        }
+
+        private void SortCurrentFolderItemsInPlace()
+        {
+            if (FileList == null || PanelType != PanelKind.Folder)
+            {
+                return;
+            }
+
+            var allItems = FileList.Items.OfType<ListBoxItem>().ToList();
+            if (allItems.Count <= 1)
+            {
+                return;
+            }
+
+            var selectedPaths = new HashSet<string>(
+                FileList.SelectedItems
+                    .OfType<ListBoxItem>()
+                    .Select(i => i.Tag as string)
+                    .Where(p => !string.IsNullOrWhiteSpace(p))
+                    .Cast<string>(),
+                StringComparer.OrdinalIgnoreCase);
+
+            var backItem = allItems.FirstOrDefault(IsParentNavigationItem);
+            var sortable = allItems
+                .Where(i => !ReferenceEquals(i, backItem))
+                .ToList();
+
+            sortable.Sort(CompareItemsForCurrentSort);
+
+            FileList.Items.Clear();
+            if (backItem != null)
+            {
+                FileList.Items.Add(backItem);
+            }
+
+            foreach (var item in sortable)
+            {
+                FileList.Items.Add(item);
+            }
+
+            foreach (var item in FileList.Items.OfType<ListBoxItem>())
+            {
+                if (item.Tag is string path &&
+                    selectedPaths.Contains(path))
+                {
+                    item.IsSelected = true;
+                }
+            }
+        }
+
+        private int CompareItemsForCurrentSort(ListBoxItem left, ListBoxItem right)
+        {
+            string leftPath = left.Tag as string ?? "";
+            string rightPath = right.Tag as string ?? "";
+            bool leftIsFolder = Directory.Exists(leftPath);
+            bool rightIsFolder = Directory.Exists(rightPath);
+
+            if (leftIsFolder != rightIsFolder)
+            {
+                return leftIsFolder ? -1 : 1;
+            }
+
+            int comparison = 0;
+            switch (_detailsSortColumn)
+            {
+                case DetailsSortColumn.Type:
+                    comparison = string.Compare(
+                        GetItemTypeText(leftPath, isBackButton: false, leftIsFolder),
+                        GetItemTypeText(rightPath, isBackButton: false, rightIsFolder),
+                        StringComparison.CurrentCultureIgnoreCase);
+                    break;
+                case DetailsSortColumn.Size:
+                    comparison = GetComparableSize(leftPath, leftIsFolder)
+                        .CompareTo(GetComparableSize(rightPath, rightIsFolder));
+                    break;
+                case DetailsSortColumn.Created:
+                    comparison = GetComparableTimestamp(leftPath, leftIsFolder, created: true)
+                        .CompareTo(GetComparableTimestamp(rightPath, rightIsFolder, created: true));
+                    break;
+                case DetailsSortColumn.Modified:
+                    comparison = GetComparableTimestamp(leftPath, leftIsFolder, created: false)
+                        .CompareTo(GetComparableTimestamp(rightPath, rightIsFolder, created: false));
+                    break;
+                case DetailsSortColumn.Dimensions:
+                    comparison = GetComparableDimensionValue(leftPath, leftIsFolder)
+                        .CompareTo(GetComparableDimensionValue(rightPath, rightIsFolder));
+                    break;
+                case DetailsSortColumn.Name:
+                default:
+                    comparison = string.Compare(
+                        GetDisplayNameForPath(leftPath),
+                        GetDisplayNameForPath(rightPath),
+                        StringComparison.CurrentCultureIgnoreCase);
+                    break;
+            }
+
+            if (comparison == 0)
+            {
+                comparison = string.Compare(
+                    GetDisplayNameForPath(leftPath),
+                    GetDisplayNameForPath(rightPath),
+                    StringComparison.CurrentCultureIgnoreCase);
+            }
+
+            return _detailsSortAscending ? comparison : -comparison;
+        }
+
+        private static long GetComparableSize(string path, bool isFolder)
+        {
+            if (isFolder)
+            {
+                return -1;
+            }
+
+            try
+            {
+                var fileInfo = new FileInfo(path);
+                return fileInfo.Exists ? fileInfo.Length : -1;
+            }
+            catch
+            {
+                return -1;
+            }
+        }
+
+        private static DateTime GetComparableTimestamp(string path, bool isFolder, bool created)
+        {
+            var value = TryGetPathTimestamp(path, isFolder, created);
+            return value ?? DateTime.MinValue;
+        }
+
+        private static long GetComparableDimensionValue(string path, bool isFolder)
+        {
+            if (isFolder || !File.Exists(path) || !IsPhotoPath(path))
+            {
+                return -1;
+            }
+
+            var dimensions = TryGetPhotoDimensions(path);
+            if (string.IsNullOrWhiteSpace(dimensions))
+            {
+                return -1;
+            }
+
+            string[] parts = dimensions.Split('x', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length != 2 ||
+                !long.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out long width) ||
+                !long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out long height))
+            {
+                return -1;
+            }
+
+            return (width * height * 100000L) + width;
+        }
+
+        private FrameworkElement CreateDetailsListBoxItem(string displayName, string path, bool isBackButton, AppearanceSettings? appearance = null)
+        {
+            var activeAppearance = appearance ?? _currentAppearance ?? MainWindow.Appearance;
+            bool isFolder = isBackButton || Directory.Exists(path);
+            bool isHiddenItem = !isBackButton && showHiddenItems && IsHiddenPath(path);
+            double baseOpacity = isHiddenItem ? 0.58 : 1.0;
+            double rowWidth = GetDetailsItemWidth();
+            double iconSize = Math.Max(20, 24 * zoomFactor);
+            double textSize = Math.Max(8, activeAppearance.ItemFontSize) * zoomFactor;
+            double metaSize = Math.Max(8, textSize - 1);
+            var nameBrush = CreateBrush(
+                isFolder ? ResolveFolderColor(activeAppearance) : activeAppearance.TextColor,
+                1.0,
+                MediaColor.FromRgb(242, 245, 250));
+            var metadataBrush = CreateBrush(
+                activeAppearance.MutedTextColor,
+                1.0,
+                MediaColor.FromRgb(167, 176, 192));
+
+            var panel = new Grid
+            {
+                Width = rowWidth,
+                Margin = new Thickness(4, 2, 4, 2),
+                Opacity = baseOpacity
             };
 
-            panel.MouseLeftButtonUp += (s, e) =>
+            panel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(28, 32 * zoomFactor)) });
+            panel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var visibleMetadata = GetOrderedVisibleMetadataColumns();
+            int columnIndex = 2;
+            foreach (string metadataKey in visibleMetadata)
             {
-                panel.Opacity = baseOpacity;
+                panel.ColumnDefinitions.Add(new ColumnDefinition { Width = GetMetadataColumnWidth(metadataKey) });
+
+                var metadataText = new TextBlock
+                {
+                    Foreground = metadataBrush,
+                    FontSize = metaSize,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    Margin = new Thickness(8, 0, 0, 0)
+                };
+
+                if (isBackButton)
+                {
+                    metadataText.Text = GetMetadataColumnHeaderText(metadataKey);
+                    metadataText.FontWeight = FontWeights.SemiBold;
+                    metadataText.Cursor = System.Windows.Input.Cursors.Hand;
+                    metadataText.Tag = metadataKey;
+                    metadataText.PreviewMouseLeftButtonDown += MetadataHeader_PreviewMouseLeftButtonDown;
+                    metadataText.MouseLeftButtonUp += MetadataHeader_MouseLeftButtonUp;
+                }
+                else
+                {
+                    metadataText.Text = GetMetadataValueText(metadataKey, path, isFolder);
+                }
+
+                Grid.SetColumn(metadataText, columnIndex++);
+                panel.Children.Add(metadataText);
+            }
+
+            System.Windows.Controls.Image icon = new System.Windows.Controls.Image
+            {
+                Source = LoadExplorerStyleIcon(path, (int)Math.Max(48, iconSize * 2)),
+                Width = iconSize,
+                Height = iconSize,
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                SnapsToDevicePixels = true
+            };
+            RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
+
+            TextBlock nameText = CreateItemNameTextBlock(
+                displayName,
+                textSize,
+                nameBrush,
+                TextAlignment.Left,
+                new Thickness(2, 0, 0, 0));
+            nameText.VerticalAlignment = VerticalAlignment.Center;
+            nameText.TextWrapping = TextWrapping.NoWrap;
+            nameText.TextTrimming = TextTrimming.CharacterEllipsis;
+
+            Grid.SetColumn(icon, 0);
+            Grid.SetColumn(nameText, 1);
+            panel.Children.Add(icon);
+            panel.Children.Add(nameText);
+            AttachPressedOpacity(panel, baseOpacity);
+            return panel;
+        }
+
+        private FrameworkElement CreatePhotoListBoxItem(string displayName, string path, bool isBackButton, AppearanceSettings? appearance = null)
+        {
+            var activeAppearance = appearance ?? _currentAppearance ?? MainWindow.Appearance;
+            bool isFolder = isBackButton || Directory.Exists(path);
+            bool isHiddenItem = !isBackButton && showHiddenItems && IsHiddenPath(path);
+            double baseOpacity = isHiddenItem ? 0.58 : 1.0;
+            double thumbWidth = Math.Max(86, 122 * zoomFactor);
+            const double defaultPreviewAspect = 1.39;
+            double previewAspect = defaultPreviewAspect;
+            if (!isBackButton &&
+                !isFolder &&
+                IsPhotoPath(path) &&
+                TryGetPhotoPixelDimensions(path, out int pixelWidth, out int pixelHeight))
+            {
+                previewAspect = Math.Clamp((double)pixelWidth / Math.Max(1, pixelHeight), 0.18, 6.2);
+            }
+
+            double previewHeight = Math.Clamp(thumbWidth / previewAspect, thumbWidth * 0.22, thumbWidth * 1.28);
+            double previewWidth = Math.Clamp(previewHeight * previewAspect, thumbWidth * 0.62, thumbWidth * 1.7);
+            double cardWidth = previewWidth + 24;
+            double textSize = Math.Max(8, activeAppearance.ItemFontSize) * zoomFactor;
+            double metaSize = Math.Max(8, textSize - 1);
+            var nameBrush = CreateBrush(
+                isFolder ? ResolveFolderColor(activeAppearance) : activeAppearance.TextColor,
+                1.0,
+                MediaColor.FromRgb(242, 245, 250));
+            var metadataBrush = CreateBrush(
+                activeAppearance.MutedTextColor,
+                1.0,
+                MediaColor.FromRgb(167, 176, 192));
+
+            var panel = new StackPanel
+            {
+                Orientation = Orientation.Vertical,
+                Width = cardWidth,
+                Margin = new Thickness(6),
+                Opacity = baseOpacity
             };
 
-            panel.MouseLeave += (s, e) =>
+            var thumbnailFrame = new Border
+            {
+                Width = previewWidth,
+                Height = previewHeight,
+                CornerRadius = new CornerRadius(8),
+                BorderBrush = TryFindResource("PanelBorder") as Brush ?? Brushes.Transparent,
+                BorderThickness = new Thickness(1),
+                Background = new SolidColorBrush(Color.FromArgb(0x20, 0x00, 0x00, 0x00)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Padding = new Thickness(3)
+            };
+
+            System.Windows.Controls.Image icon = new System.Windows.Controls.Image
+            {
+                Source = (!isBackButton && !isFolder && IsPhotoPath(path))
+                    ? (LoadPhotoPreviewSource(
+                        path,
+                        (int)Math.Ceiling(Math.Max(previewWidth, previewHeight) * 2.0))
+                        ?? LoadExplorerStyleIcon(path, 256))
+                    : LoadExplorerStyleIcon(path, IsPhotoPath(path) ? 256 : 128),
+                Width = Math.Max(18, previewWidth - 8),
+                Height = previewHeight - 8,
+                Stretch = Stretch.Uniform,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                SnapsToDevicePixels = true
+            };
+            RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
+            thumbnailFrame.Child = icon;
+
+            TextBlock nameText = CreateItemNameTextBlock(
+                displayName,
+                textSize,
+                nameBrush,
+                TextAlignment.Center,
+                new Thickness(0, 6, 0, 0));
+            nameText.HorizontalAlignment = HorizontalAlignment.Stretch;
+            nameText.TextWrapping = TextWrapping.NoWrap;
+            nameText.TextTrimming = TextTrimming.CharacterEllipsis;
+
+            TextBlock metaText = new TextBlock
+            {
+                Text = GetPhotoMetaText(path, isFolder, isBackButton),
+                FontSize = metaSize,
+                Foreground = metadataBrush,
+                TextAlignment = TextAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                TextWrapping = TextWrapping.NoWrap,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(0, 2, 0, 0),
+                Opacity = 0.9
+            };
+
+            panel.Children.Add(thumbnailFrame);
+            panel.Children.Add(nameText);
+            if (!string.IsNullOrWhiteSpace(metaText.Text))
+            {
+                panel.Children.Add(metaText);
+            }
+
+            if (!isBackButton)
+            {
+                var tooltipContent = new TextBlock
+                {
+                    Text = string.Empty,
+                    TextWrapping = TextWrapping.NoWrap,
+                    FontSize = Math.Max(8, metaSize),
+                    Margin = new Thickness(2)
+                };
+                var metadataToolTip = new System.Windows.Controls.ToolTip { Content = tooltipContent };
+                metadataToolTip.Opened += (_, _) =>
+                {
+                    if (tooltipContent.Tag is string cachedText &&
+                        !string.IsNullOrWhiteSpace(cachedText))
+                    {
+                        tooltipContent.Text = cachedText;
+                        return;
+                    }
+
+                    string tooltipText = BuildPhotoMetadataTooltipText(path, isFolder);
+                    tooltipContent.Tag = tooltipText;
+                    tooltipContent.Text = tooltipText;
+                };
+
+                ToolTipService.SetToolTip(panel, metadataToolTip);
+                ToolTipService.SetInitialShowDelay(panel, 700);
+                ToolTipService.SetBetweenShowDelay(panel, 120);
+                ToolTipService.SetShowDuration(panel, 16000);
+            }
+
+            AttachPressedOpacity(panel, baseOpacity);
+            return panel;
+        }
+
+        private static void AttachPressedOpacity(UIElement element, double baseOpacity)
+        {
+            element.PreviewMouseLeftButtonDown += (_, _) =>
+            {
+                element.Opacity = Math.Max(0.45, baseOpacity - 0.2);
+            };
+
+            element.MouseLeftButtonUp += (_, _) =>
+            {
+                element.Opacity = baseOpacity;
+            };
+
+            element.MouseLeave += (_, _) =>
             {
                 if (Mouse.LeftButton != MouseButtonState.Pressed)
                 {
-                    panel.Opacity = baseOpacity;
+                    element.Opacity = baseOpacity;
                 }
             };
-            return panel;
+        }
+
+        private TextBlock CreateItemNameTextBlock(
+            string text,
+            double fontSize,
+            Brush brush,
+            TextAlignment textAlignment,
+            Thickness margin)
+        {
+            return new TextBlock
+            {
+                Text = text,
+                Tag = ItemNameTextTag,
+                FontSize = fontSize,
+                TextAlignment = textAlignment,
+                Foreground = brush,
+                FontFamily = FontFamily,
+                Margin = margin
+            };
+        }
+
+        private string BuildParentNavigationDisplayName(string path)
+        {
+            return ParentNavigationTextPrefix + GetDisplayNameForPath(path);
+        }
+
+        private bool IsParentNavigationPath(string path)
+        {
+            if (PanelType != PanelKind.Folder ||
+                string.IsNullOrWhiteSpace(currentFolderPath) ||
+                string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            string? parentPath = Path.GetDirectoryName(currentFolderPath);
+            return !string.IsNullOrWhiteSpace(parentPath) &&
+                   string.Equals(path, parentPath, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private string GetItemTypeText(string path, bool isBackButton, bool isFolder)
+        {
+            if (isBackButton)
+            {
+                return MainWindow.GetString("Loc.PanelTypeFolder");
+            }
+
+            if (isFolder)
+            {
+                return MainWindow.GetString("Loc.PanelTypeFolder");
+            }
+
+            string extension = Path.GetExtension(path);
+            if (string.IsNullOrWhiteSpace(extension))
+            {
+                return MainWindow.GetString("Loc.PanelTypeFile");
+            }
+
+            return extension.TrimStart('.').ToUpperInvariant();
+        }
+
+        private static string GetSizeText(string path, bool isFolder)
+        {
+            if (isFolder)
+            {
+                return "-";
+            }
+
+            try
+            {
+                var fileInfo = new FileInfo(path);
+                if (!fileInfo.Exists)
+                {
+                    return "-";
+                }
+
+                return FormatFileSize(fileInfo.Length);
+            }
+            catch
+            {
+                return "-";
+            }
+        }
+
+        private static string GetCreatedText(string path, bool isFolder)
+        {
+            var created = TryGetPathTimestamp(path, isFolder, created: true);
+            return created.HasValue ? FormatTimestamp(created.Value) : "-";
+        }
+
+        private static string GetModifiedText(string path, bool isFolder)
+        {
+            var modified = TryGetPathTimestamp(path, isFolder, created: false);
+            return modified.HasValue ? FormatTimestamp(modified.Value) : "-";
+        }
+
+        private static DateTime? TryGetPathTimestamp(string path, bool isFolder, bool created)
+        {
+            try
+            {
+                if (isFolder)
+                {
+                    var info = new DirectoryInfo(path);
+                    if (!info.Exists)
+                    {
+                        return null;
+                    }
+
+                    return created ? info.CreationTime : info.LastWriteTime;
+                }
+
+                var fileInfo = new FileInfo(path);
+                if (!fileInfo.Exists)
+                {
+                    return null;
+                }
+
+                return created ? fileInfo.CreationTime : fileInfo.LastWriteTime;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string FormatFileSize(long bytes)
+        {
+            string[] units = { "B", "KB", "MB", "GB", "TB" };
+            double value = Math.Max(0, bytes);
+            int unitIndex = 0;
+            while (value >= 1024 && unitIndex < units.Length - 1)
+            {
+                value /= 1024;
+                unitIndex++;
+            }
+
+            string format = unitIndex == 0 ? "0" : "0.#";
+            return $"{value.ToString(format, CultureInfo.CurrentCulture)} {units[unitIndex]}";
+        }
+
+        private string GetPhotoMetaText(string path, bool isFolder, bool isBackButton)
+        {
+            if (isBackButton)
+            {
+                return string.Empty;
+            }
+
+            var parts = new List<string>(3);
+
+            if (showMetadataDimensions &&
+                !isFolder &&
+                File.Exists(path) &&
+                IsPhotoPath(path) &&
+                TryGetPhotoDimensions(path) is string dimensions &&
+                !string.IsNullOrWhiteSpace(dimensions))
+            {
+                parts.Add(dimensions);
+            }
+
+            if (showMetadataSize)
+            {
+                string size = GetSizeText(path, isFolder);
+                if (!string.IsNullOrWhiteSpace(size) && !string.Equals(size, "-", StringComparison.Ordinal))
+                {
+                    parts.Add(size);
+                }
+            }
+
+            if (showMetadataModified)
+            {
+                var modified = TryGetPathTimestamp(path, isFolder, created: false);
+                if (modified.HasValue)
+                {
+                    parts.Add(modified.Value.ToString("d", CultureInfo.CurrentCulture));
+                }
+            }
+
+            return string.Join("  ", parts);
+        }
+
+        private string BuildPhotoMetadataTooltipText(string path, bool isFolder)
+        {
+            var lines = new List<string>(5)
+            {
+                $"{GetMetadataColumnLabelText(MetadataType)}: {GetItemTypeText(path, isBackButton: false, isFolder)}",
+                $"{GetMetadataColumnLabelText(MetadataSize)}: {GetSizeText(path, isFolder)}",
+                $"{GetMetadataColumnLabelText(MetadataDimensions)}: {GetDimensionsText(path, isFolder)}",
+                $"{GetMetadataColumnLabelText(MetadataCreated)}: {GetCreatedText(path, isFolder)}",
+                $"{GetMetadataColumnLabelText(MetadataModified)}: {GetModifiedText(path, isFolder)}"
+            };
+
+            return string.Join(Environment.NewLine, lines);
+        }
+
+        private static bool IsPhotoPath(string path)
+        {
+            string extension = Path.GetExtension(path);
+            return !string.IsNullOrWhiteSpace(extension) && PhotoFileExtensions.Contains(extension);
+        }
+
+        private static string GetDimensionsText(string path, bool isFolder)
+        {
+            if (isFolder || !File.Exists(path) || !IsPhotoPath(path))
+            {
+                return "-";
+            }
+
+            string? dimensions = TryGetPhotoDimensions(path);
+            return string.IsNullOrWhiteSpace(dimensions) ? "-" : dimensions;
+        }
+
+        private static bool TryGetPhotoPixelDimensions(string path, out int width, out int height)
+        {
+            width = 0;
+            height = 0;
+
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                return false;
+            }
+
+            lock (PhotoDimensionsCache)
+            {
+                if (PhotoDimensionsCache.TryGetValue(path, out var cached) &&
+                    cached.Width > 0 &&
+                    cached.Height > 0)
+                {
+                    width = cached.Width;
+                    height = cached.Height;
+                    return true;
+                }
+            }
+
+            try
+            {
+                using var stream = File.OpenRead(path);
+                var decoder = BitmapDecoder.Create(
+                    stream,
+                    BitmapCreateOptions.DelayCreation,
+                    BitmapCacheOption.None);
+
+                var frame = decoder.Frames.FirstOrDefault();
+                if (frame == null || frame.PixelWidth <= 0 || frame.PixelHeight <= 0)
+                {
+                    return false;
+                }
+
+                width = frame.PixelWidth;
+                height = frame.PixelHeight;
+                lock (PhotoDimensionsCache)
+                {
+                    PhotoDimensionsCache[path] = (width, height);
+                }
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string? TryGetPhotoDimensions(string path)
+        {
+            return TryGetPhotoPixelDimensions(path, out int width, out int height)
+                ? $"{width}x{height}"
+                : null;
+        }
+
+        private static string FormatTimestamp(DateTime value)
+        {
+            return value.ToString("g", CultureInfo.CurrentCulture);
+        }
+
+        public bool TryGetItemNameLabel(ListBoxItem item, out TextBlock label)
+        {
+            label = null!;
+            if (item.Content is not DependencyObject content)
+            {
+                return false;
+            }
+
+            var tagged = FindTaggedNameLabel(content);
+            if (tagged != null)
+            {
+                label = tagged;
+                return true;
+            }
+
+            var fallback = FindVisualChild<TextBlock>(content);
+            if (fallback != null)
+            {
+                label = fallback;
+                return true;
+            }
+
+            return false;
+        }
+
+        public bool TryGetEditableNameHost(ListBoxItem item, out System.Windows.Controls.Panel hostPanel, out TextBlock label, out int labelIndex)
+        {
+            hostPanel = null!;
+            label = null!;
+            labelIndex = -1;
+
+            if (!TryGetItemNameLabel(item, out var resolvedLabel))
+            {
+                return false;
+            }
+
+            var parentPanel = FindAncestor<Panel>(resolvedLabel);
+            if (parentPanel == null)
+            {
+                return false;
+            }
+
+            int index = parentPanel.Children.IndexOf(resolvedLabel);
+            if (index < 0)
+            {
+                return false;
+            }
+
+            hostPanel = parentPanel;
+            label = resolvedLabel;
+            labelIndex = index;
+            return true;
+        }
+
+        private static TextBlock? FindTaggedNameLabel(DependencyObject root)
+        {
+            int childCount = VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < childCount; i++)
+            {
+                var child = VisualTreeHelper.GetChild(root, i);
+                if (child is TextBlock text &&
+                    string.Equals(text.Tag as string, ItemNameTextTag, StringComparison.Ordinal))
+                {
+                    return text;
+                }
+
+                var nested = FindTaggedNameLabel(child);
+                if (nested != null)
+                {
+                    return nested;
+                }
+            }
+
+            return null;
+        }
+
+        public void ApplyViewSettings(
+            string? requestedViewMode,
+            bool metadataType,
+            bool metadataSize,
+            bool metadataCreated,
+            bool metadataModified,
+            bool metadataDimensions,
+            IEnumerable<string>? metadataOrderOverride = null,
+            bool persistSettings = true)
+        {
+            string normalized = NormalizeViewMode(requestedViewMode);
+            var normalizedOrder = NormalizeMetadataOrder(metadataOrderOverride ?? metadataOrder);
+            bool changed =
+                !string.Equals(viewMode, normalized, StringComparison.OrdinalIgnoreCase) ||
+                showMetadataType != metadataType ||
+                showMetadataSize != metadataSize ||
+                showMetadataCreated != metadataCreated ||
+                showMetadataModified != metadataModified ||
+                showMetadataDimensions != metadataDimensions ||
+                !metadataOrder.SequenceEqual(normalizedOrder, StringComparer.OrdinalIgnoreCase);
+
+            viewMode = normalized;
+            showMetadataType = metadataType;
+            showMetadataSize = metadataSize;
+            showMetadataCreated = metadataCreated;
+            showMetadataModified = metadataModified;
+            showMetadataDimensions = metadataDimensions;
+            metadataOrder = normalizedOrder;
+
+            if (!changed)
+            {
+                return;
+            }
+
+            RebuildListItemVisuals();
+
+            if (persistSettings)
+            {
+                MainWindow.SaveSettings();
+                MainWindow.NotifyPanelsChanged();
+            }
+        }
+
+        private void RebuildListItemVisuals()
+        {
+            if (FileList == null)
+            {
+                return;
+            }
+
+            foreach (var item in FileList.Items.OfType<ListBoxItem>())
+            {
+                if (item.Tag is not string path || string.IsNullOrWhiteSpace(path))
+                {
+                    continue;
+                }
+
+                bool isBackButton = IsParentNavigationPath(path);
+                string displayName = isBackButton
+                    ? BuildParentNavigationDisplayName(path)
+                    : GetDisplayNameForPath(path);
+                if (string.IsNullOrWhiteSpace(displayName))
+                {
+                    displayName = GetPathLeafName(path);
+                }
+
+                item.Content = CreateListBoxItem(displayName, path, isBackButton, _currentAppearance);
+            }
+
+            SortCurrentFolderItemsInPlace();
+            UpdateWrapPanelWidth();
+            UpdateDropZoneVisibility();
         }
 
         public void SetZoom(double newZoom)
@@ -165,30 +1282,7 @@ namespace DesktopPlus
 
         private void ApplyZoom()
         {
-            var appearance = _currentAppearance ?? MainWindow.Appearance;
-            double baseTextSize = appearance != null ? Math.Max(8, appearance.ItemFontSize) : 12;
-            foreach (var item in FileList.Items)
-            {
-                if (item is ListBoxItem listBoxItem && listBoxItem.Content is StackPanel panel)
-                {
-                    panel.Width = 90 * zoomFactor;
-
-                    foreach (var child in panel.Children)
-                    {
-                        if (child is System.Windows.Controls.Image img)
-                        {
-                            img.Width = 48 * zoomFactor;
-                            img.Height = 48 * zoomFactor;
-                        }
-                        else if (child is TextBlock txt)
-                        {
-                            txt.FontSize = baseTextSize * zoomFactor;
-                            txt.Width = 85 * zoomFactor;
-                            txt.MaxHeight = double.PositiveInfinity;
-                        }
-                    }
-                }
-            }
+            RebuildListItemVisuals();
         }
 
         private void ContentContainer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
@@ -430,6 +1524,38 @@ namespace DesktopPlus
                         wrapPanel.InvalidateArrange();
                         FileList.InvalidateMeasure();
                     }
+                }
+            }
+
+            UpdateDetailItemWidths();
+        }
+
+        private double GetDetailsItemWidth()
+        {
+            double contentWidth = GetContentLayoutWidth();
+            if (contentWidth <= 1)
+            {
+                contentWidth = ActualWidth > 0 ? Math.Max(260, ActualWidth - 34) : 560;
+            }
+
+            return Math.Max(260, contentWidth - 12);
+        }
+
+        private void UpdateDetailItemWidths()
+        {
+            if (FileList == null ||
+                !string.Equals(NormalizeViewMode(viewMode), ViewModeDetails, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            double targetWidth = GetDetailsItemWidth();
+            foreach (var item in FileList.Items.OfType<ListBoxItem>())
+            {
+                if (item.Content is FrameworkElement element &&
+                    Math.Abs(element.Width - targetWidth) > 0.5)
+                {
+                    element.Width = targetWidth;
                 }
             }
         }

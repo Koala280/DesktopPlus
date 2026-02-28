@@ -9,6 +9,9 @@ namespace DesktopPlus
         public string TextColor { get; set; } = "#F2F5FA";
         public string MutedTextColor { get; set; } = "#A7B0C0";
         public string FolderTextColor { get; set; } = "#6E8BFF";
+        public string TabActiveColor { get; set; } = "";
+        public string TabInactiveColor { get; set; } = "";
+        public string TabHoverColor { get; set; } = "";
         public string FontFamily { get; set; } = "Segoe UI";
         public double TitleFontSize { get; set; } = 16;
         public double ItemFontSize { get; set; } = 14;

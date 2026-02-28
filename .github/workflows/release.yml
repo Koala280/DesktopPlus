@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (example: 1.2.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Resolve version
+        id: meta
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ inputs.version }}"
+          } else {
+            $version = "${{ github.ref_name }}"
+            if ($version.StartsWith("v")) { $version = $version.Substring(1) }
+          }
+
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Version could not be resolved."
+          }
+
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Preflight checks
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\release-preflight.ps1
+
+      - name: Build release artifacts
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version "${{ steps.meta.outputs.version }}"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktopplus-${{ steps.meta.outputs.version }}
+          path: |
+            artifacts\DesktopPlus-${{ steps.meta.outputs.version }}-*-portable.zip
+            artifacts\installer\DesktopPlus-Setup-${{ steps.meta.outputs.version }}.exe
+            artifacts\SHA256SUMS.txt
+            artifacts\release-manifest.json
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.meta.outputs.version }}
+          generate_release_notes: true
+          files: |
+            artifacts\DesktopPlus-${{ steps.meta.outputs.version }}-*-portable.zip
+            artifacts\installer\DesktopPlus-Setup-${{ steps.meta.outputs.version }}.exe
+            artifacts\SHA256SUMS.txt
+            artifacts\release-manifest.json

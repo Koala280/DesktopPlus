@@ -9,7 +9,11 @@
       "Bash(done)",
       "Bash(sort:*)",
       "Bash(dotnet run)",
-      "Bash(grep -n \"CreateListBoxItem\" DesktopPanel*.cs)"
+      "Bash(grep -n \"CreateListBoxItem\" DesktopPanel*.cs)",
+      "Bash(xargs grep -l \"WindowData\")",
+      "Bash(grep -n \"public.*LoadFolder\\\\|public.*LoadList\\\\|public.*LoadPinnedList\" /c/Users/tomsb/Documents/development/DesktopPlus/DesktopPanel.*.cs)",
+      "Bash(grep -n \"BuildWindowDataFromPanel\\\\|class AppState\" /c/Users/tomsb/Documents/development/DesktopPlus/*.cs)",
+      "Bash(dotnet clean)"
     ]
   }
 }

@@ -45,13 +45,17 @@ namespace DesktopPlus
                     !string.IsNullOrWhiteSpace(s.PanelTitle) ? s.PanelTitle :
                     (!string.IsNullOrWhiteSpace(s.FolderPath) ? System.IO.Path.GetFileName(s.FolderPath) : GetString("Loc.Untitled"));
 
-                bool isOpen = panel != null;
-                bool isHidden = !isOpen && s.IsHidden;
+                bool isOpen = panel?.IsVisible == true;
+                bool isHidden = (panel != null && !panel.IsVisible) || (!isOpen && s.IsHidden);
                 if (isOpen && s.IsHidden)
                 {
                     s.IsHidden = false;
                 }
-                bool toggleIsShow = !isOpen && isHidden;
+                else if (isHidden && !s.IsHidden)
+                {
+                    s.IsHidden = true;
+                }
+                bool toggleIsShow = isHidden;
 
                 string state = isOpen
                     ? (panel!.isContentVisible ? GetString("Loc.PanelStateOpen") : GetString("Loc.PanelStateCollapsed"))
@@ -83,7 +87,8 @@ namespace DesktopPlus
             .ToList();
 
             var openWithoutType = openPanelList
-                .Where(p => ResolvePanelKind(p) == PanelKind.None &&
+                .Where(p => p.IsVisible &&
+                            ResolvePanelKind(p) == PanelKind.None &&
                             string.IsNullOrWhiteSpace(p.currentFolderPath) &&
                             p.PinnedItems.Count == 0)
                 .Select(panel =>
@@ -132,7 +137,15 @@ namespace DesktopPlus
         private void ApplyWindowDataToPanel(DesktopPanel panel, WindowData data)
         {
             panel.showHiddenItems = data.ShowHidden;
+            panel.showParentNavigationItem = data.ShowParentNavigationItem;
             panel.showFileExtensions = data.ShowFileExtensions;
+            panel.viewMode = DesktopPanel.NormalizeViewMode(data.ViewMode);
+            panel.showMetadataType = data.ShowMetadataType;
+            panel.showMetadataSize = data.ShowMetadataSize;
+            panel.showMetadataCreated = data.ShowMetadataCreated;
+            panel.showMetadataModified = data.ShowMetadataModified;
+            panel.showMetadataDimensions = data.ShowMetadataDimensions;
+            panel.metadataOrder = DesktopPanel.NormalizeMetadataOrder(data.MetadataOrder);
             string resolvedDefaultFolderPath = !string.IsNullOrWhiteSpace(data.DefaultFolderPath)
                 ? data.DefaultFolderPath
                 : data.FolderPath;
@@ -187,6 +200,15 @@ namespace DesktopPlus
             var assigned = GetPresetSettings(data.PresetName);
             panel.ApplyAppearance(assigned);
             panel.ForceCollapseState(data.IsCollapsed);
+
+            if (data.Tabs != null && data.Tabs.Count > 0)
+            {
+                panel.InitializeTabsFromData(data.Tabs, data.ActiveTabIndex);
+            }
+            else
+            {
+                panel.InitializeSingleTabFromCurrentState();
+            }
         }
 
         private void ApplyPanelContent(DesktopPanel panel, WindowData data)
@@ -212,6 +234,75 @@ namespace DesktopPlus
             {
                 panel.ClearPanelItems();
             }
+        }
+
+        private static bool IsFiniteNumber(double value)
+        {
+            return !double.IsNaN(value) && !double.IsInfinity(value);
+        }
+
+        private static void RestorePanelBoundsFromSavedState(DesktopPanel panel, WindowData data)
+        {
+            if (panel == null || data == null)
+            {
+                return;
+            }
+
+            NormalizeWindowData(data);
+
+            if (IsFiniteNumber(data.Left))
+            {
+                panel.Left = data.Left;
+            }
+
+            double storedTop = IsFiniteNumber(data.Top) ? data.Top : panel.Top;
+            double storedBaseTop = (Math.Abs(data.BaseTop) < 0.01 && Math.Abs(storedTop) > 0.01) ? storedTop : data.BaseTop;
+            double storedCollapsedTop = (Math.Abs(data.CollapsedTop) < 0.01 && Math.Abs(storedBaseTop) > 0.01) ? storedBaseTop : data.CollapsedTop;
+            if (!IsFiniteNumber(storedBaseTop))
+            {
+                storedBaseTop = storedTop;
+            }
+            if (!IsFiniteNumber(storedCollapsedTop))
+            {
+                storedCollapsedTop = storedBaseTop;
+            }
+
+            if (data.Width > 0 && IsFiniteNumber(data.Width))
+            {
+                panel.Width = data.Width;
+            }
+
+            double storedHeight = (data.Height > 0 && IsFiniteNumber(data.Height))
+                ? data.Height
+                : (panel.ActualHeight > 0 ? panel.ActualHeight : panel.Height);
+            if (storedHeight > 0 && IsFiniteNumber(storedHeight))
+            {
+                panel.Height = storedHeight;
+            }
+
+            panel.baseTopPosition = storedBaseTop;
+            panel.collapsedTopPosition = storedCollapsedTop;
+            panel.IsBottomAnchored = data.IsBottomAnchored;
+
+            double collapsedHeight = panel.GetCollapsedHeightForRestore();
+            double restoredExpandedHeight = data.ExpandedHeight;
+            if (restoredExpandedHeight <= 0 || !IsFiniteNumber(restoredExpandedHeight))
+            {
+                restoredExpandedHeight = data.IsCollapsed
+                    ? Math.Max(panel.expandedHeight, storedHeight)
+                    : storedHeight;
+            }
+
+            if (!data.IsCollapsed &&
+                storedHeight <= collapsedHeight + 0.5 &&
+                restoredExpandedHeight <= collapsedHeight + 0.5)
+            {
+                restoredExpandedHeight = Math.Max(restoredExpandedHeight, panel.expandedHeight);
+            }
+
+            panel.expandedHeight = Math.Max(storedHeight, restoredExpandedHeight);
+            panel.Top = data.IsCollapsed ? storedCollapsedTop : storedTop;
+            panel.ForceCollapseState(data.IsCollapsed);
         }
 
         public static void MarkPanelHidden(DesktopPanel panel)
@@ -339,7 +430,7 @@ namespace DesktopPlus
                     savedWindows.Add(snapshot);
                 }
 
-                item.Panel.Close();
+                item.Panel.Hide();
             }
             else if (existing != null)
             {
@@ -358,29 +449,44 @@ namespace DesktopPlus
                     ? item.PanelKey
                     : (item.Panel != null ? GetPanelKey(item.Panel) : "");
                 var existing = FindSavedWindow(panelKey);
+                bool panelIsVisible = item.Panel?.IsVisible == true;
 
-                if (item.IsOpen || !item.IsHidden)
+                if (panelIsVisible)
                 {
-                    // Currently visible → hide
-                    if (item.Panel != null)
-                    {
-                        item.Panel.Close();
-                    }
+                    var snapshot = BuildWindowDataFromPanel(item.Panel!);
+                    snapshot.IsHidden = true;
+
                     if (existing != null)
                     {
+                        CopyWindowData(snapshot, existing);
                         existing.IsHidden = true;
                     }
-                    else if (item.Panel != null)
+                    else
                     {
-                        var snapshot = BuildWindowDataFromPanel(item.Panel);
-                        snapshot.IsHidden = true;
                         savedWindows.Add(snapshot);
                     }
+
+                    item.Panel!.Hide();
                 }
                 else
                 {
-                    // Currently hidden → show
-                    if (existing != null)
+                    if (item.Panel != null)
+                    {
+                        item.Panel.Show();
+                        item.Panel.WindowState = WindowState.Normal;
+
+                        if (existing != null)
+                        {
+                            existing.IsHidden = false;
+                        }
+                        else
+                        {
+                            var snapshot = BuildWindowDataFromPanel(item.Panel);
+                            snapshot.IsHidden = false;
+                            savedWindows.Add(snapshot);
+                        }
+                    }
+                    else if (existing != null)
                     {
                         existing.IsHidden = false;
                         OpenPanelFromData(existing);
@@ -466,7 +572,63 @@ namespace DesktopPlus
             return panel;
         }
 
+        /// <summary>
+        /// Creates a new panel from a detached tab, inheriting appearance from the source panel.
+        /// </summary>
+        public DesktopPanel? CreateDetachedTabPanel(PanelTabData tab, DesktopPanel sourcePanel, System.Windows.Point screenPos)
+        {
+            var panel = new DesktopPanel();
+            panel.PanelId = $"panel:{Guid.NewGuid():N}";
+
+            // Inherit panel-wide settings from source
+            panel.assignedPresetName = sourcePanel.assignedPresetName;
+            panel.ApplyAppearance(GetPresetSettings(panel.assignedPresetName));
+            panel.SetExpandOnHover(sourcePanel.expandOnHover);
+            panel.showSettingsButton = sourcePanel.showSettingsButton;
+            panel.ApplySettingsButtonVisibility();
+            panel.ApplyMovementMode(sourcePanel.movementMode);
+            panel.SetSearchVisibilityMode(sourcePanel.searchVisibilityMode);
+
+            // Position at mouse
+            panel.Left = screenPos.X - 100;
+            panel.Top = screenPos.Y - 23;
+            panel.Width = sourcePanel.Width;
+            panel.Height = sourcePanel.Height;
+            panel.expandedHeight = sourcePanel.expandedHeight;
+            panel.baseTopPosition = panel.Top;
+            panel.collapsedTopPosition = panel.Top;
+
+            // Set title from tab name
+            panel.PanelTitle.Text = tab.TabName;
+            panel.Title = tab.TabName;
+
+            // Initialize with a single tab
+            panel.InitializeTabsFromData(
+                new List<PanelTabData> { tab },
+                activeIndex: 0);
+
+            // Load the tab content
+            if (Enum.TryParse<PanelKind>(tab.PanelType, true, out var kind))
+            {
+                if (kind == PanelKind.Folder && !string.IsNullOrWhiteSpace(tab.FolderPath))
+                {
+                    panel.LoadFolder(tab.FolderPath, saveSettings: false);
+                }
+                else if (kind == PanelKind.List && tab.PinnedItems?.Count > 0)
+                {
+                    panel.LoadList(tab.PinnedItems, saveSettings: false);
+                }
+            }
+
+            return panel;
+        }
+
         private void ShowAllPanels_Click(object sender, RoutedEventArgs e)
+        {
+            ShowAllUserPanels();
+        }
+
+        private void ShowAllUserPanels()
         {
             savedWindows = CreateWindowDataMap(savedWindows, rewriteDuplicates: true).Values.ToList();
             var openPanels = CreateOpenPanelMap(
@@ -485,6 +647,7 @@ namespace DesktopPlus
                 {
                     existingPanel.Show();
                     existingPanel.WindowState = WindowState.Normal;
+                    RestorePanelBoundsFromSavedState(existingPanel, saved);
                     continue;
                 }
 
@@ -503,13 +666,33 @@ namespace DesktopPlus
 
         private void HideAllPanels_Click(object sender, RoutedEventArgs e)
         {
+            HideAllUserPanels();
+        }
+
+        private void HideAllUserPanels()
+        {
+            savedWindows = CreateWindowDataMap(savedWindows, rewriteDuplicates: true).Values.ToList();
             var openPanels = Application.Current.Windows
                 .OfType<DesktopPanel>()
                 .Where(IsUserPanel)
                 .ToList();
             foreach (var panel in openPanels)
             {
-                panel.Close();
+                var snapshot = BuildWindowDataFromPanel(panel);
+                snapshot.IsHidden = true;
+                string panelKey = GetPanelKey(snapshot);
+                var existing = FindSavedWindow(panelKey);
+                if (existing != null)
+                {
+                    CopyWindowData(snapshot, existing);
+                    existing.IsHidden = true;
+                }
+                else
+                {
+                    savedWindows.Add(snapshot);
+                }
+
+                panel.Hide();
             }
 
             foreach (var saved in savedWindows)
@@ -522,3 +705,4 @@ namespace DesktopPlus
         }
     }
 }
+

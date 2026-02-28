@@ -254,10 +254,11 @@ namespace DesktopPlus
                     .Select(item => (string)item.Tag)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
-                bool forceClassic = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
-                opened = forceClassic
-                    ? TryShowExplorerContextMenu(realPaths)
-                    : ShowWindowsLikeContextMenu(realPaths);
+                opened = TryShowExplorerContextMenu(realPaths);
+                if (!opened)
+                {
+                    opened = ShowWindowsLikeContextMenu(realPaths);
+                }
             }
 
             if (!opened)

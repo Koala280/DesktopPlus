@@ -10,7 +10,7 @@
     <SolidColorBrush x:Key="TextPrimary" Color="#F2F5FA"/>
 
     <Style x:Key="FlatTextBox" TargetType="TextBox">
-        <Setter Property="Padding" Value="10,4"/>
+        <Setter Property="Padding" Value="10,0"/>
         <Setter Property="VerticalContentAlignment" Value="Center"/>
         <Setter Property="MinHeight" Value="34"/>
         <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
@@ -26,7 +26,8 @@
                             CornerRadius="10"
                             SnapsToDevicePixels="True">
                         <ScrollViewer x:Name="PART_ContentHost"
-                                      Margin="2"
+                                      Margin="{TemplateBinding Padding}"
+                                      VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
                                       Focusable="False"/>
                     </Border>
                     <ControlTemplate.Triggers>
@@ -288,11 +289,19 @@
                                 BorderThickness="1"
                                 Margin="0,0,8,0">
                             <Path x:Name="Check"
-                                  Data="M 3 9 L 7 13 L 15 5"
+                                  Data="M 0.8 4.2 L 3.2 6.8 L 8.4 1.4"
+                                  Width="9"
+                                  Height="8"
+                                  Margin="-1,0,0,0"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"
+                                  Stretch="Fill"
                                   Stroke="{StaticResource Primary}"
-                                  StrokeThickness="2.2"
+                                  StrokeThickness="2.1"
                                   StrokeEndLineCap="Round"
                                   StrokeStartLineCap="Round"
+                                  StrokeLineJoin="Round"
+                                  SnapsToDevicePixels="True"
                                   Visibility="Collapsed"/>
                         </Border>
                         <ContentPresenter VerticalAlignment="Center"/>
@@ -309,6 +318,79 @@
                             <Setter TargetName="Box" Property="Opacity" Value="0.5"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="ThinScrollThumb" TargetType="Thumb">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Thumb">
+                    <Border x:Name="ThumbBody"
+                            Background="#50A0B4C8"
+                            CornerRadius="3"
+                            Margin="1"/>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="ThumbBody" Property="Background" Value="#80B8CCE0"/>
+                        </Trigger>
+                        <Trigger Property="IsDragging" Value="True">
+                            <Setter TargetName="ThumbBody" Property="Background" Value="#A0D0E0F0"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="ThinScrollBar" TargetType="ScrollBar">
+        <Setter Property="Width" Value="6"/>
+        <Setter Property="MinWidth" Value="6"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Margin" Value="0,2,0,2"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ScrollBar">
+                    <Border x:Name="Rail"
+                            Background="{TemplateBinding Background}"
+                            CornerRadius="3">
+                        <Track x:Name="PART_Track"
+                               IsDirectionReversed="True">
+                            <Track.Thumb>
+                                <Thumb Style="{StaticResource ThinScrollThumb}"/>
+                            </Track.Thumb>
+                        </Track>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Width" Value="8"/>
+                <Setter Property="MinWidth" Value="8"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Visibility" Value="Collapsed"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="ThinScrollViewer" TargetType="ScrollViewer">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ScrollViewer">
+                    <Grid>
+                        <ScrollContentPresenter/>
+                        <ScrollBar x:Name="PART_VerticalScrollBar"
+                                   Orientation="Vertical"
+                                   Style="{StaticResource ThinScrollBar}"
+                                   HorizontalAlignment="Right"
+                                   Maximum="{TemplateBinding ScrollableHeight}"
+                                   Value="{TemplateBinding VerticalOffset}"
+                                   ViewportSize="{TemplateBinding ViewportHeight}"
+                                   Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"/>
+                    </Grid>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
