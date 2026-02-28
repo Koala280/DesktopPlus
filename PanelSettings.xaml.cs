@@ -12,6 +12,8 @@ namespace DesktopPlus
         private readonly DesktopPanel? _panel;
         private readonly LayoutDefinition? _layout;
         private string _layoutStandardPresetName = "";
+        private bool _isInitializing = true;
+        private bool _isApplyingSettings;
         private bool IsGlobalLayoutMode => _layout != null;
 
         public PanelSettings(DesktopPanel panel)
@@ -22,6 +24,8 @@ namespace DesktopPlus
             LoadPresets();
             PopulatePanelSettings();
             UpdateResetPresetToStandardButtonState();
+            RegisterAutoApplyHandlers();
+            _isInitializing = false;
         }
 
         public PanelSettings(LayoutDefinition layout)
@@ -32,6 +36,44 @@ namespace DesktopPlus
             LoadPresetsForLayout(layout);
             ConfigureGlobalLayoutMode();
             PopulateGlobalPanelDefaults();
+            RegisterAutoApplyHandlers();
+            _isInitializing = false;
+        }
+
+        private void RegisterAutoApplyHandlers()
+        {
+            NameInput.TextChanged += (_, __) => TryAutoApplySettings();
+
+            HoverToggle.Checked += (_, __) => TryAutoApplySettings();
+            HoverToggle.Unchecked += (_, __) => TryAutoApplySettings();
+            HiddenToggle.Checked += (_, __) => TryAutoApplySettings();
+            HiddenToggle.Unchecked += (_, __) => TryAutoApplySettings();
+            FileExtensionsToggle.Checked += (_, __) => TryAutoApplySettings();
+            FileExtensionsToggle.Unchecked += (_, __) => TryAutoApplySettings();
+            SettingsButtonToggle.Checked += (_, __) => TryAutoApplySettings();
+            SettingsButtonToggle.Unchecked += (_, __) => TryAutoApplySettings();
+
+            FolderActionSelect.SelectionChanged += (_, __) => TryAutoApplySettings();
+            MovementModeSelect.SelectionChanged += (_, __) => TryAutoApplySettings();
+            SearchVisibilitySelect.SelectionChanged += (_, __) => TryAutoApplySettings();
+        }
+
+        private void TryAutoApplySettings()
+        {
+            if (_isInitializing || _isApplyingSettings)
+            {
+                return;
+            }
+
+            _isApplyingSettings = true;
+            try
+            {
+                ApplyCurrentSettings(closeAfterApply: false);
+            }
+            finally
+            {
+                _isApplyingSettings = false;
+            }
         }
 
         private void TrySetWindowIcon()
@@ -189,16 +231,12 @@ namespace DesktopPlus
 
         private void PresetSelect_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (_panel == null)
-            {
-                return;
-            }
-
-            if (PresetSelect.SelectedItem is AppearancePreset preset)
+            if (_panel != null && PresetSelect.SelectedItem is AppearancePreset preset)
             {
                 _panel.ApplyAppearance(preset.Settings);
             }
             UpdateResetPresetToStandardButtonState();
+            TryAutoApplySettings();
         }
 
         private void ResetPresetToStandardButton_Click(object sender, RoutedEventArgs e)
@@ -248,22 +286,25 @@ namespace DesktopPlus
             MainWindow.NotifyPanelsChanged();
         }
 
-        private void Save_Click(object sender, RoutedEventArgs e)
+        private void ApplyCurrentSettings(bool closeAfterApply)
         {
             if (IsGlobalLayoutMode)
             {
-                SaveGlobalLayoutSettings();
+                SaveGlobalLayoutSettings(closeAfterApply);
                 return;
             }
 
-            SaveSinglePanelSettings();
+            SaveSinglePanelSettings(closeAfterApply);
         }
 
-        private void SaveGlobalLayoutSettings()
+        private void SaveGlobalLayoutSettings(bool closeAfterApply)
         {
             if (_layout == null)
             {
-                Close();
+                if (closeAfterApply)
+                {
+                    Close();
+                }
                 return;
             }
 
@@ -287,14 +328,20 @@ namespace DesktopPlus
                         ?? _layout.DefaultPanelPresetName);
             }
 
-            Close();
+            if (closeAfterApply)
+            {
+                Close();
+            }
         }
 
-        private void SaveSinglePanelSettings()
+        private void SaveSinglePanelSettings(bool closeAfterApply)
         {
             if (_panel == null)
             {
-                Close();
+                if (closeAfterApply)
+                {
+                    Close();
+                }
                 return;
             }
 
@@ -336,12 +383,10 @@ namespace DesktopPlus
 
             MainWindow.SaveSettings();
             MainWindow.NotifyPanelsChanged();
-            Close();
-        }
-
-        private void Cancel_Click(object sender, RoutedEventArgs e)
-        {
-            Close();
+            if (closeAfterApply)
+            {
+                Close();
+            }
         }
 
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -354,7 +399,7 @@ namespace DesktopPlus
 
         private void Close_Click(object sender, RoutedEventArgs e)
         {
-            Close();
+            ApplyCurrentSettings(closeAfterApply: true);
         }
     }
 }
