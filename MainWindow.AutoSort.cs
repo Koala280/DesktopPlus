@@ -827,6 +827,213 @@ namespace DesktopPlus
             return merged;
         }
 
+        private static Dictionary<string, string> BuildMovedPathMap(Dictionary<string, List<DesktopSortMovedItem>> targetPanels)
+        {
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (targetPanels == null || targetPanels.Count == 0)
+            {
+                return map;
+            }
+
+            foreach (var movedItem in targetPanels.Values.SelectMany(items => items ?? Enumerable.Empty<DesktopSortMovedItem>()))
+            {
+                string sourcePath = movedItem?.SourcePath ?? "";
+                string targetPath = movedItem?.TargetPath ?? "";
+                if (string.IsNullOrWhiteSpace(sourcePath) || string.IsNullOrWhiteSpace(targetPath))
+                {
+                    continue;
+                }
+
+                map[sourcePath] = targetPath;
+            }
+
+            return map;
+        }
+
+        private static bool TryRemapPath(IReadOnlyDictionary<string, string> movedPathMap, string? sourcePath, out string remappedPath)
+        {
+            remappedPath = sourcePath ?? "";
+            if (string.IsNullOrWhiteSpace(sourcePath))
+            {
+                return false;
+            }
+
+            if (!movedPathMap.TryGetValue(sourcePath, out string? targetPath) ||
+                string.IsNullOrWhiteSpace(targetPath))
+            {
+                return false;
+            }
+
+            remappedPath = targetPath;
+            return !string.Equals(sourcePath, remappedPath, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool RemapPathListInPlace(List<string>? paths, IReadOnlyDictionary<string, string> movedPathMap)
+        {
+            if (paths == null || paths.Count == 0)
+            {
+                return false;
+            }
+
+            bool changed = false;
+            for (int i = 0; i < paths.Count; i++)
+            {
+                if (TryRemapPath(movedPathMap, paths[i], out string remapped))
+                {
+                    paths[i] = remapped;
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                var deduped = paths
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                paths.Clear();
+                paths.AddRange(deduped);
+            }
+
+            return changed;
+        }
+
+        private static bool ApplyMovedPathMapToTab(PanelTabData tab, IReadOnlyDictionary<string, string> movedPathMap)
+        {
+            if (tab == null)
+            {
+                return false;
+            }
+
+            bool changed = false;
+
+            if (TryRemapPath(movedPathMap, tab.FolderPath, out string remappedFolder))
+            {
+                tab.FolderPath = remappedFolder;
+                changed = true;
+            }
+
+            if (TryRemapPath(movedPathMap, tab.DefaultFolderPath, out string remappedDefault))
+            {
+                tab.DefaultFolderPath = remappedDefault;
+                changed = true;
+            }
+
+            tab.PinnedItems ??= new List<string>();
+            changed |= RemapPathListInPlace(tab.PinnedItems, movedPathMap);
+            return changed;
+        }
+
+        private static bool ApplyMovedPathMapToWindowData(WindowData panelData, IReadOnlyDictionary<string, string> movedPathMap)
+        {
+            if (panelData == null)
+            {
+                return false;
+            }
+
+            bool changed = false;
+
+            if (TryRemapPath(movedPathMap, panelData.FolderPath, out string remappedFolder))
+            {
+                panelData.FolderPath = remappedFolder;
+                changed = true;
+            }
+
+            if (TryRemapPath(movedPathMap, panelData.DefaultFolderPath, out string remappedDefault))
+            {
+                panelData.DefaultFolderPath = remappedDefault;
+                changed = true;
+            }
+
+            panelData.PinnedItems ??= new List<string>();
+            changed |= RemapPathListInPlace(panelData.PinnedItems, movedPathMap);
+
+            if (panelData.Tabs != null)
+            {
+                foreach (var tab in panelData.Tabs)
+                {
+                    changed |= ApplyMovedPathMapToTab(tab, movedPathMap);
+                }
+            }
+
+            return changed;
+        }
+
+        private bool ApplyMovedPathMapToOpenPanels(IReadOnlyDictionary<string, string> movedPathMap)
+        {
+            if (movedPathMap == null || movedPathMap.Count == 0)
+            {
+                return false;
+            }
+
+            bool anyChanged = false;
+            foreach (var panel in System.Windows.Application.Current.Windows.OfType<DesktopPanel>().Where(IsUserPanel))
+            {
+                panel.SaveActiveTabState();
+
+                bool panelChanged = false;
+                var tabs = panel.Tabs;
+                for (int i = 0; i < tabs.Count; i++)
+                {
+                    panelChanged |= ApplyMovedPathMapToTab(tabs[i], movedPathMap);
+                }
+
+                if (!panelChanged)
+                {
+                    continue;
+                }
+
+                anyChanged = true;
+                var activeTab = panel.ActiveTab;
+                if (activeTab == null)
+                {
+                    continue;
+                }
+
+                if (!Enum.TryParse<PanelKind>(activeTab.PanelType, true, out var kind))
+                {
+                    continue;
+                }
+
+                if (kind == PanelKind.List)
+                {
+                    panel.LoadList(activeTab.PinnedItems ?? new List<string>(), saveSettings: false);
+                    continue;
+                }
+
+                if (kind == PanelKind.Folder &&
+                    !string.IsNullOrWhiteSpace(activeTab.FolderPath) &&
+                    Directory.Exists(activeTab.FolderPath))
+                {
+                    panel.LoadFolder(activeTab.FolderPath, saveSettings: false);
+                }
+            }
+
+            return anyChanged;
+        }
+
+        private bool ApplyMovedPathMapToSavedPanels(IReadOnlyDictionary<string, string> movedPathMap)
+        {
+            if (movedPathMap == null || movedPathMap.Count == 0)
+            {
+                return false;
+            }
+
+            bool anyChanged = false;
+            foreach (var saved in savedWindows)
+            {
+                if (saved == null || IsInternalPreviewWindowData(saved))
+                {
+                    continue;
+                }
+
+                NormalizeWindowData(saved);
+                anyChanged |= ApplyMovedPathMapToWindowData(saved, movedPathMap);
+            }
+
+            return anyChanged;
+        }
+
         private DesktopSortResult SortDesktopOnce()
         {
             var result = new DesktopSortResult();
@@ -1177,6 +1384,13 @@ namespace DesktopPlus
                 var result = SortDesktopOnce();
                 if (result.MovedCount > 0)
                 {
+                    var movedPathMap = BuildMovedPathMap(result.TargetPanels);
+                    if (movedPathMap.Count > 0)
+                    {
+                        ApplyMovedPathMapToOpenPanels(movedPathMap);
+                        ApplyMovedPathMapToSavedPanels(movedPathMap);
+                    }
+
                     EnsureAutoSortPanels(result.TargetPanels);
                     SaveSettings();
                     NotifyPanelsChanged();

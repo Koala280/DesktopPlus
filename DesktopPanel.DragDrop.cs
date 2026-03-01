@@ -40,6 +40,8 @@ namespace DesktopPlus
         private int _renameEditOriginalHostIndex = -1;
         private string _renameOriginalPath = string.Empty;
         private string _renameOriginalDisplayName = string.Empty;
+        private ListBoxItem? _fileDragStartItem;
+        private bool _fileDragStartWithModifiers;
         private ListBoxItem? _lastRenameClickItem;
         private DateTime _lastRenameClickUtc = DateTime.MinValue;
         private Point _lastRenameClickPosition;
@@ -1200,6 +1202,9 @@ namespace DesktopPlus
 
             if (clickedItem != null)
             {
+                _fileDragStartItem = clickedItem;
+                _fileDragStartWithModifiers = toggleModifier || rangeModifier;
+
                 if (!toggleModifier &&
                     !rangeModifier &&
                     TryBeginRenameBySlowSecondClick(clickedItem, e))
@@ -1216,9 +1221,21 @@ namespace DesktopPlus
                     listBox.Focus();
                     e.Handled = true;
                 }
+
+                // Make sure a direct drag starts from the actually clicked item.
+                if (!toggleModifier &&
+                    !rangeModifier &&
+                    !clickedItem.IsSelected)
+                {
+                    listBox.SelectedItems.Clear();
+                    clickedItem.IsSelected = true;
+                    listBox.SelectedItem = clickedItem;
+                }
                 return;
             }
 
+            _fileDragStartItem = null;
+            _fileDragStartWithModifiers = false;
             _lastRenameClickItem = null;
             _lastRenameClickUtc = DateTime.MinValue;
 
@@ -1234,6 +1251,9 @@ namespace DesktopPlus
 
         private void FileList_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
+            _fileDragStartItem = null;
+            _fileDragStartWithModifiers = false;
+
             if (_isRubberBandSelecting)
             {
                 EndRubberBandSelection();
@@ -1281,15 +1301,28 @@ namespace DesktopPlus
                 {
                     if (sender is WpfListBox listBox)
                     {
-                        var selectedPaths = GetSelectedFileSystemPaths();
+                        var dragItems = ResolveDragItems(listBox);
+                        var selectedPaths = dragItems
+                            .Select(item => item.Tag as string)
+                            .Where(IsFileSystemPath)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Cast<string>()
+                            .ToList();
                         if (selectedPaths.Count == 0)
                         {
                             return;
                         }
 
-                        ListBoxItem? sourceItem = listBox.SelectedItems.Count == 1
-                            ? listBox.SelectedItem as ListBoxItem
+                        ListBoxItem? sourceItem = dragItems.Count == 1
+                            ? dragItems[0]
                             : null;
+
+                        if (sourceItem != null && !sourceItem.IsSelected)
+                        {
+                            listBox.SelectedItems.Clear();
+                            sourceItem.IsSelected = true;
+                            listBox.SelectedItem = sourceItem;
+                        }
 
                         var fileDrop = new StringCollection();
                         foreach (var path in selectedPaths)
@@ -1330,6 +1363,9 @@ namespace DesktopPlus
                             releasedElement.Opacity = 1.0;
                         }
 
+                        _fileDragStartItem = null;
+                        _fileDragStartWithModifiers = false;
+
                         if (_internalReorderDropHandled)
                         {
                             _internalReorderDropHandled = false;
@@ -1347,6 +1383,30 @@ namespace DesktopPlus
                     }
                 }
             }
+        }
+
+        private List<ListBoxItem> ResolveDragItems(WpfListBox listBox)
+        {
+            var selected = listBox.SelectedItems
+                .OfType<ListBoxItem>()
+                .ToList();
+
+            if (_fileDragStartWithModifiers)
+            {
+                return selected;
+            }
+
+            if (_fileDragStartItem != null)
+            {
+                if (selected.Count > 1 && _fileDragStartItem.IsSelected)
+                {
+                    return selected;
+                }
+
+                return new List<ListBoxItem> { _fileDragStartItem };
+            }
+
+            return selected;
         }
 
         private void FileList_Drop(object sender, DragEventArgs e)
