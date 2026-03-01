@@ -42,6 +42,7 @@ namespace DesktopPlus
         private const string CloseBehaviorExit = "Exit";
         private const string PreviewPanelIdPrefix = "preview:";
         private const string StartupRegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        private const string StartupApprovedRegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
         private const string StartupRegistryValue = "DesktopPlus";
         private const string StartupLaunchArgument = "--startup";
         public static string CurrentLanguageCode { get; private set; } = DefaultLanguageCode;
@@ -549,6 +550,35 @@ namespace DesktopPlus
             }
         }
 
+        private static string ExpandEnvironmentVariablesSafe(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                return Environment.ExpandEnvironmentVariables(value);
+            }
+            catch
+            {
+                return value;
+            }
+        }
+
+        private static void DeleteStartupApprovedState()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(StartupApprovedRegistryKey, true);
+                key?.DeleteValue(StartupRegistryValue, false);
+            }
+            catch
+            {
+            }
+        }
+
         private static bool IsStartupLaunch()
         {
             try
@@ -574,7 +604,7 @@ namespace DesktopPlus
                     return false;
                 }
 
-                string configuredPath = ExtractExecutablePathFromStartupValue(value);
+                string configuredPath = ExpandEnvironmentVariablesSafe(ExtractExecutablePathFromStartupValue(value));
                 if (string.IsNullOrWhiteSpace(configuredPath) || !File.Exists(configuredPath))
                 {
                     return false;
@@ -598,18 +628,31 @@ namespace DesktopPlus
         {
             try
             {
-                using var key = Registry.CurrentUser.OpenSubKey(StartupRegistryKey, true);
-                if (key == null) return;
-
                 if (enabled)
                 {
+                    using var key = Registry.CurrentUser.CreateSubKey(StartupRegistryKey, true);
+                    if (key == null)
+                    {
+                        throw new InvalidOperationException("Startup registry key could not be opened.");
+                    }
+
                     string exePath = GetCurrentExecutablePath();
-                    if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath)) return;
-                    key.SetValue(StartupRegistryValue, $"\"{exePath}\" {StartupLaunchArgument}");
+                    if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
+                    {
+                        throw new FileNotFoundException("Executable path for startup registration is invalid.", exePath);
+                    }
+
+                    string startupValue = $"\"{exePath}\" {StartupLaunchArgument}";
+                    key.SetValue(StartupRegistryValue, startupValue, RegistryValueKind.String);
+
+                    // If Windows marked this startup item as disabled, clear that override when user enables it in-app.
+                    DeleteStartupApprovedState();
                 }
                 else
                 {
-                    key.DeleteValue(StartupRegistryValue, false);
+                    using var key = Registry.CurrentUser.OpenSubKey(StartupRegistryKey, true);
+                    key?.DeleteValue(StartupRegistryValue, false);
+                    DeleteStartupApprovedState();
                 }
             }
             catch (Exception ex)
