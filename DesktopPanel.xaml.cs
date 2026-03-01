@@ -145,7 +145,7 @@ namespace DesktopPlus
         private static readonly Thickness ExpandedChromeBorderThickness = new Thickness(1);
         private static readonly Thickness CollapsedChromeBorderThickness = new Thickness(1);
         private static readonly Thickness ExpandedChromePadding = new Thickness(1);
-        private static readonly Thickness CollapsedChromePadding = new Thickness(1);
+        private static readonly Thickness CollapsedChromePadding = new Thickness(0);
         public bool IsPreviewPanel { get; set; } = false;
         public PanelKind PanelType { get; set; } = PanelKind.None;
         public string PanelId { get; set; } = $"panel:{Guid.NewGuid():N}";
@@ -529,10 +529,8 @@ namespace DesktopPlus
             {
                 BodyShadowHost.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
             }
-            if (HeaderBar != null)
-            {
-                HeaderBar.BorderThickness = new Thickness(0, 0, 0, 1);
-            }
+            RebuildTabBar(collapsed);
+            UpdateHeaderBottomBorderForCurrentState(collapsed);
 
             double targetBottomRadius = collapsed ? _headerTopCornerRadius : 0;
             if (animateCorners)
@@ -545,6 +543,25 @@ namespace DesktopPlus
                 StopHeaderCornerAnimation();
                 ApplyHeaderCornerRadius(targetBottomRadius);
             }
+        }
+
+        private void UpdateHeaderBottomBorderForCurrentState(bool collapsed)
+        {
+            if (HeaderBar == null)
+            {
+                return;
+            }
+
+            if (collapsed)
+            {
+                HeaderBar.BorderThickness = new Thickness(0);
+                return;
+            }
+
+            bool hasMultipleTabs = _tabs.Count > 1;
+            HeaderBar.BorderThickness = hasMultipleTabs
+                ? new Thickness(0)
+                : new Thickness(0, 0, 0, 1);
         }
 
         private bool IsBottomAligned(double top, double height)

@@ -55,7 +55,7 @@ namespace DesktopPlus
 
         private void TrySetWindowIcon()
         {
-            HeaderIcon.Source = AppIconLoader.LoadAppIcon(16);
+            HeaderIcon.Source = AppIconLoader.LoadAppIcon(32);
         }
 
         private void TrayMenuWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)

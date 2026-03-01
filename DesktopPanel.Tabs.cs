@@ -341,30 +341,35 @@ namespace DesktopPlus
             RebuildTabBar();
         }
 
-        private void RebuildTabBar()
+        private void RebuildTabBar(bool? collapsedOverride = null)
         {
             if (TabBarPanel == null || TabBarContainer == null) return;
 
             TabBarPanel.Children.Clear();
+            bool isCollapsedVisual = collapsedOverride ?? !isContentVisible;
 
             if (_tabs.Count <= 1)
             {
                 TabBarContainer.Visibility = Visibility.Collapsed;
                 if (PanelTitle != null)
                     PanelTitle.Visibility = Visibility.Visible;
+                UpdateHeaderBottomBorderForCurrentState(collapsed: isCollapsedVisual);
                 return;
             }
 
             TabBarContainer.Visibility = Visibility.Visible;
             if (PanelTitle != null)
                 PanelTitle.Visibility = Visibility.Collapsed;
+            // Keep border behavior in sync with collapsed/expanded visual state.
+            UpdateHeaderBottomBorderForCurrentState(collapsed: isCollapsedVisual);
 
             int animateIndex = _animateNewTabIndex;
             _animateNewTabIndex = -1;
+            bool showActiveSelection = !isCollapsedVisual;
 
             for (int i = 0; i < _tabs.Count; i++)
             {
-                var tabItem = CreateTabBarItem(_tabs[i], i, i == _activeTabIndex);
+                var tabItem = CreateTabBarItem(_tabs[i], i, showActiveSelection && i == _activeTabIndex);
                 TabBarPanel.Children.Add(tabItem);
 
                 if (i == animateIndex)
@@ -412,21 +417,18 @@ namespace DesktopPlus
             var headerColor = ParseColor(appearance.HeaderColor, System.Windows.Media.Color.FromRgb(42, 48, 59));
             var bodyColor = ParseColor(appearance.BackgroundColor, System.Windows.Media.Color.FromRgb(31, 36, 46));
 
-            var chromeActiveColor = Blend(bodyColor, activeColor, 0.22);
-            var chromeInactiveColor = Blend(headerColor, inactiveColor, 0.58);
-            var chromeHoverColor = Blend(chromeInactiveColor, hoverColor, 0.44);
-            var chromeActiveBorder = Blend(chromeActiveColor, activeColor, 0.42);
-            var chromeInactiveBorder = Blend(chromeInactiveColor, activeColor, 0.16);
-            var chromeHoverBorder = Blend(chromeHoverColor, activeColor, 0.30);
-            var separatorColor = Blend(headerColor, activeColor, 0.26);
+            var white = System.Windows.Media.Color.FromRgb(255, 255, 255);
+            // Active tab: use body color so it blends seamlessly into content
+            var chromeActiveColor = bodyColor;
+            var chromeActiveBorderColor = Blend(bodyColor, white, 0.12);
+            // Hover pill for inactive tabs
+            var hoverPillColor = Blend(headerColor, white, 0.10);
+            var separatorColor = Blend(headerColor, white, 0.12);
 
-            var activeBackgroundBrush = CreateBrush(chromeActiveColor, 246);
-            var activeBorderBrush = CreateBrush(chromeActiveBorder, 225);
-            var inactiveBackgroundBrush = CreateBrush(chromeInactiveColor, 150);
-            var inactiveBorderBrush = CreateBrush(chromeInactiveBorder, 130);
-            var hoverBackgroundBrush = CreateBrush(chromeHoverColor, 198);
-            var hoverBorderBrush = CreateBrush(chromeHoverBorder, 196);
-            var separatorBrush = CreateBrush(separatorColor, 150);
+            var activeBackgroundBrush = CreateBrush(chromeActiveColor, 255);
+            var activeBorderBrush = CreateBrush(chromeActiveBorderColor, 160);
+            var hoverPillBrush = CreateBrush(hoverPillColor, 255);
+            var separatorBrush = CreateBrush(separatorColor, 160);
 
             var tabNameBlock = new TextBlock
             {
@@ -438,65 +440,73 @@ namespace DesktopPlus
                 TextAlignment = TextAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 MaxWidth = 156,
-                Margin = new Thickness(0, 0, 0, 1),
                 Foreground = isActive ? activeTextBrush : inactiveTextBrush,
                 IsHitTestVisible = false,
             };
 
             int switchIndex = index;
 
-            var separatorLeft = new Border
-            {
-                Width = 1,
-                Height = 16,
-                Background = separatorBrush,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 10, 0),
-                Opacity = switchIndex > 0 ? 1.0 : 0.0
-            };
-
             var separatorRight = new Border
             {
                 Width = 1,
-                Height = 16,
+                Height = 14,
                 Background = separatorBrush,
                 VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(10, 0, 0, 0),
-                Opacity = switchIndex < (_tabs.Count - 1) ? 1.0 : 0.0
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+                Opacity = (switchIndex < (_tabs.Count - 1) && !isActive && switchIndex != _activeTabIndex - 1) ? 1.0 : 0.0
             };
 
-            var contentHost = new Grid
+            // Active tab: Chrome-style shape drawn via Path on a Canvas
+            var tabFill = new System.Windows.Shapes.Path
             {
-                SnapsToDevicePixels = true
+                Fill = activeBackgroundBrush,
+                Stroke = activeBorderBrush,
+                StrokeThickness = 1,
+                SnapsToDevicePixels = true,
+                Stretch = Stretch.None,
+                Visibility = isActive ? Visibility.Visible : Visibility.Collapsed,
             };
-            contentHost.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            contentHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            contentHost.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var tabCanvas = new Canvas { SnapsToDevicePixels = true, ClipToBounds = false };
+            tabCanvas.Children.Add(tabFill);
 
-            Grid.SetColumn(separatorLeft, 0);
-            Grid.SetColumn(tabNameBlock, 1);
-            Grid.SetColumn(separatorRight, 2);
-            contentHost.Children.Add(separatorLeft);
-            contentHost.Children.Add(tabNameBlock);
-            contentHost.Children.Add(separatorRight);
+            // Inactive hover pill: simple rounded border behind text
+            var hoverPill = new Border
+            {
+                Background = System.Windows.Media.Brushes.Transparent,
+                CornerRadius = new CornerRadius(8),
+                Margin = new Thickness(5, 9, 5, 9),
+                IsHitTestVisible = false,
+            };
+
+            var tabGrid = new Grid { SnapsToDevicePixels = true };
+            tabGrid.Children.Add(tabCanvas);     // active shape (behind everything)
+            tabGrid.Children.Add(hoverPill);      // hover pill (behind text)
+            tabGrid.Children.Add(tabNameBlock);   // text on top
+            tabGrid.Children.Add(separatorRight); // separator on right edge
+
+            tabNameBlock.Margin = new Thickness(16, 0, 16, 0);
 
             var border = new Border
             {
-                Height = 35,
-                MinWidth = 120,
-                Margin = isActive ? new Thickness(2, 2, 2, -1) : new Thickness(2, 6, 2, 0),
-                Background = isActive ? activeBackgroundBrush : inactiveBackgroundBrush,
-                BorderBrush = isActive ? activeBorderBrush : inactiveBorderBrush,
-                BorderThickness = new Thickness(1, 1, 1, 0),
-                Padding = new Thickness(12, 0, 12, 0),
-                Child = contentHost,
+                MinWidth = 100,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                Margin = new Thickness(0, 0, 0, -1),
+                Background = System.Windows.Media.Brushes.Transparent,
+                Child = tabGrid,
                 Cursor = System.Windows.Input.Cursors.Hand,
                 Tag = index,
                 SnapsToDevicePixels = true
             };
-            border.SizeChanged += (_, __) =>
+
+            border.Loaded += (_, __) =>
             {
-                border.Clip = BuildChromeTabClip(border.ActualWidth, border.ActualHeight);
+                if (isActive || (int)border.Tag == _activeTabIndex)
+                    tabFill.Data = BuildChromeTabShape(border.ActualWidth, border.ActualHeight);
+            };
+            border.SizeChanged += (_, sizeArgs) =>
+            {
+                if ((int)border.Tag == _activeTabIndex)
+                    tabFill.Data = BuildChromeTabShape(sizeArgs.NewSize.Width, sizeArgs.NewSize.Height);
             };
 
             bool isHovering = false;
@@ -505,24 +515,19 @@ namespace DesktopPlus
             {
                 if (activeState)
                 {
-                    border.Margin = new Thickness(2, 2, 2, -1);
-                    border.Background = activeBackgroundBrush;
-                    border.BorderBrush = activeBorderBrush;
-                    border.BorderThickness = new Thickness(1, 1, 1, 0);
-                    separatorLeft.Opacity = 0;
+                    tabFill.Visibility = Visibility.Visible;
+                    tabFill.Data = BuildChromeTabShape(border.ActualWidth, border.ActualHeight);
+                    hoverPill.Background = System.Windows.Media.Brushes.Transparent;
                     separatorRight.Opacity = 0;
                     tabNameBlock.Foreground = activeTextBrush;
                     return;
                 }
 
-                border.Margin = new Thickness(2, 6, 2, 0);
-                border.Background = isHovering ? hoverBackgroundBrush : inactiveBackgroundBrush;
-                border.BorderBrush = isHovering ? hoverBorderBrush : inactiveBorderBrush;
-                border.BorderThickness = new Thickness(1, 1, 1, 0);
-                bool canShowLeft = switchIndex > 0;
+                tabFill.Visibility = Visibility.Collapsed;
+                hoverPill.Background = isHovering ? hoverPillBrush : System.Windows.Media.Brushes.Transparent;
                 bool canShowRight = switchIndex < (_tabs.Count - 1);
-                separatorLeft.Opacity = (isHovering || !canShowLeft) ? 0.0 : 1.0;
-                separatorRight.Opacity = (isHovering || !canShowRight) ? 0.0 : 1.0;
+                bool neighborIsActive = (switchIndex + 1 == _activeTabIndex) || (switchIndex - 1 == _activeTabIndex);
+                separatorRight.Opacity = (isHovering || !canShowRight || neighborIsActive || switchIndex == _activeTabIndex - 1) ? 0.0 : 1.0;
                 tabNameBlock.Foreground = isHovering ? activeTextBrush : inactiveTextBrush;
             }
 
@@ -609,7 +614,7 @@ namespace DesktopPlus
             return border;
         }
 
-        private static Geometry BuildChromeTabClip(double width, double height)
+        private static Geometry BuildChromeTabShape(double width, double height)
         {
             if (width <= 2 || height <= 2)
             {
@@ -618,33 +623,54 @@ namespace DesktopPlus
 
             double w = Math.Max(24, width);
             double h = Math.Max(12, height);
-            double topY = 0.5;
             double bottomY = h;
-            double sideInset = Math.Max(13, Math.Min(19, w * 0.16));
-            double topRound = Math.Max(8, Math.Min(14, w * 0.11));
-            double shoulderY = bottomY - Math.Max(7, h * 0.26);
-            double topControlY = topY + Math.Max(1.5, topRound * 0.22);
-            double topLeftX = sideInset + (topRound * 0.35);
-            double topRightX = w - topLeftX;
+            double topY = 6.0;
+            double cornerR = 8.0;     // top corner radius
+            double footH = 10.0;      // foot curve height
+            double footW = 8.0;       // foot extends outward
+            double inset = 4.0;       // side inset
 
             var figure = new PathFigure
             {
-                StartPoint = new Point(0, bottomY),
+                StartPoint = new Point(-footW, bottomY),
                 IsFilled = true,
-                IsClosed = true
+                IsClosed = false // open bottom so it merges with content
             };
+
+            // Left foot: S-curve from bottom-left up into the tab
             figure.Segments.Add(new BezierSegment(
-                new Point(0.6, shoulderY),
-                new Point(sideInset * 0.58, topControlY),
-                new Point(topLeftX, topY),
+                new Point(-footW, bottomY - footH * 0.55),
+                new Point(inset, bottomY - footH * 0.1),
+                new Point(inset, bottomY - footH),
                 true));
-            figure.Segments.Add(new LineSegment(new Point(topRightX, topY), true));
+
+            // Left side going up
+            figure.Segments.Add(new LineSegment(new Point(inset, topY + cornerR), true));
+
+            // Top-left corner
+            figure.Segments.Add(new ArcSegment(
+                new Point(inset + cornerR, topY),
+                new System.Windows.Size(cornerR, cornerR),
+                0, false, SweepDirection.Clockwise, true));
+
+            // Top edge
+            figure.Segments.Add(new LineSegment(new Point(w - inset - cornerR, topY), true));
+
+            // Top-right corner
+            figure.Segments.Add(new ArcSegment(
+                new Point(w - inset, topY + cornerR),
+                new System.Windows.Size(cornerR, cornerR),
+                0, false, SweepDirection.Clockwise, true));
+
+            // Right side going down
+            figure.Segments.Add(new LineSegment(new Point(w - inset, bottomY - footH), true));
+
+            // Right foot: S-curve from tab down to bottom-right
             figure.Segments.Add(new BezierSegment(
-                new Point(w - (sideInset * 0.58), topControlY),
-                new Point(w - 0.6, shoulderY),
-                new Point(w, bottomY),
+                new Point(w - inset, bottomY - footH * 0.1),
+                new Point(w + footW, bottomY - footH * 0.55),
+                new Point(w + footW, bottomY),
                 true));
-            figure.Segments.Add(new LineSegment(new Point(0, bottomY), true));
 
             var geometry = new PathGeometry(new[] { figure });
             geometry.Freeze();

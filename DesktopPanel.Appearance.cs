@@ -53,6 +53,7 @@ namespace DesktopPlus
             }
 
             HeaderBar.Background = MainWindow.BuildPanelHeaderBrush(appearance);
+            UpdateTabBarFade(appearance);
             if (ContentFrame != null)
             {
                 ContentFrame.Background = MainWindow.BuildPanelContentBrush(appearance);
@@ -86,6 +87,22 @@ namespace DesktopPlus
             {
                 FontFamily = new System.Windows.Media.FontFamily("Segoe UI");
             }
+        }
+
+        private void UpdateTabBarFade(AppearanceSettings appearance)
+        {
+            if (TabBarFadeRight == null) return;
+            var headerColor = MainWindow.ParseColorOrFallback(appearance?.HeaderColor, MediaColor.FromRgb(42, 48, 59));
+            var transparent = System.Windows.Media.Color.FromArgb(0, headerColor.R, headerColor.G, headerColor.B);
+            var opaque = System.Windows.Media.Color.FromArgb(255, headerColor.R, headerColor.G, headerColor.B);
+            var gradient = new System.Windows.Media.LinearGradientBrush
+            {
+                StartPoint = new System.Windows.Point(0, 0.5),
+                EndPoint = new System.Windows.Point(1, 0.5)
+            };
+            gradient.GradientStops.Add(new System.Windows.Media.GradientStop(transparent, 0));
+            gradient.GradientStops.Add(new System.Windows.Media.GradientStop(opaque, 1));
+            TabBarFadeRight.Background = gradient;
         }
 
         private void UpdateResourceBrush(string key, string value, MediaColor fallback)

@@ -1364,7 +1364,7 @@ namespace DesktopPlus
             return null;
         }
 
-        private static MediaColor ParseColorOrFallback(string? colorValue, MediaColor fallback)
+        internal static MediaColor ParseColorOrFallback(string? colorValue, MediaColor fallback)
         {
             if (string.IsNullOrWhiteSpace(colorValue)) return fallback;
             try

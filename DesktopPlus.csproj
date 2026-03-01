@@ -19,9 +19,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <Content Include="Resources\desktopplus_icon.ico">
-	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-	  </Content>
+	  <Resource Include="Resources\desktopplus_icon.ico" />
 	</ItemGroup>
 
 	<ItemGroup>

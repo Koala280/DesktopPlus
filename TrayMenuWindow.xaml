@@ -82,17 +82,19 @@
         </Style>
     </Window.Resources>
 
-    <Border Background="{StaticResource TraySurface}"
-            BorderBrush="{StaticResource TrayBorder}"
-            BorderThickness="1"
-            CornerRadius="14"
-            Padding="12">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="20"
-                              ShadowDepth="0"
-                              Opacity="0.36"/>
-        </Border.Effect>
-        <Grid>
+    <Grid Margin="8">
+        <Border Background="{StaticResource TraySurface}"
+                BorderBrush="{StaticResource TrayBorder}"
+                BorderThickness="1"
+                CornerRadius="14"
+                Padding="12"
+                SnapsToDevicePixels="True">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="20"
+                                  ShadowDepth="0"
+                                  Opacity="0.36"/>
+            </Border.Effect>
+            <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
@@ -107,23 +109,26 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <Border Width="26"
-                        Height="26"
+                <Border Width="34"
+                        Height="34"
                         CornerRadius="8"
-                        Background="{StaticResource TrayHeaderBadge}"
-                        BorderBrush="{StaticResource TrayHeaderBadgeBorder}"
-                        BorderThickness="1"
-                        VerticalAlignment="Top">
+                        Background="Transparent"
+                        BorderThickness="0"
+                        VerticalAlignment="Center">
+                    <Border.Clip>
+                        <RectangleGeometry Rect="0,0,34,34" RadiusX="8" RadiusY="8"/>
+                    </Border.Clip>
                     <Image x:Name="HeaderIcon"
-                           Width="14"
-                           Height="14"
+                           Width="34"
+                           Height="34"
                            RenderOptions.BitmapScalingMode="HighQuality"
                            VerticalAlignment="Center"
                            HorizontalAlignment="Center"/>
                 </Border>
 
                 <StackPanel Grid.Column="1"
-                            Margin="10,0,0,0">
+                            Margin="10,0,0,0"
+                            VerticalAlignment="Center">
                     <TextBlock Text="Desktop+"
                                Foreground="{StaticResource TrayText}"
                                FontSize="13"
@@ -220,6 +225,7 @@
                        Foreground="{StaticResource TrayMuted}"
                        FontSize="10.5"
                        Margin="2,8,0,0"/>
-        </Grid>
-    </Border>
+            </Grid>
+        </Border>
+    </Grid>
 </Window>

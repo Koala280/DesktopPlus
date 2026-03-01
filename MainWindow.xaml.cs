@@ -394,49 +394,12 @@ namespace DesktopPlus
         private void InitNotifyIcon()
         {
             _notifyIcon = new WinForms.NotifyIcon();
-            _notifyIcon.Icon = ResolveNotifyIcon();
+            _notifyIcon.Icon = AppIconLoader.LoadNotifyIcon();
             _notifyIcon.Visible = true;
             _notifyIcon.Text = "DesktopPlus";
             UpdateNotifyIconMenu();
             _notifyIcon.DoubleClick += (s, e) => ShowMainWindow();
             _notifyIcon.MouseUp += NotifyIcon_MouseUp;
-        }
-
-        private static System.Drawing.Icon ResolveNotifyIcon()
-        {
-            try
-            {
-                string iconPath = Path.Combine(
-                    AppDomain.CurrentDomain.BaseDirectory,
-                    "Resources",
-                    "desktopplus_icon.ico");
-
-                if (File.Exists(iconPath))
-                {
-                    return new System.Drawing.Icon(iconPath);
-                }
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                string exePath = GetCurrentExecutablePath();
-                if (!string.IsNullOrWhiteSpace(exePath) && File.Exists(exePath))
-                {
-                    var associatedIcon = System.Drawing.Icon.ExtractAssociatedIcon(exePath);
-                    if (associatedIcon != null)
-                    {
-                        return associatedIcon;
-                    }
-                }
-            }
-            catch
-            {
-            }
-
-            return (System.Drawing.Icon)System.Drawing.SystemIcons.Application.Clone();
         }
 
         private void UpdateNotifyIconMenu()
