@@ -107,6 +107,20 @@ namespace DesktopPlus
             AppIconLoader.TryApplyWindowIcon(this);
         }
 
+        private void SetNameInputWithoutAutoApply(string? text)
+        {
+            bool previousApplying = _isApplyingSettings;
+            _isApplyingSettings = true;
+            try
+            {
+                NameInput.Text = text ?? string.Empty;
+            }
+            finally
+            {
+                _isApplyingSettings = previousApplying;
+            }
+        }
+
         private void ConfigureGlobalLayoutMode()
         {
             Title = MainWindow.GetString("Loc.LayoutsGlobalPanelSettings");
@@ -346,7 +360,7 @@ namespace DesktopPlus
             MainWindow.NotifyPanelsChanged();
         }
 
-        private void ApplyCurrentSettings(bool closeAfterApply)
+        private void ApplyCurrentSettings(bool closeAfterApply, bool applyName = true)
         {
             if (IsGlobalLayoutMode)
             {
@@ -354,7 +368,7 @@ namespace DesktopPlus
                 return;
             }
 
-            SaveSinglePanelSettings(closeAfterApply);
+            SaveSinglePanelSettings(closeAfterApply, applyName);
         }
 
         private void SaveGlobalLayoutSettings(bool closeAfterApply)
@@ -394,7 +408,7 @@ namespace DesktopPlus
             }
         }
 
-        private void SaveSinglePanelSettings(bool closeAfterApply)
+        private void SaveSinglePanelSettings(bool closeAfterApply, bool applyName = true)
         {
             if (_panel == null)
             {
@@ -405,14 +419,17 @@ namespace DesktopPlus
                 return;
             }
 
-            if (_panel.Tabs.Count > 1 && _panel.ActiveTab != null)
+            if (applyName)
             {
-                _panel.RenameTab(_panel.ActiveTabIndex, NameInput.Text);
-            }
-            else
-            {
-                _panel.PanelTitle.Text = NameInput.Text;
-                _panel.Title = NameInput.Text;
+                if (_panel.Tabs.Count > 1 && _panel.ActiveTab != null)
+                {
+                    _panel.RenameTab(_panel.ActiveTabIndex, NameInput.Text);
+                }
+                else
+                {
+                    _panel.PanelTitle.Text = NameInput.Text;
+                    _panel.Title = NameInput.Text;
+                }
             }
             _panel.SetExpandOnHover(HoverToggle.IsChecked == true);
             bool hiddenChanged = _panel.showHiddenItems != (HiddenToggle.IsChecked == true);
@@ -479,9 +496,16 @@ namespace DesktopPlus
                 return;
             }
 
-            ApplyCurrentSettings(closeAfterApply: false);
+            // Keep name input in sync with the currently active tab before applying settings.
+            // This prevents renaming a different tab when the settings window text is stale.
+            if (_panel.Tabs.Count > 1 && _panel.ActiveTab != null)
+            {
+                SetNameInputWithoutAutoApply(_panel.ActiveTab.TabName);
+            }
+
+            ApplyCurrentSettings(closeAfterApply: false, applyName: false);
             _panel.AddTab(folderPath: null, switchTo: true);
-            NameInput.Text = _panel.ActiveTab?.TabName ?? MainWindow.GetString("Loc.TabNewTab");
+            SetNameInputWithoutAutoApply(_panel.ActiveTab?.TabName ?? MainWindow.GetString("Loc.TabNewTab"));
             FolderPathLabel.Text = MainWindow.GetString("Loc.PanelSettingsFolderUnset");
             MainWindow.SaveSettings();
             MainWindow.NotifyPanelsChanged();

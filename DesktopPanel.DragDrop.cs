@@ -268,14 +268,19 @@ namespace DesktopPlus
 
             editor.KeyDown += RenameEditor_KeyDown;
             editor.LostKeyboardFocus += RenameEditor_LostKeyboardFocus;
-
-            hostPanel.Children[labelIndex] = editor;
+            CopyAttachedLayoutProperties(label, editor);
+            if (!ReplaceChildAtLabelSlot(hostPanel, label, labelIndex, editor, out int resolvedHostIndex))
+            {
+                editor.KeyDown -= RenameEditor_KeyDown;
+                editor.LostKeyboardFocus -= RenameEditor_LostKeyboardFocus;
+                return false;
+            }
 
             _renameEditItem = item;
             _renameEditBox = editor;
             _renameEditOriginalLabel = label;
             _renameEditOriginalHostPanel = hostPanel;
-            _renameEditOriginalHostIndex = labelIndex;
+            _renameEditOriginalHostIndex = resolvedHostIndex;
             _renameOriginalPath = path;
             _renameOriginalDisplayName = originalDisplayName;
 
@@ -343,12 +348,7 @@ namespace DesktopPlus
 
             editor.KeyDown -= RenameEditor_KeyDown;
             editor.LostKeyboardFocus -= RenameEditor_LostKeyboardFocus;
-
-            if (originalHostPanel.Children.Count > originalHostIndex &&
-                ReferenceEquals(originalHostPanel.Children[originalHostIndex], editor))
-            {
-                originalHostPanel.Children[originalHostIndex] = originalLabel;
-            }
+            RestoreLabelIntoHost(originalHostPanel, editor, originalLabel, originalHostIndex);
 
             originalLabel.Text = originalDisplayName;
 
@@ -371,6 +371,127 @@ namespace DesktopPlus
             }
 
             TryRenamePathFromInlineEditor(originalPath, requestedDisplayName);
+        }
+
+        private static void CopyAttachedLayoutProperties(FrameworkElement source, FrameworkElement target)
+        {
+            Grid.SetRow(target, Grid.GetRow(source));
+            Grid.SetColumn(target, Grid.GetColumn(source));
+            Grid.SetRowSpan(target, Grid.GetRowSpan(source));
+            Grid.SetColumnSpan(target, Grid.GetColumnSpan(source));
+            DockPanel.SetDock(target, DockPanel.GetDock(source));
+
+            double left = Canvas.GetLeft(source);
+            if (!double.IsNaN(left))
+            {
+                Canvas.SetLeft(target, left);
+            }
+
+            double top = Canvas.GetTop(source);
+            if (!double.IsNaN(top))
+            {
+                Canvas.SetTop(target, top);
+            }
+
+            double right = Canvas.GetRight(source);
+            if (!double.IsNaN(right))
+            {
+                Canvas.SetRight(target, right);
+            }
+
+            double bottom = Canvas.GetBottom(source);
+            if (!double.IsNaN(bottom))
+            {
+                Canvas.SetBottom(target, bottom);
+            }
+
+            target.HorizontalAlignment = source.HorizontalAlignment;
+            target.VerticalAlignment = source.VerticalAlignment;
+        }
+
+        private static bool ReplaceChildAtLabelSlot(
+            System.Windows.Controls.Panel hostPanel,
+            UIElement expectedChild,
+            int preferredIndex,
+            UIElement replacement,
+            out int resolvedIndex)
+        {
+            resolvedIndex = -1;
+
+            if (hostPanel == null || expectedChild == null || replacement == null)
+            {
+                return false;
+            }
+
+            int index = preferredIndex;
+            if (index < 0 ||
+                index >= hostPanel.Children.Count ||
+                !ReferenceEquals(hostPanel.Children[index], expectedChild))
+            {
+                index = hostPanel.Children.IndexOf(expectedChild);
+            }
+
+            if (index < 0)
+            {
+                return false;
+            }
+
+            if (replacement is FrameworkElement replacementElement &&
+                replacementElement.Parent is System.Windows.Controls.Panel replacementParent)
+            {
+                int existingReplacementIndex = replacementParent.Children.IndexOf(replacementElement);
+                if (existingReplacementIndex >= 0)
+                {
+                    replacementParent.Children.RemoveAt(existingReplacementIndex);
+                }
+            }
+
+            hostPanel.Children.RemoveAt(index);
+            hostPanel.Children.Insert(index, replacement);
+            resolvedIndex = index;
+            return true;
+        }
+
+        private static void RestoreLabelIntoHost(
+            System.Windows.Controls.Panel hostPanel,
+            UIElement editor,
+            TextBlock originalLabel,
+            int preferredIndex)
+        {
+            if (hostPanel == null || editor == null || originalLabel == null)
+            {
+                return;
+            }
+
+            int editorIndex = hostPanel.Children.IndexOf(editor);
+            if (editorIndex >= 0)
+            {
+                hostPanel.Children.RemoveAt(editorIndex);
+
+                if (originalLabel.Parent is System.Windows.Controls.Panel otherParent &&
+                    !ReferenceEquals(otherParent, hostPanel))
+                {
+                    int labelIndexInOtherParent = otherParent.Children.IndexOf(originalLabel);
+                    if (labelIndexInOtherParent >= 0)
+                    {
+                        otherParent.Children.RemoveAt(labelIndexInOtherParent);
+                    }
+                }
+
+                if (originalLabel.Parent == null)
+                {
+                    int insertIndex = Math.Max(0, Math.Min(editorIndex, hostPanel.Children.Count));
+                    hostPanel.Children.Insert(insertIndex, originalLabel);
+                }
+
+                return;
+            }
+
+            if (originalLabel.Parent == null)
+            {
+                int insertIndex = Math.Max(0, Math.Min(preferredIndex, hostPanel.Children.Count));
+                hostPanel.Children.Insert(insertIndex, originalLabel);
+            }
         }
 
         private bool TryRenamePathFromInlineEditor(string sourcePath, string requestedDisplayName)
@@ -1548,4 +1669,3 @@ namespace DesktopPlus
         }
     }
 }
-

@@ -265,6 +265,7 @@ namespace DesktopPlus
                 LoadTabState(_tabs[_activeTabIndex]);
             }
 
+            SyncSingleTabHeaderTitle();
             RebuildTabBar();
             MainWindow.SaveSettings();
             return tab;
@@ -288,6 +289,7 @@ namespace DesktopPlus
                 LoadTabState(_tabs[_activeTabIndex]);
             }
 
+            SyncSingleTabHeaderTitle();
             RebuildTabBar();
             MainWindow.SaveSettings();
         }
@@ -453,7 +455,7 @@ namespace DesktopPlus
                 Background = separatorBrush,
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
-                Opacity = (switchIndex < (_tabs.Count - 1) && !isActive && switchIndex != _activeTabIndex - 1) ? 1.0 : 0.0
+                Opacity = ShouldShowSeparator(switchIndex, isActive) ? 1.0 : 0.0
             };
 
             // Active tab: Chrome-style shape drawn via Path on a Canvas
@@ -525,9 +527,7 @@ namespace DesktopPlus
 
                 tabFill.Visibility = Visibility.Collapsed;
                 hoverPill.Background = isHovering ? hoverPillBrush : System.Windows.Media.Brushes.Transparent;
-                bool canShowRight = switchIndex < (_tabs.Count - 1);
-                bool neighborIsActive = (switchIndex + 1 == _activeTabIndex) || (switchIndex - 1 == _activeTabIndex);
-                separatorRight.Opacity = (isHovering || !canShowRight || neighborIsActive || switchIndex == _activeTabIndex - 1) ? 0.0 : 1.0;
+                separatorRight.Opacity = (!isHovering && ShouldShowSeparator(switchIndex, false)) ? 1.0 : 0.0;
                 tabNameBlock.Foreground = isHovering ? activeTextBrush : inactiveTextBrush;
             }
 
@@ -604,6 +604,7 @@ namespace DesktopPlus
                 _tabs.Add(keep);
                 _activeTabIndex = 0;
                 LoadTabState(keep);
+                SyncSingleTabHeaderTitle();
                 RebuildTabBar();
                 MainWindow.SaveSettings();
             };
@@ -612,6 +613,17 @@ namespace DesktopPlus
             border.ContextMenu = contextMenu;
 
             return border;
+        }
+
+        private bool ShouldShowSeparator(int index, bool thisTabIsActive)
+        {
+            if (index >= _tabs.Count - 1) return false; // last tab, no right separator
+            if (thisTabIsActive) return false;           // active tab hides separators
+            // When collapsed (no active selection visible), always show separators
+            if (!isContentVisible) return true;
+            // Hide separator if neighbor to the right is the active tab
+            if (index + 1 == _activeTabIndex) return false;
+            return true;
         }
 
         private static Geometry BuildChromeTabShape(double width, double height)
@@ -859,56 +871,42 @@ namespace DesktopPlus
         {
             if (tabIndex < 0 || tabIndex >= _tabs.Count) return;
             var tab = _tabs[tabIndex];
-
-            var dialog = new Window
+            var dialog = new InputBox(MainWindow.GetString("Loc.TabRename"), tab.TabName)
             {
-                Title = MainWindow.GetString("Loc.TabRename"),
-                Width = 300,
-                Height = 130,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Owner = this,
-                WindowStyle = WindowStyle.ToolWindow,
-                ResizeMode = ResizeMode.NoResize,
-                Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1A, 0x1D, 0x23)),
+                Title = MainWindow.GetString("Loc.TabRename"),
+                WindowStartupLocation = WindowStartupLocation.CenterOwner
             };
 
-            var stack = new StackPanel { Margin = new Thickness(12) };
-            var textBox = new System.Windows.Controls.TextBox
+            bool? result = dialog.ShowDialog();
+            if (result == true)
             {
-                Text = tab.TabName,
-                FontSize = 14,
-                Padding = new Thickness(6, 4, 6, 4),
-            };
-            textBox.SelectAll();
-            stack.Children.Add(textBox);
-
-            var btnPanel = new StackPanel
-            {
-                Orientation = System.Windows.Controls.Orientation.Horizontal,
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
-                Margin = new Thickness(0, 10, 0, 0),
-            };
-            var okBtn = new System.Windows.Controls.Button
-            {
-                Content = "OK",
-                Width = 70,
-                Padding = new Thickness(0, 4, 0, 4),
-                IsDefault = true,
-            };
-            okBtn.Click += (_, __) =>
-            {
-                if (!string.IsNullOrWhiteSpace(textBox.Text))
+                string newName = dialog.ResultText?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(newName))
                 {
-                    RenameTab(tabIndex, textBox.Text.Trim());
+                    RenameTab(tabIndex, newName);
                 }
-                dialog.Close();
-            };
-            btnPanel.Children.Add(okBtn);
-            stack.Children.Add(btnPanel);
+            }
+        }
 
-            dialog.Content = stack;
-            textBox.Focus();
-            dialog.ShowDialog();
+        private void SyncSingleTabHeaderTitle()
+        {
+            if (_tabs.Count != 1)
+            {
+                return;
+            }
+
+            string singleTabName = _tabs[0].TabName?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(singleTabName))
+            {
+                singleTabName = MainWindow.GetString("Loc.PanelDefaultTitle");
+            }
+
+            Title = singleTabName;
+            if (PanelTitle != null)
+            {
+                PanelTitle.Text = singleTabName;
+            }
         }
 
         private void AddTabButton_Click(object sender, RoutedEventArgs e)

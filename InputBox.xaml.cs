@@ -26,6 +26,11 @@ namespace DesktopPlus
             InitializeComponent();
             LblMessage.Text = message;
             TxtInput.Text = defaultText;
+            Loaded += (_, __) =>
+            {
+                TxtInput.Focus();
+                TxtInput.SelectAll();
+            };
         }
 
         private void BtnOK_Click(object sender, RoutedEventArgs e)

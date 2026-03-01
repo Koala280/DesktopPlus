@@ -23,7 +23,7 @@ namespace DesktopPlus
         private const string RuleOthers = "builtin:others";
 
         private DesktopAutoSortSettings _desktopAutoSort = new DesktopAutoSortSettings();
-        private FileSystemWatcher? _desktopAutoSortWatcher;
+        private readonly List<FileSystemWatcher> _desktopAutoSortWatchers = new List<FileSystemWatcher>();
         private DispatcherTimer? _desktopAutoSortDebounceTimer;
         private bool _desktopAutoSortInProgress;
         private bool _suspendDesktopAutoSortHandlers;
@@ -222,9 +222,47 @@ namespace DesktopPlus
             return normalized.OrderBy(x => x).ToList();
         }
 
-        private string GetDesktopDirectoryPath()
+        private IReadOnlyList<string> GetDesktopDirectoryPaths()
         {
-            return Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var paths = new List<string>(2);
+            string[] candidates =
+            {
+                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Desktop")
+            };
+
+            foreach (string candidate in candidates)
+            {
+                if (string.IsNullOrWhiteSpace(candidate))
+                {
+                    continue;
+                }
+
+                string normalized;
+                try
+                {
+                    normalized = Path.GetFullPath(candidate)
+                        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (!Directory.Exists(normalized))
+                {
+                    continue;
+                }
+
+                if (unique.Add(normalized))
+                {
+                    paths.Add(normalized);
+                }
+            }
+
+            return paths;
         }
 
         private string GetDesktopAutoSortStorageRootPath()
@@ -307,11 +345,20 @@ namespace DesktopPlus
             try
             {
                 var attr = File.GetAttributes(path);
-                if ((attr & FileAttributes.ReparsePoint) != 0)
+                bool isDirectory = (attr & FileAttributes.Directory) != 0;
+                bool isSystem = (attr & FileAttributes.System) != 0;
+                bool isReparsePoint = (attr & FileAttributes.ReparsePoint) != 0;
+
+                // Skip potentially unsafe desktop folder links (junctions/symlinks),
+                // but allow files (including cloud placeholders and shortcuts).
+                if (isDirectory && isReparsePoint)
                 {
                     return true;
                 }
-                if ((attr & FileAttributes.System) != 0)
+
+                // Keep system folders out of sorting, but allow files so .lnk/.url
+                // and similar entries are still routed by extension rules.
+                if (isDirectory && isSystem)
                 {
                     return true;
                 }
@@ -486,8 +533,8 @@ namespace DesktopPlus
                 return;
             }
 
-            string desktopPath = GetDesktopDirectoryPath();
-            if (string.IsNullOrWhiteSpace(desktopPath) || !Directory.Exists(desktopPath))
+            var desktopPaths = GetDesktopDirectoryPaths();
+            if (desktopPaths.Count == 0)
             {
                 return;
             }
@@ -499,14 +546,25 @@ namespace DesktopPlus
             _desktopAutoSortDebounceTimer.Tick -= DesktopAutoSortDebounceTimer_Tick;
             _desktopAutoSortDebounceTimer.Tick += DesktopAutoSortDebounceTimer_Tick;
 
-            _desktopAutoSortWatcher = new FileSystemWatcher(desktopPath)
+            foreach (string desktopPath in desktopPaths)
             {
-                IncludeSubdirectories = false,
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.CreationTime
-            };
-            _desktopAutoSortWatcher.Created += DesktopAutoSortWatcher_Changed;
-            _desktopAutoSortWatcher.Renamed += DesktopAutoSortWatcher_Changed;
-            _desktopAutoSortWatcher.EnableRaisingEvents = true;
+                try
+                {
+                    var watcher = new FileSystemWatcher(desktopPath)
+                    {
+                        IncludeSubdirectories = false,
+                        NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.CreationTime
+                    };
+                    watcher.Created += DesktopAutoSortWatcher_Changed;
+                    watcher.Renamed += DesktopAutoSortWatcher_Changed;
+                    watcher.EnableRaisingEvents = true;
+                    _desktopAutoSortWatchers.Add(watcher);
+                }
+                catch
+                {
+                    // Ignore watcher setup failures for individual desktop roots.
+                }
+            }
         }
 
         private void StopDesktopAutoSortWatcher()
@@ -516,14 +574,21 @@ namespace DesktopPlus
                 _desktopAutoSortDebounceTimer.Stop();
             }
 
-            if (_desktopAutoSortWatcher != null)
+            foreach (var watcher in _desktopAutoSortWatchers)
             {
-                _desktopAutoSortWatcher.EnableRaisingEvents = false;
-                _desktopAutoSortWatcher.Created -= DesktopAutoSortWatcher_Changed;
-                _desktopAutoSortWatcher.Renamed -= DesktopAutoSortWatcher_Changed;
-                _desktopAutoSortWatcher.Dispose();
-                _desktopAutoSortWatcher = null;
+                try
+                {
+                    watcher.EnableRaisingEvents = false;
+                    watcher.Created -= DesktopAutoSortWatcher_Changed;
+                    watcher.Renamed -= DesktopAutoSortWatcher_Changed;
+                    watcher.Dispose();
+                }
+                catch
+                {
+                }
             }
+
+            _desktopAutoSortWatchers.Clear();
         }
 
         private void DesktopAutoSortWatcher_Changed(object sender, FileSystemEventArgs e)
@@ -765,8 +830,8 @@ namespace DesktopPlus
         private DesktopSortResult SortDesktopOnce()
         {
             var result = new DesktopSortResult();
-            string desktopPath = GetDesktopDirectoryPath();
-            if (string.IsNullOrWhiteSpace(desktopPath) || !Directory.Exists(desktopPath))
+            var desktopPaths = GetDesktopDirectoryPaths();
+            if (desktopPaths.Count == 0)
             {
                 return result;
             }
@@ -785,70 +850,84 @@ namespace DesktopPlus
 
             var resolvedTargetFolders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (string entry in Directory.EnumerateFileSystemEntries(desktopPath))
+            foreach (string desktopPath in desktopPaths)
             {
-                if (IsIgnoredDesktopEntry(entry))
-                {
-                    result.SkippedCount++;
-                    continue;
-                }
-
-                bool isDirectory = Directory.Exists(entry);
-                var rule = ResolveRuleForPath(activeRules, entry, isDirectory);
-                if (rule == null)
-                {
-                    result.SkippedCount++;
-                    continue;
-                }
-
-                string panelName = ResolveTargetPanelName(rule);
-                if (!resolvedTargetFolders.TryGetValue(panelName, out string? targetFolderPath))
-                {
-                    targetFolderPath = Path.Combine(storageRootPath, SanitizePanelFolderName(panelName));
-
-                    try
-                    {
-                        Directory.CreateDirectory(targetFolderPath);
-                    }
-                    catch
-                    {
-                        result.ErrorCount++;
-                        continue;
-                    }
-
-                    resolvedTargetFolders[panelName] = targetFolderPath;
-                }
-
-                string name = Path.GetFileName(entry);
-                string targetPath = GetUniqueDestinationPath(targetFolderPath, name);
-
+                IEnumerable<string> entries;
                 try
                 {
-                    if (isDirectory)
-                    {
-                        Directory.Move(entry, targetPath);
-                    }
-                    else
-                    {
-                        File.Move(entry, targetPath);
-                    }
-
-                    result.MovedCount++;
-                    if (!result.TargetPanels.TryGetValue(panelName, out List<DesktopSortMovedItem>? movedItems))
-                    {
-                        movedItems = new List<DesktopSortMovedItem>();
-                        result.TargetPanels[panelName] = movedItems;
-                    }
-
-                    movedItems.Add(new DesktopSortMovedItem
-                    {
-                        SourcePath = entry,
-                        TargetPath = targetPath
-                    });
+                    entries = Directory.EnumerateFileSystemEntries(desktopPath).ToList();
                 }
                 catch
                 {
                     result.ErrorCount++;
+                    continue;
+                }
+
+                foreach (string entry in entries)
+                {
+                    if (IsIgnoredDesktopEntry(entry))
+                    {
+                        result.SkippedCount++;
+                        continue;
+                    }
+
+                    bool isDirectory = Directory.Exists(entry);
+                    var rule = ResolveRuleForPath(activeRules, entry, isDirectory);
+                    if (rule == null)
+                    {
+                        result.SkippedCount++;
+                        continue;
+                    }
+
+                    string panelName = ResolveTargetPanelName(rule);
+                    if (!resolvedTargetFolders.TryGetValue(panelName, out string? targetFolderPath))
+                    {
+                        targetFolderPath = Path.Combine(storageRootPath, SanitizePanelFolderName(panelName));
+
+                        try
+                        {
+                            Directory.CreateDirectory(targetFolderPath);
+                        }
+                        catch
+                        {
+                            result.ErrorCount++;
+                            continue;
+                        }
+
+                        resolvedTargetFolders[panelName] = targetFolderPath;
+                    }
+
+                    string name = Path.GetFileName(entry);
+                    string targetPath = GetUniqueDestinationPath(targetFolderPath, name);
+
+                    try
+                    {
+                        if (isDirectory)
+                        {
+                            Directory.Move(entry, targetPath);
+                        }
+                        else
+                        {
+                            File.Move(entry, targetPath);
+                        }
+
+                        result.MovedCount++;
+                        if (!result.TargetPanels.TryGetValue(panelName, out List<DesktopSortMovedItem>? movedItems))
+                        {
+                            movedItems = new List<DesktopSortMovedItem>();
+                            result.TargetPanels[panelName] = movedItems;
+                        }
+
+                        movedItems.Add(new DesktopSortMovedItem
+                        {
+                            SourcePath = entry,
+                            TargetPath = targetPath
+                        });
+                    }
+                    catch
+                    {
+                        result.ErrorCount++;
+                    }
                 }
             }
 
