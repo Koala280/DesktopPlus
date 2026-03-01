@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-03-01
+
+### Fixed
+
+- Installer now restores Windows autostart based on `%APPDATA%\DesktopPlus_Settings.json` (`StartWithWindows`) so upgrades recover the setting even if the `Run` key was already missing.
+- Installer clears stale `StartupApproved` disable state when it re-registers autostart during upgrade.
+
 ## [1.0.5] - 2026-03-01
 
 ### Fixed

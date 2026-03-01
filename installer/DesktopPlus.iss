@@ -50,20 +50,70 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 [Code]
 const
   StartupRunRegistryKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
+  StartupApprovedRunRegistryKey = 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run';
   StartupRunRegistryValue = 'DesktopPlus';
   StartupLaunchArgument = '--startup';
+  SettingsFileName = 'DesktopPlus_Settings.json';
 
 var
   StartupEntryExistsBeforeInstall: Boolean;
+  StartupShouldBeEnabledAfterInstall: Boolean;
 
 function BuildStartupCommand(): string;
 begin
   Result := '"' + ExpandConstant('{app}\{#MyAppExeName}') + '" ' + StartupLaunchArgument;
 end;
 
+function NormalizeSettingsJson(Input: string): string;
+begin
+  Result := Lowercase(Input);
+  StringChangeEx(Result, ' ', '', True);
+  StringChangeEx(Result, #9, '', True);
+  StringChangeEx(Result, #13, '', True);
+  StringChangeEx(Result, #10, '', True);
+end;
+
+function TryReadStartWithWindowsFromSettings(var StartWithWindowsEnabled: Boolean): Boolean;
+var
+  SettingsPath: string;
+  JsonText: AnsiString;
+  Normalized: string;
+begin
+  Result := False;
+  StartWithWindowsEnabled := False;
+  SettingsPath := ExpandConstant('{userappdata}') + '\' + SettingsFileName;
+
+  if not FileExists(SettingsPath) then
+  begin
+    Exit;
+  end;
+
+  if not LoadStringFromFile(SettingsPath, JsonText) then
+  begin
+    Exit;
+  end;
+
+  Normalized := NormalizeSettingsJson(string(JsonText));
+  if Pos('"startwithwindows":true', Normalized) > 0 then
+  begin
+    StartWithWindowsEnabled := True;
+    Result := True;
+    Exit;
+  end;
+
+  if Pos('"startwithwindows":false', Normalized) > 0 then
+  begin
+    StartWithWindowsEnabled := False;
+    Result := True;
+    Exit;
+  end;
+end;
+
 function InitializeSetup(): Boolean;
 var
   ExistingStartupValue: string;
+  SettingsStartupEnabled: Boolean;
+  HasSettingsValue: Boolean;
 begin
   StartupEntryExistsBeforeInstall := RegQueryStringValue(
     HKEY_CURRENT_USER,
@@ -71,12 +121,23 @@ begin
     StartupRunRegistryValue,
     ExistingStartupValue
   ) and (Trim(ExistingStartupValue) <> '');
+
+  HasSettingsValue := TryReadStartWithWindowsFromSettings(SettingsStartupEnabled);
+  if HasSettingsValue then
+  begin
+    StartupShouldBeEnabledAfterInstall := SettingsStartupEnabled;
+  end
+  else
+  begin
+    StartupShouldBeEnabledAfterInstall := StartupEntryExistsBeforeInstall;
+  end;
+
   Result := True;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if (CurStep = ssPostInstall) and StartupEntryExistsBeforeInstall then
+  if (CurStep = ssPostInstall) and StartupShouldBeEnabledAfterInstall then
   begin
     RegWriteStringValue(
       HKEY_CURRENT_USER,
@@ -84,6 +145,7 @@ begin
       StartupRunRegistryValue,
       BuildStartupCommand()
     );
+    RegDeleteValue(HKEY_CURRENT_USER, StartupApprovedRunRegistryKey, StartupRunRegistryValue);
   end;
 end;
 
@@ -92,5 +154,6 @@ begin
   if CurUninstallStep = usPostUninstall then
   begin
     RegDeleteValue(HKEY_CURRENT_USER, StartupRunRegistryKey, StartupRunRegistryValue);
+    RegDeleteValue(HKEY_CURRENT_USER, StartupApprovedRunRegistryKey, StartupRunRegistryValue);
   end;
 end;
