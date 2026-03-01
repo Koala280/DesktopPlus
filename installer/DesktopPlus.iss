@@ -48,10 +48,49 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+const
+  StartupRunRegistryKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
+  StartupRunRegistryValue = 'DesktopPlus';
+  StartupLaunchArgument = '--startup';
+
+var
+  StartupEntryExistsBeforeInstall: Boolean;
+
+function BuildStartupCommand(): string;
+begin
+  Result := '"' + ExpandConstant('{app}\{#MyAppExeName}') + '" ' + StartupLaunchArgument;
+end;
+
+function InitializeSetup(): Boolean;
+var
+  ExistingStartupValue: string;
+begin
+  StartupEntryExistsBeforeInstall := RegQueryStringValue(
+    HKEY_CURRENT_USER,
+    StartupRunRegistryKey,
+    StartupRunRegistryValue,
+    ExistingStartupValue
+  ) and (Trim(ExistingStartupValue) <> '');
+  Result := True;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if (CurStep = ssPostInstall) and StartupEntryExistsBeforeInstall then
+  begin
+    RegWriteStringValue(
+      HKEY_CURRENT_USER,
+      StartupRunRegistryKey,
+      StartupRunRegistryValue,
+      BuildStartupCommand()
+    );
+  end;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'DesktopPlus');
+    RegDeleteValue(HKEY_CURRENT_USER, StartupRunRegistryKey, StartupRunRegistryValue);
   end;
 end;

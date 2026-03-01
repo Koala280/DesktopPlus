@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-03-01
+
+### Fixed
+
+- Preserved the existing Windows autostart setting during installer upgrades by restoring the `Run` entry after reinstall.
+
 ## [1.0.4] - 2026-03-01
 
 ### Fixed
