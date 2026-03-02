@@ -162,6 +162,11 @@ namespace DesktopPlus
         public DesktopPanel()
         {
             InitializeComponent();
+            if (HeaderBar != null)
+            {
+                // Receive handled header clicks too (e.g. from ScrollViewer) so titlebar drag still works.
+                HeaderBar.AddHandler(UIElement.MouseLeftButtonDownEvent, new MouseButtonEventHandler(HeaderBar_MouseLeftButtonDown), true);
+            }
             expandedHeight = this.Height;
             collapsedTopPosition = this.Top;
             baseTopPosition = this.Top;
@@ -1441,7 +1446,29 @@ namespace DesktopPlus
             e.Handled = true;
         }
 
-        private static bool ShouldIgnoreHeaderDoubleClick(DependencyObject? source)
+        private bool IsHeaderTabItem(DependencyObject? source)
+        {
+            if (source == null || TabBarPanel == null)
+            {
+                return false;
+            }
+
+            DependencyObject? current = source;
+            while (current != null && !ReferenceEquals(current, TabBarPanel))
+            {
+                if (current is System.Windows.Controls.Border border &&
+                    ReferenceEquals(border.Parent, TabBarPanel))
+                {
+                    return true;
+                }
+
+                current = VisualTreeHelper.GetParent(current);
+            }
+
+            return false;
+        }
+
+        private bool ShouldIgnoreHeaderDoubleClick(DependencyObject? source)
         {
             if (source == null)
             {
@@ -1451,7 +1478,22 @@ namespace DesktopPlus
             return FindAncestor<System.Windows.Controls.Primitives.ButtonBase>(source) != null ||
                    FindAncestor<System.Windows.Controls.Primitives.TextBoxBase>(source) != null ||
                    FindAncestor<System.Windows.Controls.PasswordBox>(source) != null ||
-                   FindAncestor<System.Windows.Controls.ComboBox>(source) != null;
+                   FindAncestor<System.Windows.Controls.ComboBox>(source) != null ||
+                   IsHeaderTabItem(source);
+        }
+
+        private bool ShouldIgnoreHeaderDragStart(DependencyObject? source)
+        {
+            if (source == null)
+            {
+                return false;
+            }
+
+            return FindAncestor<System.Windows.Controls.Primitives.ButtonBase>(source) != null ||
+                   FindAncestor<System.Windows.Controls.Primitives.TextBoxBase>(source) != null ||
+                   FindAncestor<System.Windows.Controls.PasswordBox>(source) != null ||
+                   FindAncestor<System.Windows.Controls.ComboBox>(source) != null ||
+                   IsHeaderTabItem(source);
         }
 
         private void HeaderBar_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -1472,16 +1514,18 @@ namespace DesktopPlus
 
         private void HeaderBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            if (movementMode == "locked") return;
+            if (movementMode != "titlebar") return;
+            if (e.ChangedButton != MouseButton.Left || e.LeftButton != MouseButtonState.Pressed) return;
 
-            if (movementMode == "titlebar" &&
-                e.ChangedButton == MouseButton.Left &&
-                e.LeftButton == MouseButtonState.Pressed &&
-                sender is UIElement dragHandle)
+            var source = e.OriginalSource as DependencyObject;
+            if (ShouldIgnoreHeaderDragStart(source))
             {
-                BeginManualWindowDrag(dragHandle);
-                e.Handled = true;
+                return;
             }
+
+            if (sender is not UIElement dragHandle) return;
+            BeginManualWindowDrag(dragHandle);
+            e.Handled = true;
         }
 
         private void ToggleCollapseAnimated()

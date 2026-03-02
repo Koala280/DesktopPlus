@@ -80,8 +80,7 @@
                     DragLeave="TabBar_DragLeave"
                     DragOver="TabBar_DragOver"
                     Drop="TabBar_Drop"
-                    PreviewMouseLeftButtonDown="HeaderBar_PreviewMouseLeftButtonDown"
-                    MouseLeftButtonDown="HeaderBar_MouseLeftButtonDown">
+                    PreviewMouseLeftButtonDown="HeaderBar_PreviewMouseLeftButtonDown">
                 <Grid>
                 <Grid>
                     <Grid.ColumnDefinitions>

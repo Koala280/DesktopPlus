@@ -30,6 +30,12 @@ namespace DesktopPlus
         // (WPF DragDrop can lose custom non-serializable data across windows)
         private static TabDragPayload? _activeTabDragPayload;
 
+        private static bool IsTabDetachModifierPressed()
+        {
+            var modifiers = System.Windows.Input.Keyboard.Modifiers;
+            return modifiers.HasFlag(System.Windows.Input.ModifierKeys.Control);
+        }
+
         public IReadOnlyList<PanelTabData> Tabs => _tabs;
         public int ActiveTabIndex => _activeTabIndex;
         public PanelTabData? ActiveTab =>
@@ -563,7 +569,16 @@ namespace DesktopPlus
                 if (Math.Abs(diff.X) > TabDragThreshold || Math.Abs(diff.Y) > TabDragThreshold)
                 {
                     _isTabDragPending = false;
-                    StartTabDrag(switchIndex);
+                    if (movementMode == "titlebar" && !IsTabDetachModifierPressed())
+                    {
+                        // In titlebar mode, dragging tabs should move the panel.
+                        // Hold Ctrl to force tab detach/reorder drag.
+                        BeginManualWindowDrag(this);
+                    }
+                    else
+                    {
+                        StartTabDrag(switchIndex);
+                    }
                 }
             };
 

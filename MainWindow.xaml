@@ -1041,6 +1041,35 @@
                                               Margin="0"
                                               Checked="StartupToggle_Changed"
                                               Unchecked="StartupToggle_Changed"/>
+
+                                    <Border Height="1"
+                                            Background="{StaticResource CardBorder}"
+                                            Margin="0,14,0,12"/>
+
+                                    <TextBlock Text="{DynamicResource Loc.GeneralUpdatesLabel}"
+                                               Foreground="{StaticResource Muted}"
+                                               FontSize="12"
+                                               Margin="0,0,0,8"/>
+
+                                    <CheckBox x:Name="AutoUpdateToggle"
+                                              Content="{DynamicResource Loc.GeneralAutoUpdateCheckbox}"
+                                              Style="{StaticResource AccentCheckBox}"
+                                              Margin="0"
+                                              Checked="AutoUpdateToggle_Changed"
+                                              Unchecked="AutoUpdateToggle_Changed"/>
+
+                                    <Button x:Name="CheckUpdatesButton"
+                                            Content="{DynamicResource Loc.GeneralCheckUpdatesButton}"
+                                            Style="{StaticResource GhostButton}"
+                                            Padding="10,6"
+                                            Margin="0,10,0,0"
+                                            HorizontalAlignment="Left"
+                                            Click="CheckUpdatesButton_Click"/>
+
+                                    <TextBlock x:Name="CurrentVersionText"
+                                               Foreground="{StaticResource Muted}"
+                                               FontSize="11"
+                                               Margin="0,8,0,0"/>
                                 </StackPanel>
                             </Border>
                         </Grid>

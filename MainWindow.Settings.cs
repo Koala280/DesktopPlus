@@ -68,6 +68,7 @@ namespace DesktopPlus
                 }
                 CurrentLanguageCode = _languageCode;
                 _closeBehavior = string.IsNullOrWhiteSpace(state.CloseBehavior) ? CloseBehaviorMinimize : state.CloseBehavior;
+                _autoCheckUpdates = state.AutoCheckUpdates;
                 if (!string.Equals(_closeBehavior, CloseBehaviorMinimize, StringComparison.OrdinalIgnoreCase) &&
                     !string.Equals(_closeBehavior, CloseBehaviorExit, StringComparison.OrdinalIgnoreCase))
                 {
@@ -265,6 +266,7 @@ namespace DesktopPlus
                     ActiveLayoutName = activeLayoutName,
                     Language = language,
                     StartWithWindows = startWithWindows,
+                    AutoCheckUpdates = mainWindow?._autoCheckUpdates ?? false,
                     CloseBehavior = closeBehavior,
                     DesktopAutoSort = desktopAutoSort,
                     GlobalShortcuts = new GlobalShortcutSettings

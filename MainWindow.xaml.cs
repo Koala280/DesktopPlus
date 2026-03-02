@@ -958,11 +958,16 @@ namespace DesktopPlus
             {
                 StartupToggle.IsChecked = _startWithWindows;
             }
+            if (AutoUpdateToggle != null)
+            {
+                AutoUpdateToggle.IsChecked = _autoCheckUpdates;
+            }
             if (CloseBehaviorCombo != null)
             {
                 CloseBehaviorCombo.SelectedValue = _closeBehavior;
             }
             _suspendGeneralHandlers = false;
+            UpdateGeneralVersionLabel();
         }
 
         private void LanguageCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -979,6 +984,7 @@ namespace DesktopPlus
                 SetDesktopAutoSortStatus(_desktopAutoSort.AutoSortEnabled
                     ? GetString("Loc.AutoSortStatusEnabled")
                     : GetString("Loc.AutoSortStatusDisabled"));
+                ApplyGeneralSettingsToUi();
                 SaveSettings();
             }
         }
@@ -1014,6 +1020,10 @@ namespace DesktopPlus
             ConfigureDesktopAutoSortWatcher();
             _isUiReady = true;
             ApplyStartupWindowVisibilityPreference();
+            if (_autoCheckUpdates && IsVisible)
+            {
+                _ = CheckForUpdatesAsync(userInitiated: false);
+            }
 
             if (MainTabs != null)
             {

@@ -709,23 +709,48 @@ namespace DesktopPlus
 
         private static DragDropEffects ResolveDesiredDropEffect(DragDropEffects allowed, DragDropEffects fallbackDefault)
         {
+            DragDropKeyStates keyStates = DragDropKeyStates.None;
+            var modifiers = Keyboard.Modifiers;
+            if (modifiers.HasFlag(ModifierKeys.Control))
+            {
+                keyStates |= DragDropKeyStates.ControlKey;
+            }
+            if (modifiers.HasFlag(ModifierKeys.Shift))
+            {
+                keyStates |= DragDropKeyStates.ShiftKey;
+            }
+            if (modifiers.HasFlag(ModifierKeys.Alt))
+            {
+                keyStates |= DragDropKeyStates.AltKey;
+            }
+
+            return ResolveDesiredDropEffect(allowed, fallbackDefault, keyStates);
+        }
+
+        private static DragDropEffects ResolveDesiredDropEffect(
+            DragDropEffects allowed,
+            DragDropEffects fallbackDefault,
+            DragDropKeyStates keyStates)
+        {
             if (allowed == DragDropEffects.None)
             {
                 allowed = DragDropEffects.Copy | DragDropEffects.Move | DragDropEffects.Link;
             }
 
-            var modifiers = Keyboard.Modifiers;
             DragDropEffects preferred;
 
-            if (modifiers.HasFlag(ModifierKeys.Control) && modifiers.HasFlag(ModifierKeys.Shift))
+            bool controlPressed = (keyStates & DragDropKeyStates.ControlKey) == DragDropKeyStates.ControlKey;
+            bool shiftPressed = (keyStates & DragDropKeyStates.ShiftKey) == DragDropKeyStates.ShiftKey;
+
+            if (controlPressed && shiftPressed)
             {
                 preferred = DragDropEffects.Link;
             }
-            else if (modifiers.HasFlag(ModifierKeys.Control))
+            else if (controlPressed)
             {
                 preferred = DragDropEffects.Copy;
             }
-            else if (modifiers.HasFlag(ModifierKeys.Shift))
+            else if (shiftPressed)
             {
                 preferred = DragDropEffects.Move;
             }
@@ -739,6 +764,23 @@ namespace DesktopPlus
             if (IsAllowedEffect(allowed, DragDropEffects.Move)) return DragDropEffects.Move;
             if (IsAllowedEffect(allowed, DragDropEffects.Link)) return DragDropEffects.Link;
             return DragDropEffects.None;
+        }
+
+        private DragDropEffects ResolveIncomingDropEffect(DragEventArgs e, IReadOnlyCollection<string> droppedItems)
+        {
+            if (droppedItems == null || droppedItems.Count == 0)
+            {
+                return DragDropEffects.None;
+            }
+
+            var fallback = ShouldDefaultDropToMove(droppedItems) ? DragDropEffects.Move : DragDropEffects.Copy;
+            var desired = ResolveDesiredDropEffect(e.AllowedEffects, fallback, e.KeyStates);
+            if (desired == DragDropEffects.None)
+            {
+                desired = fallback;
+            }
+
+            return desired;
         }
 
         private bool TryCopySelectionToClipboard(bool cut)
@@ -1458,12 +1500,7 @@ namespace DesktopPlus
                 var droppedItems = ExtractFileDropPaths(e.Data);
                 if (droppedItems.Count > 0)
                 {
-                    var fallback = ShouldDefaultDropToMove(droppedItems) ? DragDropEffects.Move : DragDropEffects.Copy;
-                    var desired = ResolveDesiredDropEffect(e.AllowedEffects, fallback);
-                    if (desired == DragDropEffects.None)
-                    {
-                        desired = fallback;
-                    }
+                    var desired = ResolveIncomingDropEffect(e, droppedItems);
 
                     bool changed = ImportIncomingFileSystemItems(droppedItems, desired);
                     e.Effects = changed ? desired : DragDropEffects.None;
@@ -1617,14 +1654,7 @@ namespace DesktopPlus
             var droppedItems = ExtractFileDropPaths(e.Data);
             if (droppedItems.Count == 0) return;
 
-            var fallback = ShouldDefaultDropToMove(droppedItems) ? DragDropEffects.Move : DragDropEffects.Copy;
-            var requestedEffect = e.Effects != DragDropEffects.None
-                ? e.Effects
-                : ResolveDesiredDropEffect(e.AllowedEffects, fallback);
-            if (requestedEffect == DragDropEffects.None)
-            {
-                requestedEffect = fallback;
-            }
+            var requestedEffect = ResolveIncomingDropEffect(e, droppedItems);
 
             bool changed = ImportIncomingFileSystemItems(droppedItems, requestedEffect);
             e.Effects = changed ? requestedEffect : DragDropEffects.None;
@@ -1657,8 +1687,7 @@ namespace DesktopPlus
                 }
                 else
                 {
-                    var fallback = ShouldDefaultDropToMove(droppedItems) ? DragDropEffects.Move : DragDropEffects.Copy;
-                    e.Effects = ResolveDesiredDropEffect(e.AllowedEffects, fallback);
+                    e.Effects = ResolveIncomingDropEffect(e, droppedItems);
                 }
             }
             else
