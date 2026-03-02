@@ -13,7 +13,11 @@
         AllowDrop="True"
         Drop="Window_Drop"
         PreviewDragOver="Window_DragOver"
-        PreviewMouseWheel="Window_PreviewMouseWheel">
+        PreviewMouseWheel="Window_PreviewMouseWheel"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display"
+        TextOptions.TextRenderingMode="ClearType">
     <Window.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
@@ -60,7 +64,7 @@
                 BorderBrush="{StaticResource PanelBorder}"
                 BorderThickness="1"
                 CornerRadius="16"
-                Padding="1"
+                Padding="0"
                 SnapsToDevicePixels="True">
             <Grid ClipToBounds="True">
             <Grid.RowDefinitions>

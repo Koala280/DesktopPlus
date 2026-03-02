@@ -594,21 +594,22 @@ namespace DesktopPlus
                 ApplyVisualState(switchIndex == _activeTabIndex);
             };
 
-            // Right-click context menu
+            // Right-click context menu (styled to match panel theme)
             var contextMenu = new System.Windows.Controls.ContextMenu();
+            StyleTabContextMenu(contextMenu);
 
-            var renameItem = new System.Windows.Controls.MenuItem { Header = MainWindow.GetString("Loc.TabRename") };
+            var renameItem = CreateStyledMenuItem(MainWindow.GetString("Loc.TabRename"));
             int renameIndex = index;
             renameItem.Click += (_, __) => ShowTabRenameDialog(renameIndex);
             contextMenu.Items.Add(renameItem);
 
-            var closeMenuItem = new System.Windows.Controls.MenuItem { Header = MainWindow.GetString("Loc.TabClose") };
+            var closeMenuItem = CreateStyledMenuItem(MainWindow.GetString("Loc.TabClose"));
             closeMenuItem.IsEnabled = _tabs.Count > 1;
             int closeMenuIndex = index;
             closeMenuItem.Click += (_, __) => RemoveTab(closeMenuIndex);
             contextMenu.Items.Add(closeMenuItem);
 
-            var closeOthersItem = new System.Windows.Controls.MenuItem { Header = MainWindow.GetString("Loc.TabCloseOthers") };
+            var closeOthersItem = CreateStyledMenuItem(MainWindow.GetString("Loc.TabCloseOthers"));
             closeOthersItem.IsEnabled = _tabs.Count > 1;
             int keepIndex = index;
             closeOthersItem.Click += (_, __) =>
@@ -628,6 +629,85 @@ namespace DesktopPlus
             border.ContextMenu = contextMenu;
 
             return border;
+        }
+
+        private static void StyleTabContextMenu(System.Windows.Controls.ContextMenu menu)
+        {
+            menu.Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(38, 43, 54));
+            menu.BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(58, 65, 78));
+            menu.BorderThickness = new Thickness(1);
+            menu.Padding = new Thickness(4, 6, 4, 6);
+            menu.Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(242, 245, 250));
+            menu.FontSize = 12.5;
+            menu.FontFamily = new System.Windows.Media.FontFamily("Segoe UI");
+            menu.HasDropShadow = true;
+
+            // Override the ContextMenu template for rounded corners
+            var template = new ControlTemplate(typeof(System.Windows.Controls.ContextMenu));
+            var borderFactory = new FrameworkElementFactory(typeof(Border));
+            borderFactory.SetValue(Border.BackgroundProperty, menu.Background);
+            borderFactory.SetValue(Border.BorderBrushProperty, menu.BorderBrush);
+            borderFactory.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+            borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(10));
+            borderFactory.SetValue(Border.PaddingProperty, new Thickness(2, 6, 2, 6));
+            borderFactory.SetValue(Border.SnapsToDevicePixelsProperty, true);
+
+            var dropShadow = new System.Windows.Media.Effects.DropShadowEffect
+            {
+                BlurRadius = 16,
+                ShadowDepth = 2,
+                Opacity = 0.4,
+                Color = System.Windows.Media.Colors.Black
+            };
+            borderFactory.SetValue(Border.EffectProperty, dropShadow);
+
+            var itemsPresenter = new FrameworkElementFactory(typeof(System.Windows.Controls.ItemsPresenter));
+            borderFactory.AppendChild(itemsPresenter);
+            template.VisualTree = borderFactory;
+            menu.Template = template;
+        }
+
+        private static System.Windows.Controls.MenuItem CreateStyledMenuItem(string header)
+        {
+            var item = new System.Windows.Controls.MenuItem
+            {
+                Header = header,
+                Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(232, 236, 244)),
+                FontSize = 12.5,
+            };
+
+            // Custom template for dark styled menu items
+            var template = new ControlTemplate(typeof(System.Windows.Controls.MenuItem));
+            var border = new FrameworkElementFactory(typeof(Border), "MenuItemBorder");
+            border.SetValue(Border.BackgroundProperty, System.Windows.Media.Brushes.Transparent);
+            border.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+            border.SetValue(Border.PaddingProperty, new Thickness(12, 7, 16, 7));
+            border.SetValue(Border.MarginProperty, new Thickness(2, 1, 2, 1));
+            border.SetValue(Border.CursorProperty, System.Windows.Input.Cursors.Hand);
+
+            var contentPresenter = new FrameworkElementFactory(typeof(System.Windows.Controls.ContentPresenter));
+            contentPresenter.SetValue(System.Windows.Controls.ContentPresenter.ContentSourceProperty, "Header");
+            contentPresenter.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
+            border.AppendChild(contentPresenter);
+
+            template.VisualTree = border;
+
+            // Hover trigger
+            var hoverTrigger = new Trigger { Property = System.Windows.Controls.MenuItem.IsHighlightedProperty, Value = true };
+            hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty,
+                new SolidColorBrush(System.Windows.Media.Color.FromRgb(50, 57, 70)), "MenuItemBorder"));
+            template.Triggers.Add(hoverTrigger);
+
+            // Disabled trigger
+            var disabledTrigger = new Trigger { Property = System.Windows.Controls.MenuItem.IsEnabledProperty, Value = false };
+            disabledTrigger.Setters.Add(new Setter(System.Windows.Controls.MenuItem.ForegroundProperty,
+                new SolidColorBrush(System.Windows.Media.Color.FromRgb(100, 108, 125))));
+            disabledTrigger.Setters.Add(new Setter(Border.CursorProperty,
+                System.Windows.Input.Cursors.Arrow, "MenuItemBorder"));
+            template.Triggers.Add(disabledTrigger);
+
+            item.Template = template;
+            return item;
         }
 
         private bool ShouldShowSeparator(int index, bool thisTabIsActive)

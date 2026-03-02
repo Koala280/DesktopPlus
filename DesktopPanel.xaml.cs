@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -69,6 +70,10 @@ namespace DesktopPlus
         private CancellationTokenSource? _searchCts;
         private bool _deferSortUntilSearchComplete;
         private CancellationTokenSource? _folderLoadCts;
+        private bool _useLightweightItemVisuals;
+        private FileSystemWatcher? _folderContentWatcher;
+        private FileSystemWatcher? _folderParentWatcher;
+        private CancellationTokenSource? _folderWatcherRefreshCts;
         private bool _suppressSearchTextChanged = false;
         private readonly HashSet<string> _searchInjectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly List<System.Windows.Controls.ListBoxItem> _searchInjectedItems = new List<System.Windows.Controls.ListBoxItem>();
@@ -144,7 +149,7 @@ namespace DesktopPlus
             uint uFlags);
         private static readonly Thickness ExpandedChromeBorderThickness = new Thickness(1);
         private static readonly Thickness CollapsedChromeBorderThickness = new Thickness(1);
-        private static readonly Thickness ExpandedChromePadding = new Thickness(1);
+        private static readonly Thickness ExpandedChromePadding = new Thickness(0);
         private static readonly Thickness CollapsedChromePadding = new Thickness(0);
         public bool IsPreviewPanel { get; set; } = false;
         public PanelKind PanelType { get; set; } = PanelKind.None;
@@ -182,6 +187,10 @@ namespace DesktopPlus
                 _folderLoadCts?.Cancel();
                 _folderLoadCts?.Dispose();
                 _folderLoadCts = null;
+                StopFolderWatchers();
+                _folderWatcherRefreshCts?.Cancel();
+                _folderWatcherRefreshCts?.Dispose();
+                _folderWatcherRefreshCts = null;
 
                 MainWindow.AppearanceChanged -= OnAppearanceChanged;
                 if (_windowSource != null)
@@ -388,10 +397,8 @@ namespace DesktopPlus
         {
             if (ContentFrame == null) return;
             ContentFrame.Visibility = Visibility.Visible;
-            ContentFrame.RenderTransformOrigin = new Point(0.5, 0);
-
+            ContentFrame.RenderTransform = Transform.Identity;
             ContentFrame.Opacity = 0;
-            ContentFrame.RenderTransform = new ScaleTransform(1, 0.92);
 
             var fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(280))
             {
@@ -403,21 +410,7 @@ namespace DesktopPlus
                 ContentFrame.BeginAnimation(OpacityProperty, null);
                 ContentFrame.Opacity = 1;
             };
-            var scaleY = new DoubleAnimation(0.92, 1, TimeSpan.FromMilliseconds(320))
-            {
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-            };
-
-            scaleY.Completed += (s, e) =>
-            {
-                if (ContentFrame.RenderTransform is ScaleTransform completedSt)
-                {
-                    completedSt.BeginAnimation(ScaleTransform.ScaleYProperty, null);
-                    completedSt.ScaleY = 1;
-                }
-            };
             ContentFrame.BeginAnimation(OpacityProperty, fadeIn);
-            ((ScaleTransform)ContentFrame.RenderTransform).BeginAnimation(ScaleTransform.ScaleYProperty, scaleY);
         }
 
         private void AnimateShadow(bool expanding)
@@ -557,16 +550,19 @@ namespace DesktopPlus
                 return;
             }
 
-            if (collapsed)
+            bool hasMultipleTabs = _tabs.Count > 1;
+            if (hasMultipleTabs)
             {
+                // Multi-tab headers blend into content without a divider.
                 HeaderBar.BorderThickness = new Thickness(0);
                 return;
             }
 
-            bool hasMultipleTabs = _tabs.Count > 1;
-            HeaderBar.BorderThickness = hasMultipleTabs
-                ? new Thickness(0)
-                : new Thickness(0, 0, 0, 1);
+            // Keep single-tab header layout height stable across collapsed/expanded states.
+            HeaderBar.BorderThickness = new Thickness(0, 0, 0, 1);
+            HeaderBar.BorderBrush = collapsed
+                ? System.Windows.Media.Brushes.Transparent
+                : (TryFindResource("PanelBorder") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.Transparent);
         }
 
         private bool IsBottomAligned(double top, double height)
@@ -1134,11 +1130,7 @@ namespace DesktopPlus
             if (ContentFrame != null)
             {
                 ContentFrame.BeginAnimation(OpacityProperty, null);
-                if (ContentFrame.RenderTransform is ScaleTransform st)
-                {
-                    st.BeginAnimation(ScaleTransform.ScaleYProperty, null);
-                    st.ScaleY = 1;
-                }
+                ContentFrame.RenderTransform = Transform.Identity;
                 ContentFrame.Opacity = isContentVisible ? 1 : 0;
             }
             if (HeaderShadow != null && wasAnimating)

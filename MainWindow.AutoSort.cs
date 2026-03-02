@@ -1115,7 +1115,7 @@ namespace DesktopPlus
                         }
                         else
                         {
-                            File.Move(entry, targetPath);
+                            ShortcutFileTransfer.MoveFile(entry, targetPath);
                         }
 
                         result.MovedCount++;

@@ -21,6 +21,7 @@ namespace DesktopPlus
         private const int FolderUiBatchSizeDefault = 8;
         private const int FolderUiBatchSizePhotos = 3;
         private const int FolderUiBatchDelayMs = 1;
+        private const int FolderLightweightVisualThreshold = 700;
 
         private bool IsSearchRequestCurrent(CancellationTokenSource cts)
         {
@@ -123,7 +124,7 @@ namespace DesktopPlus
 
             try
             {
-                File.Move(sourcePath, targetPath);
+                ShortcutFileTransfer.MoveFile(sourcePath, targetPath);
                 if (refreshAfterChange)
                 {
                     LoadFolder(currentFolderPath, saveSettings: false);
@@ -195,7 +196,7 @@ namespace DesktopPlus
 
             try
             {
-                File.Copy(sourcePath, targetPath, overwrite: false);
+                ShortcutFileTransfer.CopyFile(sourcePath, targetPath, overwrite: false);
                 if (refreshAfterChange)
                 {
                     LoadFolder(currentFolderPath, saveSettings: false);
@@ -369,6 +370,8 @@ namespace DesktopPlus
             ResetSearchState(clearSearchBox: true);
             PanelType = PanelKind.Folder;
             currentFolderPath = folderPath;
+            StartOrUpdateFolderWatchers(folderPath);
+            _useLightweightItemVisuals = false;
             PinnedItems.Clear();
 
             string? parentFolderPath = Path.GetDirectoryName(folderPath);
@@ -408,9 +411,11 @@ namespace DesktopPlus
         public void LoadList(IEnumerable<string> items, bool saveSettings = true)
         {
             CancelPendingFolderLoad();
+            StopFolderWatchers();
             ResetSearchState(clearSearchBox: true);
             PanelType = PanelKind.List;
             currentFolderPath = "";
+            _useLightweightItemVisuals = false;
             FileList.Items.Clear();
             PinnedItems.Clear();
             _baseItemPaths.Clear();
@@ -434,9 +439,11 @@ namespace DesktopPlus
         public void ClearPanelItems()
         {
             CancelPendingFolderLoad();
+            StopFolderWatchers();
             ResetSearchState(clearSearchBox: true);
             PanelType = PanelKind.None;
             currentFolderPath = "";
+            _useLightweightItemVisuals = false;
             PinnedItems.Clear();
             FileList.Items.Clear();
             _baseItemPaths.Clear();
@@ -451,18 +458,34 @@ namespace DesktopPlus
 
             try
             {
-                List<string> entries = await Task.Run(() => EnumerateVisibleFolderEntries(folderPath, token), token);
-                token.ThrowIfCancellationRequested();
+                List<string> entries = await Task.Run(() => EnumerateVisibleFolderEntries(folderPath, token));
+                if (token.IsCancellationRequested)
+                {
+                    return;
+                }
 
                 if (!IsFolderLoadRequestCurrent(cts, folderPath) || entries.Count == 0)
                 {
                     return;
                 }
 
+                bool useLightweightVisuals = entries.Count >= FolderLightweightVisualThreshold;
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    if (IsFolderLoadRequestCurrent(cts, folderPath))
+                    {
+                        _useLightweightItemVisuals = useLightweightVisuals;
+                    }
+                }, System.Windows.Threading.DispatcherPriority.Send, token);
+
                 int uiBatchSize = GetFolderLoadBatchSize();
                 for (int start = 0; start < entries.Count; start += uiBatchSize)
                 {
-                    token.ThrowIfCancellationRequested();
+                    if (token.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
                     string[] batch = entries
                         .Skip(start)
                         .Take(uiBatchSize)
@@ -500,11 +523,11 @@ namespace DesktopPlus
                             FileList.Items.Add(listItem);
                             _baseItemPaths.Add(entryPath);
                         }
-                    }, System.Windows.Threading.DispatcherPriority.ContextIdle, token);
+                    }, System.Windows.Threading.DispatcherPriority.ContextIdle);
 
                     if (start + uiBatchSize < entries.Count)
                     {
-                        await Task.Delay(FolderUiBatchDelayMs, token);
+                        await Task.Delay(FolderUiBatchDelayMs);
                     }
                 }
 
@@ -518,7 +541,7 @@ namespace DesktopPlus
                     SortCurrentFolderItemsInPlace();
                     _ = Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Background);
                     UpdateDropZoneVisibility();
-                }, System.Windows.Threading.DispatcherPriority.Background, token);
+                }, System.Windows.Threading.DispatcherPriority.Background);
             }
             catch (OperationCanceledException)
             {
@@ -552,7 +575,11 @@ namespace DesktopPlus
             {
                 foreach (string directoryPath in Directory.EnumerateDirectories(folderPath))
                 {
-                    token.ThrowIfCancellationRequested();
+                    if (token.IsCancellationRequested)
+                    {
+                        return entries;
+                    }
+
                     if (ShouldShowPath(directoryPath))
                     {
                         entries.Add(directoryPath);
@@ -561,16 +588,16 @@ namespace DesktopPlus
 
                 foreach (string filePath in Directory.EnumerateFiles(folderPath))
                 {
-                    token.ThrowIfCancellationRequested();
+                    if (token.IsCancellationRequested)
+                    {
+                        return entries;
+                    }
+
                     if (ShouldShowPath(filePath))
                     {
                         entries.Add(filePath);
                     }
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
             }
             catch
             {

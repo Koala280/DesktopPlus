@@ -549,8 +549,48 @@ namespace DesktopPlus
             newPanel.Width = _panel.Width;
             newPanel.Height = _panel.Height;
             newPanel.expandedHeight = _panel.expandedHeight > 0 ? _panel.expandedHeight : _panel.Height;
-            newPanel.Left = _panel.Left + 36;
-            newPanel.Top = _panel.Top + 36;
+            const double sideGap = 20;
+            double preferredLeft = _panel.Left + _panel.Width + sideGap;
+            double targetLeft = preferredLeft;
+            double targetTop = _panel.Top;
+
+            try
+            {
+                int sourceLeft = (int)Math.Round(_panel.Left);
+                int sourceTop = (int)Math.Round(_panel.Top);
+                int sourceWidth = Math.Max(1, (int)Math.Round(_panel.Width));
+                int sourceHeight = Math.Max(1, (int)Math.Round(_panel.Height));
+                var sourceRect = new System.Drawing.Rectangle(sourceLeft, sourceTop, sourceWidth, sourceHeight);
+                var workArea = WinForms.Screen.FromRectangle(sourceRect).WorkingArea;
+
+                double maxLeft = workArea.Right - newPanel.Width;
+                double minLeft = workArea.Left;
+                double leftFallback = _panel.Left - newPanel.Width - sideGap;
+
+                if (preferredLeft <= maxLeft)
+                {
+                    targetLeft = preferredLeft;
+                }
+                else if (leftFallback >= minLeft)
+                {
+                    targetLeft = leftFallback;
+                }
+                else
+                {
+                    targetLeft = Math.Max(minLeft, Math.Min(preferredLeft, maxLeft));
+                }
+
+                double maxTop = workArea.Bottom - newPanel.Height;
+                targetTop = Math.Max(workArea.Top, Math.Min(targetTop, maxTop));
+            }
+            catch
+            {
+                targetLeft = preferredLeft;
+                targetTop = _panel.Top;
+            }
+
+            newPanel.Left = targetLeft;
+            newPanel.Top = targetTop;
             newPanel.baseTopPosition = newPanel.Top;
             newPanel.collapsedTopPosition = newPanel.Top;
             newPanel.PanelTitle.Text = MainWindow.GetString("Loc.PanelDefaultTitle");

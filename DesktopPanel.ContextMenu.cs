@@ -643,9 +643,7 @@ namespace DesktopPlus
                 var removeItem = new MenuItem { Header = MainWindow.GetString("Loc.ContextRemoveFromPanel") };
                 removeItem.Click += (_, _) =>
                 {
-                    string singleName = GetSelectedItemDisplayName(selectedItems[0]);
-                    if (ConfirmDeleteAction(panelOnly: true, selectedItems.Count, singleName) &&
-                        RemoveItemsFromPanel(selectedItems))
+                    if (RemoveItemsFromPanel(selectedItems))
                     {
                         MainWindow.SaveSettings();
                         MainWindow.NotifyPanelsChanged();

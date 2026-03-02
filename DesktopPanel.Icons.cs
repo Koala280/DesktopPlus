@@ -74,6 +74,14 @@ namespace DesktopPlus
             new Dictionary<string, (int Width, int Height)>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, ImageSource> PhotoPreviewCache =
             new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Queue<string> PhotoDimensionsCacheOrder = new Queue<string>();
+        private static readonly Queue<string> PhotoPreviewCacheOrder = new Queue<string>();
+        private const int PhotoDimensionsCacheLimit = 4096;
+        private const int PhotoPreviewCacheLimit = 220;
+        private static readonly Dictionary<string, ImageSource> ExplorerIconCache =
+            new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Queue<string> ExplorerIconCacheOrder = new Queue<string>();
+        private const int ExplorerIconCacheLimit = 512;
 
         private enum DetailsSortColumn
         {
@@ -88,16 +96,139 @@ namespace DesktopPlus
         private DetailsSortColumn _detailsSortColumn = DetailsSortColumn.Name;
         private bool _detailsSortAscending = true;
 
-        private ImageSource? LoadExplorerStyleIcon(string filePath, int size = 256)
+        private static bool IsPathSpecificIconExtension(string extension)
         {
+            return string.Equals(extension, ".exe", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(extension, ".lnk", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(extension, ".url", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(extension, ".ico", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(extension, ".scr", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int NormalizeIconRequestSize(int requestedSize)
+        {
+            if (requestedSize <= 24) return 24;
+            if (requestedSize <= 32) return 32;
+            if (requestedSize <= 48) return 48;
+            if (requestedSize <= 64) return 64;
+            if (requestedSize <= 96) return 96;
+            if (requestedSize <= 128) return 128;
+            return 256;
+        }
+
+        private string BuildExplorerIconCacheKey(string path, bool isFolder, int normalizedSize)
+        {
+            if (isFolder)
+            {
+                return _useLightweightItemVisuals
+                    ? $"folder|{normalizedSize}"
+                    : $"folderpath|{normalizedSize}|{path}";
+            }
+
+            string extension = Path.GetExtension(path);
+            bool usePathSpecificKey = !_useLightweightItemVisuals && IsPathSpecificIconExtension(extension);
+            if (usePathSpecificKey)
+            {
+                return $"path|{normalizedSize}|{path}";
+            }
+
+            if (string.IsNullOrWhiteSpace(extension))
+            {
+                return $"file|{normalizedSize}";
+            }
+
+            return $"ext|{normalizedSize}|{extension}";
+        }
+
+        private static void StoreExplorerIconCacheEntry(string cacheKey, ImageSource iconSource)
+        {
+            lock (ExplorerIconCache)
+            {
+                if (ExplorerIconCache.ContainsKey(cacheKey))
+                {
+                    ExplorerIconCache[cacheKey] = iconSource;
+                    return;
+                }
+
+                ExplorerIconCache[cacheKey] = iconSource;
+                ExplorerIconCacheOrder.Enqueue(cacheKey);
+
+                while (ExplorerIconCacheOrder.Count > ExplorerIconCacheLimit)
+                {
+                    string evictedKey = ExplorerIconCacheOrder.Dequeue();
+                    ExplorerIconCache.Remove(evictedKey);
+                }
+            }
+        }
+
+        private static void StorePhotoPreviewCacheEntry(string path, ImageSource previewSource)
+        {
+            lock (PhotoPreviewCache)
+            {
+                if (PhotoPreviewCache.ContainsKey(path))
+                {
+                    PhotoPreviewCache[path] = previewSource;
+                    return;
+                }
+
+                PhotoPreviewCache[path] = previewSource;
+                PhotoPreviewCacheOrder.Enqueue(path);
+
+                while (PhotoPreviewCacheOrder.Count > PhotoPreviewCacheLimit)
+                {
+                    string evictedPath = PhotoPreviewCacheOrder.Dequeue();
+                    PhotoPreviewCache.Remove(evictedPath);
+                }
+            }
+        }
+
+        private static void StorePhotoDimensionsCacheEntry(string path, int width, int height)
+        {
+            lock (PhotoDimensionsCache)
+            {
+                if (PhotoDimensionsCache.ContainsKey(path))
+                {
+                    PhotoDimensionsCache[path] = (width, height);
+                    return;
+                }
+
+                PhotoDimensionsCache[path] = (width, height);
+                PhotoDimensionsCacheOrder.Enqueue(path);
+
+                while (PhotoDimensionsCacheOrder.Count > PhotoDimensionsCacheLimit)
+                {
+                    string evictedPath = PhotoDimensionsCacheOrder.Dequeue();
+                    PhotoDimensionsCache.Remove(evictedPath);
+                }
+            }
+        }
+
+        private ImageSource? LoadExplorerStyleIcon(string filePath, bool isFolder, int size = 256)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+            {
+                return null;
+            }
+
+            int normalizedSize = NormalizeIconRequestSize(size);
+            string cacheKey = BuildExplorerIconCacheKey(filePath, isFolder, normalizedSize);
+            lock (ExplorerIconCache)
+            {
+                if (ExplorerIconCache.TryGetValue(cacheKey, out var cachedIcon))
+                {
+                    return cachedIcon;
+                }
+            }
+
+            IntPtr hBitmap = IntPtr.Zero;
             try
             {
                 Guid iidImageFactory = typeof(IShellItemImageFactory).GUID;
                 SHCreateItemFromParsingName(filePath, null!, iidImageFactory, out IShellItemImageFactory imageFactory);
 
-                SIZE iconSize = new SIZE(size, size);
+                SIZE iconSize = new SIZE(normalizedSize, normalizedSize);
 
-                imageFactory.GetImage(iconSize, SIIGBF.SIIGBF_RESIZETOFIT | SIIGBF.SIIGBF_BIGGERSIZEOK, out IntPtr hBitmap);
+                imageFactory.GetImage(iconSize, SIIGBF.SIIGBF_RESIZETOFIT | SIIGBF.SIIGBF_BIGGERSIZEOK, out hBitmap);
 
                 if (hBitmap != IntPtr.Zero)
                 {
@@ -105,9 +236,14 @@ namespace DesktopPlus
                         hBitmap,
                         IntPtr.Zero,
                         Int32Rect.Empty,
-                        BitmapSizeOptions.FromWidthAndHeight(size, size));
+                        BitmapSizeOptions.FromWidthAndHeight(normalizedSize, normalizedSize));
 
-                    DeleteObject(hBitmap);
+                    if (bitmapSource.CanFreeze)
+                    {
+                        bitmapSource.Freeze();
+                    }
+
+                    StoreExplorerIconCacheEntry(cacheKey, bitmapSource);
                     return bitmapSource;
                 }
             }
@@ -115,8 +251,29 @@ namespace DesktopPlus
             {
                 Debug.WriteLine($"Icon konnte nicht geladen werden: {ex.Message}");
             }
+            finally
+            {
+                if (hBitmap != IntPtr.Zero)
+                {
+                    DeleteObject(hBitmap);
+                }
+            }
 
             return null;
+        }
+
+        private ImageSource? LoadExplorerStyleIcon(string filePath, int size = 256)
+        {
+            bool isFolder = false;
+            try
+            {
+                isFolder = Directory.Exists(filePath);
+            }
+            catch
+            {
+            }
+
+            return LoadExplorerStyleIcon(filePath, isFolder, size);
         }
 
         private static ImageSource? LoadPhotoPreviewSource(string path, int decodePixelWidth)
@@ -144,10 +301,7 @@ namespace DesktopPlus
                 bitmap.EndInit();
                 bitmap.Freeze();
 
-                lock (PhotoPreviewCache)
-                {
-                    PhotoPreviewCache[path] = bitmap;
-                }
+                StorePhotoPreviewCacheEntry(path, bitmap);
 
                 return bitmap;
             }
@@ -198,7 +352,7 @@ namespace DesktopPlus
 
             System.Windows.Controls.Image icon = new System.Windows.Controls.Image
             {
-                Source = LoadExplorerStyleIcon(path, (int)(48 * zoomFactor)),
+                Source = LoadExplorerStyleIcon(path, isFolder, (int)(48 * zoomFactor)),
                 Width = iconSize,
                 Height = iconSize,
                 Margin = new Thickness(0, 0, 0, 5),
@@ -670,7 +824,7 @@ namespace DesktopPlus
 
             System.Windows.Controls.Image icon = new System.Windows.Controls.Image
             {
-                Source = LoadExplorerStyleIcon(path, (int)Math.Max(48, iconSize * 2)),
+                Source = LoadExplorerStyleIcon(path, isFolder, (int)Math.Max(48, iconSize * 2)),
                 Width = iconSize,
                 Height = iconSize,
                 Margin = new Thickness(0, 0, 6, 0),
@@ -708,6 +862,7 @@ namespace DesktopPlus
             double previewAspect = defaultPreviewAspect;
             if (!isBackButton &&
                 !isFolder &&
+                !_useLightweightItemVisuals &&
                 IsPhotoPath(path) &&
                 TryGetPhotoPixelDimensions(path, out int pixelWidth, out int pixelHeight))
             {
@@ -750,12 +905,17 @@ namespace DesktopPlus
 
             System.Windows.Controls.Image icon = new System.Windows.Controls.Image
             {
-                Source = (!isBackButton && !isFolder && IsPhotoPath(path))
+                Source = (!isBackButton && !isFolder && !_useLightweightItemVisuals && IsPhotoPath(path))
                     ? (LoadPhotoPreviewSource(
                         path,
                         (int)Math.Ceiling(Math.Max(previewWidth, previewHeight) * 2.0))
-                        ?? LoadExplorerStyleIcon(path, 256))
-                    : LoadExplorerStyleIcon(path, IsPhotoPath(path) ? 256 : 128),
+                        ?? LoadExplorerStyleIcon(path, isFolder, 256))
+                    : LoadExplorerStyleIcon(
+                        path,
+                        isFolder,
+                        _useLightweightItemVisuals
+                            ? 128
+                            : (IsPhotoPath(path) ? 256 : 128)),
                 Width = Math.Max(18, previewWidth - 8),
                 Height = previewHeight - 8,
                 Stretch = Stretch.Uniform,
@@ -778,7 +938,9 @@ namespace DesktopPlus
 
             TextBlock metaText = new TextBlock
             {
-                Text = GetPhotoMetaText(path, isFolder, isBackButton),
+                Text = _useLightweightItemVisuals
+                    ? string.Empty
+                    : GetPhotoMetaText(path, isFolder, isBackButton),
                 FontSize = metaSize,
                 Foreground = metadataBrush,
                 TextAlignment = TextAlignment.Center,
@@ -1098,10 +1260,7 @@ namespace DesktopPlus
 
                 width = frame.PixelWidth;
                 height = frame.PixelHeight;
-                lock (PhotoDimensionsCache)
-                {
-                    PhotoDimensionsCache[path] = (width, height);
-                }
+                StorePhotoDimensionsCacheEntry(path, width, height);
 
                 return true;
             }

@@ -25,6 +25,7 @@ namespace DesktopPlus
     public partial class DesktopPanel : Window
     {
         private const string InternalListReorderFormat = "DesktopPlus.InternalListReorder";
+        private const string InternalPanelDragSourceFormat = "DesktopPlus.InternalPanelDragSource";
         private const string PreferredDropEffectFormat = "Preferred DropEffect";
         private const int PreferredDropEffectCopy = 1;
         private const int PreferredDropEffectMove = 2;
@@ -707,6 +708,30 @@ namespace DesktopPlus
             return effect != DragDropEffects.None && (allowed & effect) == effect;
         }
 
+        private bool TryGetInternalPanelDragSourceId(System.Windows.IDataObject dataObject, out string sourcePanelId)
+        {
+            sourcePanelId = string.Empty;
+            if (dataObject == null || !dataObject.GetDataPresent(InternalPanelDragSourceFormat))
+            {
+                return false;
+            }
+
+            try
+            {
+                object raw = dataObject.GetData(InternalPanelDragSourceFormat);
+                if (raw is string id && !string.IsNullOrWhiteSpace(id))
+                {
+                    sourcePanelId = id;
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
+        }
+
         private static DragDropEffects ResolveDesiredDropEffect(DragDropEffects allowed, DragDropEffects fallbackDefault)
         {
             DragDropKeyStates keyStates = DragDropKeyStates.None;
@@ -771,6 +796,13 @@ namespace DesktopPlus
             if (droppedItems == null || droppedItems.Count == 0)
             {
                 return DragDropEffects.None;
+            }
+
+            if (TryGetInternalPanelDragSourceId(e.Data, out string sourcePanelId) &&
+                !string.Equals(sourcePanelId, PanelId, StringComparison.OrdinalIgnoreCase))
+            {
+                // Internal panel-to-panel drags always move.
+                return DragDropEffects.Move;
             }
 
             var fallback = ShouldDefaultDropToMove(droppedItems) ? DragDropEffects.Move : DragDropEffects.Copy;
@@ -994,12 +1026,6 @@ namespace DesktopPlus
 
             if (PanelType == PanelKind.List)
             {
-                string singleName = GetSelectedItemDisplayName(selectedItems[0]);
-                if (!ConfirmDeleteAction(panelOnly: true, selectedItems.Count, singleName))
-                {
-                    return true;
-                }
-
                 if (RemoveItemsFromPanel(selectedItems))
                 {
                     anyChanges = true;
@@ -1101,9 +1127,7 @@ namespace DesktopPlus
 
                 if (pseudoItems.Count > 0)
                 {
-                    string singleName = GetSelectedItemDisplayName(pseudoItems[0]);
-                    if (ConfirmDeleteAction(panelOnly: true, pseudoItems.Count, singleName) &&
-                        RemoveItemsFromPanel(pseudoItems))
+                    if (RemoveItemsFromPanel(pseudoItems))
                     {
                         anyChanges = true;
                     }
@@ -1374,6 +1398,7 @@ namespace DesktopPlus
 
                         var dataObject = new System.Windows.DataObject();
                         dataObject.SetFileDropList(fileDrop);
+                        dataObject.SetData(InternalPanelDragSourceFormat, PanelId);
                         // Don't force a preferred drop effect for drag-and-drop.
                         // Let the target (e.g. Explorer) choose native default behavior
                         // like move on same volume and copy across volumes.

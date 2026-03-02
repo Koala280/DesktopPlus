@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-03-03
+
+### Changed
+
+- Panel-to-panel drag and drop now always uses move semantics for internal DesktopPlus transfers.
+- Removing entries from a panel no longer prompts for confirmation when the action is panel-only.
+
+### Fixed
+
+- Fixed inconsistent copy/move behavior when dragging files from one panel into another panel.
+- Fixed unnecessary confirmation prompts for "Remove from panel" actions from keyboard/context menu flows.
+- Fixed sporadically broken `.lnk` shortcuts after file transfers by preserving and normalizing shortcut targets during move/copy operations.
+
+## [1.0.9] - 2026-03-02
+
+### Added
+
+- Added live folder synchronization for folder panels via filesystem watchers, including automatic refresh on create/delete/rename/metadata changes.
+- Added recovery handling for bound folder path changes so panels react when the target folder is renamed, recreated, or temporarily removed.
+
+### Changed
+
+- Improved drag and drop behavior in folder panels to default to move in the expected Windows-style scenarios.
+- Improved panel creation flow from panel settings to place new panels adjacent instead of overlapping.
+- Improved panel hover feedback on file/folder items with higher-contrast hover background and outline.
+- Improved folder loading performance for very large directories with lightweight rendering mode and icon cache reuse.
+- Limited image preview/dimension caches to prevent excessive memory growth in photo-heavy folders.
+
+### Fixed
+
+- Fixed panel refresh reliability when external file operations changed panel-bound folders (including stale entries after folder delete).
+- Fixed folder-load cancellation path to avoid debugger-breaking cancellation exceptions during normal refresh/cancel cycles.
+- Fixed subtle visual size jitter during panel collapse/expand transitions by stabilizing content/header state handling.
+
 ## [1.0.8] - 2026-03-01
 
 ### Fixed
