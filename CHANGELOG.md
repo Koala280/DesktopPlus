@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-03-03
+
+### Changed
+
+- Installer default target directory now uses `%ProgramFiles%\DesktopPlus` instead of `%LOCALAPPDATA%\Programs\DesktopPlus`.
+- Installer now requests administrator rights so installations into `Program Files` succeed reliably.
+
 ## [1.0.10] - 2026-03-03
 
 ### Changed
