@@ -459,6 +459,18 @@ namespace DesktopPlus
             }
         }
 
+        private UpdateActionDialogChoice ShowUpdateActionDialog(string latestVersionText, string currentVersionText)
+        {
+            var dialog = new UpdateActionDialog(latestVersionText, currentVersionText)
+            {
+                Owner = this,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner
+            };
+
+            dialog.ShowDialog();
+            return dialog.SelectedAction;
+        }
+
         private static bool TryStartSilentInstaller(string installerPath, out Process? installerProcess)
         {
             installerProcess = null;
@@ -844,13 +856,8 @@ namespace DesktopPlus
 
                     if (userInitiated)
                     {
-                        var answer = System.Windows.MessageBox.Show(
-                            string.Format(GetString("Loc.MsgUpdateAvailableActions"), latestVersionText, currentVersionText),
-                            GetString("Loc.MsgInfo"),
-                            MessageBoxButton.YesNoCancel,
-                            MessageBoxImage.Information);
-
-                        if (answer == MessageBoxResult.Yes)
+                        var action = ShowUpdateActionDialog(latestVersionText, currentVersionText);
+                        if (action == UpdateActionDialogChoice.OpenReleasePage)
                         {
                             if (!TryOpenExternalUrl(latestRelease.HtmlUrl))
                             {
@@ -861,7 +868,7 @@ namespace DesktopPlus
                                     MessageBoxImage.Error);
                             }
                         }
-                        else if (answer == MessageBoxResult.No)
+                        else if (action == UpdateActionDialogChoice.InstallNow)
                         {
                             await TryInstallLatestUpdateInteractivelyAsync(latestRelease, latestVersionText);
                         }

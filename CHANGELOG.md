@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.17] - 2026-03-04
+
+### Changed
+
+- Replaced the manual update `Yes/No/Cancel` message box with a custom, styled update action dialog.
+- The update dialog now uses self-explanatory action buttons: open release page, install now, or later.
+
+### Added
+
+- Added new localized labels for the update action dialog in built-in `de`, `en`, and `lv` languages.
+
 ## [1.0.16] - 2026-03-04
 
 ### Changed
