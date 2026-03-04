@@ -399,7 +399,7 @@ namespace DesktopPlus
             _notifyIcon.Visible = true;
             _notifyIcon.Text = "DesktopPlus";
             UpdateNotifyIconMenu();
-            _notifyIcon.DoubleClick += (s, e) => ShowMainWindow();
+            _notifyIcon.DoubleClick += (s, e) => Dispatcher.Invoke(ShowMainWindow);
             _notifyIcon.MouseUp += NotifyIcon_MouseUp;
         }
 
@@ -667,11 +667,22 @@ namespace DesktopPlus
 
         private void ShowMainWindow()
         {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(ShowMainWindow);
+                return;
+            }
+
             CloseTrayMenuWindow();
 
             if (TryApplyPendingUpdateOnMainWindowOpen())
             {
                 return;
+            }
+
+            if (!IsVisible)
+            {
+                Show();
             }
 
             ShowInTaskbar = true;
@@ -680,11 +691,7 @@ namespace DesktopPlus
                 WindowState = WindowState.Normal;
             }
 
-            if (!IsVisible)
-            {
-                Show();
-            }
-
+            Visibility = Visibility.Visible;
             Activate();
             Focus();
         }

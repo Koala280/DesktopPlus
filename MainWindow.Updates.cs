@@ -28,6 +28,7 @@ namespace DesktopPlus
         private bool _isUpdateCheckInProgress = false;
         private bool _isUpdateDownloadInProgress = false;
         private string _updateDownloadVersionInProgress = string.Empty;
+        private string _manualUpdateStatusText = string.Empty;
 
         private static bool IsDevelopmentBuildForUpdates
         {
@@ -581,6 +582,127 @@ namespace DesktopPlus
             }
         }
 
+        private void SetManualUpdateStatus(string? statusText)
+        {
+            _manualUpdateStatusText = statusText?.Trim() ?? string.Empty;
+            UpdateGeneralVersionLabel();
+        }
+
+        private void ShutdownForUpdateInstall()
+        {
+            _isExit = true;
+            IsExiting = true;
+            CloseTrayMenuWindow();
+            StopDesktopAutoSortWatcher();
+            _notifyIcon?.Dispose();
+            SaveSettingsImmediate();
+            System.Windows.Application.Current.Shutdown();
+        }
+
+        private async Task<bool> TryInstallLatestUpdateInteractivelyAsync(
+            LatestReleaseInfo latestRelease,
+            string latestVersionText)
+        {
+            if (latestRelease == null)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(latestRelease.InstallerDownloadUrl))
+            {
+                System.Windows.MessageBox.Show(
+                    GetString("Loc.MsgUpdateNoInstallerAsset"),
+                    GetString("Loc.MsgError"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return false;
+            }
+
+            string normalizedLatestVersion = NormalizeVersionToken(latestVersionText);
+            if (string.IsNullOrWhiteSpace(normalizedLatestVersion))
+            {
+                normalizedLatestVersion = latestVersionText;
+            }
+
+            SetManualUpdateStatus(string.Format(GetString("Loc.UpdateStatusDownloading"), normalizedLatestVersion));
+            bool sameVersionDownloadRunning =
+                _isUpdateDownloadInProgress &&
+                string.Equals(
+                    NormalizeVersionToken(_updateDownloadVersionInProgress),
+                    NormalizeVersionToken(normalizedLatestVersion),
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (sameVersionDownloadRunning)
+            {
+                DateTime waitUntil = DateTime.UtcNow.AddMinutes(4);
+                while (_isUpdateDownloadInProgress &&
+                       DateTime.UtcNow < waitUntil &&
+                       string.Equals(
+                           NormalizeVersionToken(_updateDownloadVersionInProgress),
+                           NormalizeVersionToken(normalizedLatestVersion),
+                           StringComparison.OrdinalIgnoreCase))
+                {
+                    await Task.Delay(250);
+                }
+            }
+
+            bool hasInstallerForVersion =
+                TryReadPendingUpdateInfo(out var existingPendingInfo) &&
+                string.Equals(
+                    NormalizeVersionToken(existingPendingInfo.Version),
+                    NormalizeVersionToken(normalizedLatestVersion),
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (!hasInstallerForVersion)
+            {
+                await EnsureLatestInstallerDownloadedAsync(latestRelease, normalizedLatestVersion);
+            }
+
+            if (!TryReadPendingUpdateInfo(out var pendingInfo) ||
+                !string.Equals(
+                    NormalizeVersionToken(pendingInfo.Version),
+                    NormalizeVersionToken(normalizedLatestVersion),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                SetManualUpdateStatus(string.Empty);
+                System.Windows.MessageBox.Show(
+                    GetString("Loc.MsgUpdateDownloadFailedForInstall"),
+                    GetString("Loc.MsgError"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return false;
+            }
+
+            SetManualUpdateStatus(string.Format(GetString("Loc.UpdateStatusInstalling"), normalizedLatestVersion));
+
+            if (!TryStartSilentInstaller(pendingInfo.InstallerPath, out var installerProcess))
+            {
+                SetManualUpdateStatus(string.Empty);
+                System.Windows.MessageBox.Show(
+                    GetString("Loc.MsgUpdateInstallStartFailed"),
+                    GetString("Loc.MsgError"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return false;
+            }
+
+            if (installerProcess != null)
+            {
+                TrySchedulePostUpdateRelaunch(
+                    installerProcess.Id,
+                    GetPostUpdateExecutableCandidates());
+            }
+
+            System.Windows.MessageBox.Show(
+                string.Format(GetString("Loc.MsgUpdateInstallStarting"), normalizedLatestVersion),
+                GetString("Loc.MsgInfo"),
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            ShutdownForUpdateInstall();
+            return true;
+        }
+
         private bool TryApplyPendingUpdateAndExit()
         {
             if (!TryReadPendingUpdateInfo(out var pendingInfo))
@@ -607,13 +729,7 @@ namespace DesktopPlus
                     GetPostUpdateExecutableCandidates());
             }
 
-            _isExit = true;
-            IsExiting = true;
-            CloseTrayMenuWindow();
-            StopDesktopAutoSortWatcher();
-            _notifyIcon?.Dispose();
-            SaveSettingsImmediate();
-            System.Windows.Application.Current.Shutdown();
+            ShutdownForUpdateInstall();
             return true;
         }
 
@@ -669,19 +785,25 @@ namespace DesktopPlus
                     if (userInitiated)
                     {
                         var answer = System.Windows.MessageBox.Show(
-                            string.Format(GetString("Loc.MsgUpdateAvailable"), latestVersionText, currentVersionText),
+                            string.Format(GetString("Loc.MsgUpdateAvailableActions"), latestVersionText, currentVersionText),
                             GetString("Loc.MsgInfo"),
-                            MessageBoxButton.YesNo,
+                            MessageBoxButton.YesNoCancel,
                             MessageBoxImage.Information);
 
-                        if (answer == MessageBoxResult.Yes &&
-                            !TryOpenExternalUrl(latestRelease.HtmlUrl))
+                        if (answer == MessageBoxResult.Yes)
                         {
-                            System.Windows.MessageBox.Show(
-                                GetString("Loc.MsgUpdateOpenPageFailed"),
-                                GetString("Loc.MsgError"),
-                                MessageBoxButton.OK,
-                                MessageBoxImage.Error);
+                            if (!TryOpenExternalUrl(latestRelease.HtmlUrl))
+                            {
+                                System.Windows.MessageBox.Show(
+                                    GetString("Loc.MsgUpdateOpenPageFailed"),
+                                    GetString("Loc.MsgError"),
+                                    MessageBoxButton.OK,
+                                    MessageBoxImage.Error);
+                            }
+                        }
+                        else if (answer == MessageBoxResult.No)
+                        {
+                            await TryInstallLatestUpdateInteractivelyAsync(latestRelease, latestVersionText);
                         }
                     }
                 }
@@ -720,9 +842,12 @@ namespace DesktopPlus
         {
             if (CurrentVersionText != null)
             {
-                CurrentVersionText.Text = string.Format(
+                string baseVersionText = string.Format(
                     GetString("Loc.GeneralCurrentVersion"),
                     GetInstalledVersionText());
+                CurrentVersionText.Text = string.IsNullOrWhiteSpace(_manualUpdateStatusText)
+                    ? baseVersionText
+                    : $"{baseVersionText}\n{_manualUpdateStatusText}";
             }
 
             if (CheckUpdatesButton != null)

@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.15] - 2026-03-04
+
+### Changed
+
+- Manual "Check for updates" prompt now offers three actions: open release page, install update silently now, or abort.
+- Added visible manual update progress text in the main window while downloading/installing from the interactive update flow.
+
+### Fixed
+
+- Restoring the main window via tray icon double-click now consistently returns the app in normal (not minimized) state.
+- Added full Latvian coverage for the new interactive update prompts and status texts.
+- Corrected Latvian built-in UI strings to use proper diacritics.
+
 ## [1.0.14] - 2026-03-04
 
 ### Added
