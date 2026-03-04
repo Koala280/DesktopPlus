@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.25] - 2026-03-05
+
+### Changed
+
+- Restored automatic background update checks to a 10-minute interval after local short-cycle validation.
+- Startup launches (`--startup`) now keep the main window hidden/minimized consistently while panels continue loading.
+
+### Fixed
+
+- Post-update relaunch now waits for the source DesktopPlus process to exit before starting the new process, preventing duplicate app windows after update.
+
 ## [1.0.23] - 2026-03-05
 
 ### Changed

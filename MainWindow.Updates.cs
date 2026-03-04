@@ -580,7 +580,10 @@ namespace DesktopPlus
             return candidates;
         }
 
-        private static void TrySchedulePostUpdateRelaunch(int installerProcessId, IReadOnlyList<string> executableCandidates)
+        private static void TrySchedulePostUpdateRelaunch(
+            int installerProcessId,
+            int sourceProcessId,
+            IReadOnlyList<string> executableCandidates)
         {
             if (installerProcessId <= 0 ||
                 executableCandidates == null ||
@@ -606,7 +609,9 @@ namespace DesktopPlus
 
             string relaunchScript =
                 $"$installerId={installerProcessId};" +
+                $"$sourceAppId={sourceProcessId};" +
                 "try { Wait-Process -Id $installerId -ErrorAction SilentlyContinue } catch { };" +
+                "if ($sourceAppId -gt 0) { try { Wait-Process -Id $sourceAppId -ErrorAction SilentlyContinue } catch { } };" +
                 "Start-Sleep -Milliseconds 1200;" +
                 $"$targets=@({targetArrayLiteral});" +
                 "foreach ($target in $targets) {" +
@@ -741,6 +746,7 @@ namespace DesktopPlus
             {
                 TrySchedulePostUpdateRelaunch(
                     installerProcess.Id,
+                    Environment.ProcessId,
                     GetPostUpdateExecutableCandidates());
             }
 
@@ -795,6 +801,7 @@ namespace DesktopPlus
             {
                 TrySchedulePostUpdateRelaunch(
                     installerProcess.Id,
+                    Environment.ProcessId,
                     GetPostUpdateExecutableCandidates());
             }
 

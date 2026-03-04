@@ -151,7 +151,7 @@ namespace DesktopPlus
                         layout.DefaultPanelPresetName = _layoutDefaultPresetName;
                     }
                 }
-                int openedPanels = 0;
+                bool startupLaunch = IsStartupLaunch();
                 foreach (var winData in savedWindows)
                 {
                     if (winData.IsHidden) continue;
@@ -166,13 +166,9 @@ namespace DesktopPlus
                         continue;
                     }
 
-                    var opened = Dispatcher.Invoke(() => OpenPanelFromData(winData));
-                    if (opened != null)
-                    {
-                        openedPanels++;
-                    }
+                    Dispatcher.Invoke(() => OpenPanelFromData(winData));
                 }
-                _hideMainWindowOnStartup = openedPanels > 0 && IsStartupLaunch();
+                _hideMainWindowOnStartup = startupLaunch;
 
                 AppearanceChanged?.Invoke();
                 NotifyPanelsChanged();
