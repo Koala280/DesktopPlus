@@ -24,8 +24,15 @@ namespace DesktopPlus
         private static readonly Regex VersionPrefixRegex = new Regex(@"^\d+(?:\.\d+){0,3}", RegexOptions.Compiled);
         private static readonly HttpClient UpdateHttpClient = CreateUpdateRequestHttpClient();
         private static readonly HttpClient UpdateDownloadHttpClient = CreateUpdateDownloadHttpClient();
+        private static readonly TimeSpan[] AutomaticUpdateCheckAttemptOffsets = new[]
+        {
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromMinutes(1),
+            TimeSpan.FromMinutes(3)
+        };
         private bool _autoCheckUpdates = false;
         private bool _isUpdateCheckInProgress = false;
+        private bool _isAutomaticUpdateRoutineInProgress = false;
         private bool _isUpdateDownloadInProgress = false;
         private string _updateDownloadVersionInProgress = string.Empty;
         private string _manualUpdateStatusText = string.Empty;
@@ -750,22 +757,75 @@ namespace DesktopPlus
 
         private async Task CheckForUpdatesAsync(bool userInitiated)
         {
-            if (IsDevelopmentBuildForUpdates)
+            if (userInitiated)
+            {
+                await CheckForUpdatesOnceAsync(userInitiated: true);
+                return;
+            }
+
+            if (IsDevelopmentBuildForUpdates ||
+                !_autoCheckUpdates ||
+                _isExit ||
+                _isAutomaticUpdateRoutineInProgress)
             {
                 return;
+            }
+
+            _isAutomaticUpdateRoutineInProgress = true;
+            try
+            {
+                DateTime routineStartUtc = DateTime.UtcNow;
+                foreach (var attemptOffset in AutomaticUpdateCheckAttemptOffsets)
+                {
+                    if (_isExit || !_autoCheckUpdates)
+                    {
+                        return;
+                    }
+
+                    TimeSpan remainingDelay = attemptOffset - (DateTime.UtcNow - routineStartUtc);
+                    if (remainingDelay > TimeSpan.Zero)
+                    {
+                        await Task.Delay(remainingDelay);
+                    }
+
+                    if (_isExit || !_autoCheckUpdates)
+                    {
+                        return;
+                    }
+
+                    bool success = await CheckForUpdatesOnceAsync(userInitiated: false);
+                    if (success)
+                    {
+                        return;
+                    }
+                }
+            }
+            finally
+            {
+                _isAutomaticUpdateRoutineInProgress = false;
+            }
+        }
+
+        private async Task<bool> CheckForUpdatesOnceAsync(bool userInitiated)
+        {
+            if (IsDevelopmentBuildForUpdates)
+            {
+                return false;
             }
 
             if (_isUpdateCheckInProgress)
             {
-                return;
+                return false;
             }
 
             _isUpdateCheckInProgress = true;
             UpdateGeneralVersionLabel();
+            bool fetchSucceeded = false;
 
             try
             {
                 var latestRelease = await FetchLatestReleaseInfoAsync();
+                fetchSucceeded = true;
                 string currentVersionText = GetInstalledVersionText();
                 string latestVersionText = NormalizeVersionToken(latestRelease.TagName);
                 if (string.IsNullOrWhiteSpace(latestVersionText))
@@ -836,6 +896,8 @@ namespace DesktopPlus
                 _isUpdateCheckInProgress = false;
                 UpdateGeneralVersionLabel();
             }
+
+            return fetchSucceeded;
         }
 
         private void UpdateGeneralVersionLabel()

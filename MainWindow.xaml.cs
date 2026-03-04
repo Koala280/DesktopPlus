@@ -354,7 +354,6 @@ namespace DesktopPlus
             LoadSettings();
             RegisterGlobalShortcuts();
             NormalizeDesktopAutoSortSettings();
-            FileSearchIndex.EnsureStarted();
             ApplyLanguage(_languageCode);
             if (!Presets.Any())
             {

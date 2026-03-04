@@ -926,11 +926,7 @@ namespace DesktopPlus
                     return;
                 }
 
-                FileSearchIndex.EnsureStarted();
-
-                List<string> results = FileSearchIndex.IsReady
-                    ? await FileSearchIndex.SearchAsync(currentFolderPath, filter, SearchResultLimit, token)
-                    : await Task.Run(() => EnumerateMatches(currentFolderPath, filter, token), token);
+                List<string> results = await Task.Run(() => EnumerateMatches(currentFolderPath, filter, token), token);
 
                 token.ThrowIfCancellationRequested();
                 if (!IsSearchRequestCurrent(cts) || results.Count == 0)

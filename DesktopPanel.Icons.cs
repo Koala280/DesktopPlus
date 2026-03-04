@@ -74,15 +74,24 @@ namespace DesktopPlus
             new Dictionary<string, (int Width, int Height)>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, ImageSource> PhotoPreviewCache =
             new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, long> PhotoPreviewCacheSizeBytes =
+            new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         private static readonly Queue<string> PhotoDimensionsCacheOrder = new Queue<string>();
         private static readonly Queue<string> PhotoPreviewCacheOrder = new Queue<string>();
         private const int PhotoDimensionsCacheLimit = 4096;
-        private const int PhotoPreviewCacheLimit = 220;
-        private const int MaxNativePhotoDecodePixels = 32768;
+        private const int PhotoPreviewCacheLimit = 160;
+        private const int MaxNativePhotoDecodePixels = 16384;
+        private const int MaxPhotoPreviewDecodePixels = 2048;
+        private const long PhotoPreviewCacheBudgetBytes = 128L * 1024L * 1024L;
+        private static long PhotoPreviewCacheTotalBytes;
         private static readonly Dictionary<string, ImageSource> ExplorerIconCache =
             new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, long> ExplorerIconCacheSizeBytes =
+            new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         private static readonly Queue<string> ExplorerIconCacheOrder = new Queue<string>();
-        private const int ExplorerIconCacheLimit = 512;
+        private const int ExplorerIconCacheLimit = 320;
+        private const long ExplorerIconCacheBudgetBytes = 64L * 1024L * 1024L;
+        private static long ExplorerIconCacheTotalBytes;
         private const double PhotoCardHorizontalPadding = 0;
         private const double PhotoCardHorizontalMargin = 0;
         private const double PhotoWrapSafetyDip = 0.35;
@@ -160,19 +169,42 @@ namespace DesktopPlus
         {
             lock (ExplorerIconCache)
             {
+                long entryBytes = GetApproxDecodedByteSize(iconSource);
                 if (ExplorerIconCache.ContainsKey(cacheKey))
                 {
                     ExplorerIconCache[cacheKey] = iconSource;
-                    return;
+                    if (ExplorerIconCacheSizeBytes.TryGetValue(cacheKey, out long existingBytes))
+                    {
+                        ExplorerIconCacheTotalBytes = Math.Max(0L, ExplorerIconCacheTotalBytes - existingBytes);
+                    }
+
+                    ExplorerIconCacheSizeBytes[cacheKey] = entryBytes;
+                    ExplorerIconCacheTotalBytes += entryBytes;
+                }
+                else
+                {
+                    ExplorerIconCache[cacheKey] = iconSource;
+                    ExplorerIconCacheOrder.Enqueue(cacheKey);
+                    ExplorerIconCacheSizeBytes[cacheKey] = entryBytes;
+                    ExplorerIconCacheTotalBytes += entryBytes;
                 }
 
-                ExplorerIconCache[cacheKey] = iconSource;
-                ExplorerIconCacheOrder.Enqueue(cacheKey);
-
-                while (ExplorerIconCacheOrder.Count > ExplorerIconCacheLimit)
+                while (ExplorerIconCacheOrder.Count > ExplorerIconCacheLimit ||
+                    ExplorerIconCacheTotalBytes > ExplorerIconCacheBudgetBytes)
                 {
+                    if (ExplorerIconCacheOrder.Count == 0)
+                    {
+                        break;
+                    }
+
                     string evictedKey = ExplorerIconCacheOrder.Dequeue();
-                    ExplorerIconCache.Remove(evictedKey);
+                    if (ExplorerIconCache.Remove(evictedKey) &&
+                        ExplorerIconCacheSizeBytes.TryGetValue(evictedKey, out long evictedBytes))
+                    {
+                        ExplorerIconCacheTotalBytes = Math.Max(0L, ExplorerIconCacheTotalBytes - evictedBytes);
+                    }
+
+                    ExplorerIconCacheSizeBytes.Remove(evictedKey);
                 }
             }
         }
@@ -181,21 +213,63 @@ namespace DesktopPlus
         {
             lock (PhotoPreviewCache)
             {
+                long entryBytes = GetApproxDecodedByteSize(previewSource);
                 if (PhotoPreviewCache.ContainsKey(path))
                 {
                     PhotoPreviewCache[path] = previewSource;
-                    return;
+                    if (PhotoPreviewCacheSizeBytes.TryGetValue(path, out long existingBytes))
+                    {
+                        PhotoPreviewCacheTotalBytes = Math.Max(0L, PhotoPreviewCacheTotalBytes - existingBytes);
+                    }
+
+                    PhotoPreviewCacheSizeBytes[path] = entryBytes;
+                    PhotoPreviewCacheTotalBytes += entryBytes;
+                }
+                else
+                {
+                    PhotoPreviewCache[path] = previewSource;
+                    PhotoPreviewCacheOrder.Enqueue(path);
+                    PhotoPreviewCacheSizeBytes[path] = entryBytes;
+                    PhotoPreviewCacheTotalBytes += entryBytes;
                 }
 
-                PhotoPreviewCache[path] = previewSource;
-                PhotoPreviewCacheOrder.Enqueue(path);
-
-                while (PhotoPreviewCacheOrder.Count > PhotoPreviewCacheLimit)
+                while (PhotoPreviewCacheOrder.Count > PhotoPreviewCacheLimit ||
+                    PhotoPreviewCacheTotalBytes > PhotoPreviewCacheBudgetBytes)
                 {
+                    if (PhotoPreviewCacheOrder.Count == 0)
+                    {
+                        break;
+                    }
+
                     string evictedPath = PhotoPreviewCacheOrder.Dequeue();
-                    PhotoPreviewCache.Remove(evictedPath);
+                    if (PhotoPreviewCache.Remove(evictedPath) &&
+                        PhotoPreviewCacheSizeBytes.TryGetValue(evictedPath, out long evictedBytes))
+                    {
+                        PhotoPreviewCacheTotalBytes = Math.Max(0L, PhotoPreviewCacheTotalBytes - evictedBytes);
+                    }
+
+                    PhotoPreviewCacheSizeBytes.Remove(evictedPath);
                 }
             }
+        }
+
+        private static long GetApproxDecodedByteSize(ImageSource? source)
+        {
+            if (source is BitmapSource bitmap &&
+                bitmap.PixelWidth > 0 &&
+                bitmap.PixelHeight > 0)
+            {
+                int bitsPerPixel = bitmap.Format.BitsPerPixel;
+                if (bitsPerPixel <= 0)
+                {
+                    bitsPerPixel = 32;
+                }
+
+                long rowBytes = ((long)bitmap.PixelWidth * bitsPerPixel + 7L) / 8L;
+                return Math.Max(0L, rowBytes * bitmap.PixelHeight);
+            }
+
+            return 0;
         }
 
         private static void StorePhotoDimensionsCacheEntry(string path, int width, int height)
@@ -318,11 +392,11 @@ namespace DesktopPlus
 
         private static int ResolvePhotoDecodePixels(string path, int decodePixelWidth)
         {
-            int requestedPixels = Math.Max(128, decodePixelWidth);
+            int requestedPixels = Math.Clamp(decodePixelWidth, 128, MaxPhotoPreviewDecodePixels);
             if (TryGetPhotoPixelDimensions(path, out int nativeWidth, out _))
             {
                 int boundedNativeWidth = Math.Clamp(nativeWidth, 128, MaxNativePhotoDecodePixels);
-                requestedPixels = Math.Max(requestedPixels, boundedNativeWidth);
+                requestedPixels = Math.Min(requestedPixels, boundedNativeWidth);
             }
 
             return requestedPixels;
@@ -1021,7 +1095,7 @@ namespace DesktopPlus
                     ? (LoadPhotoPreviewSource(
                         path,
                         GetRequestedPhotoDecodePixels(previewWidth, previewHeight, 2.6))
-                        ?? LoadExplorerStyleIcon(path, isFolder, 512))
+                        ?? LoadExplorerStyleIcon(path, isFolder, 256))
                     : LoadExplorerStyleIcon(
                         path,
                         isFolder,

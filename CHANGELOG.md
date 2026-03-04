@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.16] - 2026-03-04
+
+### Changed
+
+- Automatic background update checks now retry at fixed startup offsets: +30 seconds, +1 minute, and +3 minutes.
+- Removed eager global file-search index warmup during app startup and switched search to on-demand folder enumeration.
+
+### Fixed
+
+- Improved automatic update reliability after Windows restarts by retrying when the first startup-time network check fails.
+- Reduced memory usage in photo-heavy folders by capping preview decode size and enforcing byte budgets for icon/photo caches.
+
 ## [1.0.15] - 2026-03-04
 
 ### Changed
