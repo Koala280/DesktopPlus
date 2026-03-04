@@ -132,13 +132,15 @@ namespace DesktopPlus
             NameLabel.Visibility = Visibility.Collapsed;
             NameInput.Visibility = Visibility.Collapsed;
             PresetLabel.Text = MainWindow.GetString("Loc.LayoutsDefaultPreset");
-            FolderSection.Visibility = Visibility.Collapsed;
-            ViewSettingsSection.Visibility = Visibility.Collapsed;
+            Grid.SetColumn(PresetLabel, 0);
+            Grid.SetColumnSpan(PresetLabel, 3);
+            Grid.SetColumn(PresetSection, 0);
+            Grid.SetColumnSpan(PresetSection, 3);
+            DefaultFolderLabel.Visibility = Visibility.Collapsed;
+            DefaultFolderRow.Visibility = Visibility.Collapsed;
             PanelActionsSection.Visibility = Visibility.Collapsed;
-            ParentNavigationToggle.Visibility = Visibility.Collapsed;
             ResetPresetToStandardButton.Visibility = Visibility.Collapsed;
             FitContentButton.Visibility = Visibility.Collapsed;
-            Height = 430;
         }
 
         private void LoadPresetsForLayout(LayoutDefinition layout)
@@ -220,11 +222,21 @@ namespace DesktopPlus
 
             HoverToggle.IsChecked = _layout.PanelDefaultExpandOnHover;
             HiddenToggle.IsChecked = _layout.PanelDefaultShowHidden;
+            ParentNavigationToggle.IsChecked = _layout.PanelDefaultShowParentNavigationItem;
             FileExtensionsToggle.IsChecked = _layout.PanelDefaultShowFileExtensions;
             SettingsButtonToggle.IsChecked = _layout.PanelDefaultShowSettingsButton;
             FolderActionSelect.SelectedIndex = _layout.PanelDefaultOpenFoldersExternally ? 1 : 0;
+            SetOpenClickBehaviorSelection(_layout.PanelDefaultOpenItemsOnSingleClick);
             SetMovementModeSelection(_layout.PanelDefaultMovementMode);
             SetSearchVisibilitySelection(_layout.PanelDefaultSearchVisibilityMode);
+            SetViewModeSelection(_layout.PanelDefaultViewMode);
+            MetaTypeToggle.IsChecked = _layout.PanelDefaultShowMetadataType;
+            MetaSizeToggle.IsChecked = _layout.PanelDefaultShowMetadataSize;
+            MetaCreatedToggle.IsChecked = _layout.PanelDefaultShowMetadataCreated;
+            MetaModifiedToggle.IsChecked = _layout.PanelDefaultShowMetadataModified;
+            MetaDimensionsToggle.IsChecked = _layout.PanelDefaultShowMetadataDimensions;
+            ApplyMetadataOrderToUi(_layout.PanelDefaultMetadataOrder);
+            UpdateMetadataOptionsVisibility();
         }
 
         private void SetMovementModeSelection(string? mode)
@@ -407,16 +419,30 @@ namespace DesktopPlus
                 string movementMode = (MovementModeSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "titlebar";
                 string searchVisibilityMode = (SearchVisibilitySelect.SelectedItem as ComboBoxItem)?.Tag?.ToString()
                     ?? DesktopPanel.SearchVisibilityAlways;
+                string viewMode = (ViewModeSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString()
+                    ?? DesktopPanel.ViewModeIcons;
 
                 mainWindow.ApplyLayoutGlobalPanelSettings(
                     _layout,
                     showHidden: HiddenToggle.IsChecked == true,
+                    showParentNavigationItem: ParentNavigationToggle.IsChecked != false,
                     showFileExtensions: FileExtensionsToggle.IsChecked != false,
                     expandOnHover: HoverToggle.IsChecked == true,
                     openFoldersExternally: FolderActionSelect.SelectedIndex == 1,
+                    openItemsOnSingleClick: string.Equals(
+                        (OpenClickBehaviorSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString(),
+                        "single",
+                        StringComparison.OrdinalIgnoreCase),
                     showSettingsButton: SettingsButtonToggle.IsChecked != false,
                     movementMode: movementMode,
                     searchVisibilityMode: searchVisibilityMode,
+                    viewMode: viewMode,
+                    showMetadataType: MetaTypeToggle.IsChecked != false,
+                    showMetadataSize: MetaSizeToggle.IsChecked != false,
+                    showMetadataCreated: MetaCreatedToggle.IsChecked == true,
+                    showMetadataModified: MetaModifiedToggle.IsChecked != false,
+                    showMetadataDimensions: MetaDimensionsToggle.IsChecked != false,
+                    metadataOrder: GetMetadataOrderFromUi(),
                     defaultPresetName: (PresetSelect.SelectedItem as AppearancePreset)?.Name
                         ?? PresetSelect.SelectedValue as string
                         ?? _layout.DefaultPanelPresetName);

@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.19] - 2026-03-04
+
+### Changed
+
+- Reworked layout-level global panel settings to match the single-panel settings structure much more closely.
+- Added layout defaults for parent navigation item visibility, single/double-click open behavior, view mode, metadata visibility toggles, and metadata order.
+- Layout global settings now apply these defaults consistently to saved and currently open panels while preserving explicitly customized panel values.
+
+### Fixed
+
+- Improved photo view row sizing to use the actual viewport width as the primary layout width reference.
+- Adjusted photo collage row behavior for very wide single images so they can occupy a row cleanly without breaking packing.
+
 ## [1.0.18] - 2026-03-04
 
 ### Changed

@@ -1908,10 +1908,16 @@ namespace DesktopPlus
                 wrapPanel.SnapsToDevicePixels = !isPhotoMode;
 
                 double baseWidth = GetContentLayoutWidth();
-                double availableWidth = Math.Max(0, baseWidth - GetHorizontalMargin(wrapPanel));
+                double availableWidth;
                 if (isPhotoMode)
                 {
-                    availableWidth = Math.Max(0, availableWidth - PhotoWrapSafetyDip - GetPhotoScrollbarReserveWidth());
+                    // In photo mode, use viewport width directly (excludes scrollbar).
+                    double vw = ContentContainer.ViewportWidth;
+                    availableWidth = (!double.IsNaN(vw) && vw > 1) ? vw : baseWidth;
+                }
+                else
+                {
+                    availableWidth = Math.Max(0, baseWidth - GetHorizontalMargin(wrapPanel));
                 }
                 if (availableWidth > 0)
                 {
@@ -2020,18 +2026,16 @@ namespace DesktopPlus
                 return;
             }
 
-            // Horizontal gap between collage items; keep at zero for dense packing.
-            double gap = 0;
-            var wrapPanel = FindVisualChild<WrapPanel>(FileList);
-            double wrapWidth = 0;
-            if (wrapPanel != null)
+            // Use the viewport width (excludes scrollbar) as the ground truth for
+            // available space.  Fall back to ContentContainer.ActualWidth when the
+            // viewport hasn't been measured yet.
+            double viewportWidth = ContentContainer.ViewportWidth;
+            if (double.IsNaN(viewportWidth) || viewportWidth <= 1)
             {
-                wrapWidth = wrapPanel.Width > 1
-                    ? wrapPanel.Width
-                    : Math.Max(0, contentWidth - GetHorizontalMargin(wrapPanel));
+                viewportWidth = contentWidth;
             }
-            double fallbackWidth = Math.Max(0, contentWidth - GetPhotoScrollbarReserveWidth());
-            double availableWidth = Math.Max(120, wrapWidth > 1 ? wrapWidth : fallbackWidth);
+            double availableWidth = Math.Max(120, viewportWidth);
+            double gap = 0;
             double dpiScaleX = 1.0;
             try
             {
@@ -2041,16 +2045,6 @@ namespace DesktopPlus
             catch
             {
             }
-
-            double pixelAlignedAvailableWidth = Math.Floor(availableWidth * dpiScaleX) / dpiScaleX;
-            if (pixelAlignedAvailableWidth > 1)
-            {
-                availableWidth = pixelAlignedAvailableWidth;
-            }
-
-            // PhotoWrapSafetyDip is already subtracted in UpdateWrapPanelWidth when
-            // setting wrapPanel.Width, so do NOT subtract it again here.
-            availableWidth = Math.Max(120, availableWidth);
             double targetRowHeight = Math.Clamp(180 * zoomFactor, 110, 280);
             var photos = new List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>();
             foreach (ListBoxItem item in FileList.Items.OfType<ListBoxItem>())
@@ -2080,6 +2074,8 @@ namespace DesktopPlus
             var rows = BuildPhotoRows(photos, availableWidth, targetRowHeight);
             RebalancePhotoRows(rows);
 
+            System.Diagnostics.Debug.WriteLine($"[PhotoLayout] contentWidth={contentWidth:F1} viewportWidth={ContentContainer.ViewportWidth:F1} availableWidth={availableWidth:F1} dpiScaleX={dpiScaleX:F2} rows={rows.Count}");
+
             for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
             {
                 var row = rows[rowIndex];
@@ -2101,12 +2097,15 @@ namespace DesktopPlus
                     row.Select(entry => entry.Aspect).ToArray(),
                     targetRowPixels);
                 double rowHeight = (targetRowPixels / dpiScaleX) / rowAspectSum;
+                double rowWidthSum = 0;
                 for (int j = 0; j < count; j++)
                 {
                     double width = pixelWidths[j] / dpiScaleX;
+                    rowWidthSum += width;
                     ApplyPhotoTileSize(row[j].Container, row[j].Root, row[j].Layout, width, rowHeight, leftOffset: 0);
                     ReloadPhotoIfNeeded(row[j].Layout, width, rowHeight);
                 }
+                System.Diagnostics.Debug.WriteLine($"  row[{rowIndex}] count={count} usable={usableWidth:F1} targetPx={targetRowPixels} widthSum={rowWidthSum:F1} rowH={rowHeight:F1} aspects={string.Join(",", row.Select(r => r.Aspect.ToString("F2")))}");
             }
         }
 
@@ -2130,8 +2129,18 @@ namespace DesktopPlus
                 currentAspectSum += photo.Aspect;
 
                 int count = currentRow.Count;
-                if (count < 2)
+
+                // A single wide image (e.g. screenshot) that would fill the row on its own
+                // should be placed alone at full width.
+                if (count == 1)
                 {
+                    bool fillsRowAlone = photo.Aspect * targetRowHeight >= availableWidth * 0.85;
+                    if (fillsRowAlone)
+                    {
+                        rows.Add(currentRow);
+                        currentRow = new List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>();
+                        currentAspectSum = 0;
+                    }
                     continue;
                 }
 
@@ -2324,7 +2333,6 @@ namespace DesktopPlus
             double cardWidth = previewWidth + PhotoCardHorizontalPadding;
             double imageWidth = Math.Max(18, previewWidth);
             double imageHeight = Math.Max(18, previewHeight);
-            double textWidth = Math.Max(84, cardWidth - 8);
 
             var targetMargin = leftOffset > 0.5
                 ? new Thickness(leftOffset, 0, 0, 0)
@@ -2334,57 +2342,24 @@ namespace DesktopPlus
                 container.Margin = targetMargin;
             }
 
-            if (Math.Abs(container.Width - cardWidth) > 0.5)
-            {
-                container.Width = cardWidth;
-            }
-
-            if (Math.Abs(container.Height - imageHeight) > 0.5)
-            {
-                container.Height = imageHeight;
-            }
-
+            // Use exact values (no 0.5 threshold) to prevent cumulative rounding drift.
+            container.Width = cardWidth;
+            container.Height = imageHeight;
             container.Opacity = 1;
             container.IsHitTestVisible = true;
 
-            if (Math.Abs(root.Width - cardWidth) > 0.5)
-            {
-                root.Width = cardWidth;
-            }
+            root.Width = cardWidth;
+            root.Height = imageHeight;
             root.UseLayoutRounding = false;
 
-            if (Math.Abs(layout.ThumbnailFrame.Width - previewWidth) > 0.5)
-            {
-                layout.ThumbnailFrame.Width = previewWidth;
-            }
+            layout.ThumbnailFrame.Width = previewWidth;
+            layout.ThumbnailFrame.Height = previewHeight;
             layout.ThumbnailFrame.UseLayoutRounding = false;
 
-            if (Math.Abs(layout.ThumbnailFrame.Height - previewHeight) > 0.5)
-            {
-                layout.ThumbnailFrame.Height = previewHeight;
-            }
-
-            if (Math.Abs(layout.ThumbnailImage.Width - imageWidth) > 0.5)
-            {
-                layout.ThumbnailImage.Width = imageWidth;
-            }
+            layout.ThumbnailImage.Width = imageWidth;
+            layout.ThumbnailImage.Height = imageHeight;
             layout.ThumbnailImage.UseLayoutRounding = false;
             layout.ThumbnailImage.SnapsToDevicePixels = false;
-
-            if (Math.Abs(layout.ThumbnailImage.Height - imageHeight) > 0.5)
-            {
-                layout.ThumbnailImage.Height = imageHeight;
-            }
-
-            if (Math.Abs(layout.NameText.Width - textWidth) > 0.5)
-            {
-                layout.NameText.Width = textWidth;
-            }
-
-            if (Math.Abs(layout.MetaText.Width - textWidth) > 0.5)
-            {
-                layout.MetaText.Width = textWidth;
-            }
         }
 
         private double GetDetailsItemWidth()
