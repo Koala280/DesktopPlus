@@ -512,6 +512,29 @@ namespace DesktopPlus
             return string.Empty;
         }
 
+        private static string GetDefaultInstalledExecutablePath()
+        {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Programs",
+                "DesktopPlus",
+                "DesktopPlus.exe");
+        }
+
+        private static string GetPreferredStartupExecutablePath()
+        {
+            if (IsDevelopmentBuildForUpdates)
+            {
+                string installedPath = GetDefaultInstalledExecutablePath();
+                if (!string.IsNullOrWhiteSpace(installedPath) && File.Exists(installedPath))
+                {
+                    return installedPath;
+                }
+            }
+
+            return GetCurrentExecutablePath();
+        }
+
         private static string ExtractExecutablePathFromStartupValue(string startupValue)
         {
             if (string.IsNullOrWhiteSpace(startupValue))
@@ -619,13 +642,13 @@ namespace DesktopPlus
                     return false;
                 }
 
-                string currentPath = GetCurrentExecutablePath();
-                if (string.IsNullOrWhiteSpace(currentPath))
+                string expectedPath = GetPreferredStartupExecutablePath();
+                if (string.IsNullOrWhiteSpace(expectedPath))
                 {
                     return true;
                 }
 
-                return PathsPointToSameLocation(configuredPath, currentPath);
+                return PathsPointToSameLocation(configuredPath, expectedPath);
             }
             catch
             {
@@ -645,7 +668,7 @@ namespace DesktopPlus
                         throw new InvalidOperationException("Startup registry key could not be opened.");
                     }
 
-                    string exePath = GetCurrentExecutablePath();
+                    string exePath = GetPreferredStartupExecutablePath();
                     if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
                     {
                         throw new FileNotFoundException("Executable path for startup registration is invalid.", exePath);

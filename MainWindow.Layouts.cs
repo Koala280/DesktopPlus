@@ -101,6 +101,269 @@ namespace DesktopPlus
             layout.PanelDefaultMetadataOrder = DesktopPanel.NormalizeMetadataOrder(defaults.MetadataOrder);
         }
 
+        private static void ApplyLayoutDefaultsToPanelWhenMatching(
+            WindowData panel,
+            LayoutPanelDefaultsSnapshot oldDefaults,
+            LayoutPanelDefaultsSnapshot newDefaults)
+        {
+            if (panel.ShowHidden == oldDefaults.ShowHidden)
+            {
+                panel.ShowHidden = newDefaults.ShowHidden;
+            }
+
+            if (panel.ShowParentNavigationItem == oldDefaults.ShowParentNavigationItem)
+            {
+                panel.ShowParentNavigationItem = newDefaults.ShowParentNavigationItem;
+            }
+
+            if (panel.ShowFileExtensions == oldDefaults.ShowFileExtensions)
+            {
+                panel.ShowFileExtensions = newDefaults.ShowFileExtensions;
+            }
+
+            if (panel.ExpandOnHover == oldDefaults.ExpandOnHover)
+            {
+                panel.ExpandOnHover = newDefaults.ExpandOnHover;
+            }
+
+            if (panel.OpenFoldersExternally == oldDefaults.OpenFoldersExternally)
+            {
+                panel.OpenFoldersExternally = newDefaults.OpenFoldersExternally;
+            }
+
+            if (panel.OpenItemsOnSingleClick == oldDefaults.OpenItemsOnSingleClick)
+            {
+                panel.OpenItemsOnSingleClick = newDefaults.OpenItemsOnSingleClick;
+            }
+
+            if (panel.ShowSettingsButton == oldDefaults.ShowSettingsButton)
+            {
+                panel.ShowSettingsButton = newDefaults.ShowSettingsButton;
+            }
+
+            if (string.Equals(NormalizePanelMovementMode(panel.MovementMode), oldDefaults.MovementMode, StringComparison.OrdinalIgnoreCase))
+            {
+                panel.MovementMode = newDefaults.MovementMode;
+            }
+
+            if (string.Equals(DesktopPanel.NormalizeSearchVisibilityMode(panel.SearchVisibilityMode), oldDefaults.SearchVisibilityMode, StringComparison.OrdinalIgnoreCase))
+            {
+                panel.SearchVisibilityMode = newDefaults.SearchVisibilityMode;
+            }
+
+            if (string.Equals(DesktopPanel.NormalizeViewMode(panel.ViewMode), oldDefaults.ViewMode, StringComparison.OrdinalIgnoreCase))
+            {
+                panel.ViewMode = newDefaults.ViewMode;
+            }
+
+            if (panel.ShowMetadataType == oldDefaults.ShowMetadataType)
+            {
+                panel.ShowMetadataType = newDefaults.ShowMetadataType;
+            }
+
+            if (panel.ShowMetadataSize == oldDefaults.ShowMetadataSize)
+            {
+                panel.ShowMetadataSize = newDefaults.ShowMetadataSize;
+            }
+
+            if (panel.ShowMetadataCreated == oldDefaults.ShowMetadataCreated)
+            {
+                panel.ShowMetadataCreated = newDefaults.ShowMetadataCreated;
+            }
+
+            if (panel.ShowMetadataModified == oldDefaults.ShowMetadataModified)
+            {
+                panel.ShowMetadataModified = newDefaults.ShowMetadataModified;
+            }
+
+            if (panel.ShowMetadataDimensions == oldDefaults.ShowMetadataDimensions)
+            {
+                panel.ShowMetadataDimensions = newDefaults.ShowMetadataDimensions;
+            }
+
+            var normalizedPanelMetadataOrder = DesktopPanel.NormalizeMetadataOrder(panel.MetadataOrder);
+            if (normalizedPanelMetadataOrder.SequenceEqual(oldDefaults.MetadataOrder, StringComparer.OrdinalIgnoreCase))
+            {
+                panel.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(newDefaults.MetadataOrder);
+            }
+        }
+
+        private static void ApplyLayoutDefaultsToTabWhenMatching(
+            PanelTabData tab,
+            LayoutPanelDefaultsSnapshot oldDefaults,
+            LayoutPanelDefaultsSnapshot newDefaults)
+        {
+            if (tab.ShowHidden == oldDefaults.ShowHidden)
+            {
+                tab.ShowHidden = newDefaults.ShowHidden;
+            }
+
+            if (tab.ShowParentNavigationItem == oldDefaults.ShowParentNavigationItem)
+            {
+                tab.ShowParentNavigationItem = newDefaults.ShowParentNavigationItem;
+            }
+
+            if (tab.ShowFileExtensions == oldDefaults.ShowFileExtensions)
+            {
+                tab.ShowFileExtensions = newDefaults.ShowFileExtensions;
+            }
+
+            if (tab.OpenFoldersExternally == oldDefaults.OpenFoldersExternally)
+            {
+                tab.OpenFoldersExternally = newDefaults.OpenFoldersExternally;
+            }
+
+            if (tab.OpenItemsOnSingleClick == oldDefaults.OpenItemsOnSingleClick)
+            {
+                tab.OpenItemsOnSingleClick = newDefaults.OpenItemsOnSingleClick;
+            }
+
+            if (string.Equals(DesktopPanel.NormalizeViewMode(tab.ViewMode), oldDefaults.ViewMode, StringComparison.OrdinalIgnoreCase))
+            {
+                tab.ViewMode = newDefaults.ViewMode;
+            }
+
+            if (tab.ShowMetadataType == oldDefaults.ShowMetadataType)
+            {
+                tab.ShowMetadataType = newDefaults.ShowMetadataType;
+            }
+
+            if (tab.ShowMetadataSize == oldDefaults.ShowMetadataSize)
+            {
+                tab.ShowMetadataSize = newDefaults.ShowMetadataSize;
+            }
+
+            if (tab.ShowMetadataCreated == oldDefaults.ShowMetadataCreated)
+            {
+                tab.ShowMetadataCreated = newDefaults.ShowMetadataCreated;
+            }
+
+            if (tab.ShowMetadataModified == oldDefaults.ShowMetadataModified)
+            {
+                tab.ShowMetadataModified = newDefaults.ShowMetadataModified;
+            }
+
+            if (tab.ShowMetadataDimensions == oldDefaults.ShowMetadataDimensions)
+            {
+                tab.ShowMetadataDimensions = newDefaults.ShowMetadataDimensions;
+            }
+
+            var normalizedTabMetadataOrder = DesktopPanel.NormalizeMetadataOrder(tab.MetadataOrder);
+            if (normalizedTabMetadataOrder.SequenceEqual(oldDefaults.MetadataOrder, StringComparer.OrdinalIgnoreCase))
+            {
+                tab.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(newDefaults.MetadataOrder);
+            }
+        }
+
+        private static void ApplyLayoutDefaultsToPanelTabsWhenMatching(
+            WindowData panel,
+            LayoutPanelDefaultsSnapshot oldDefaults,
+            LayoutPanelDefaultsSnapshot newDefaults)
+        {
+            if (panel.Tabs == null || panel.Tabs.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var tab in panel.Tabs)
+            {
+                if (tab == null)
+                {
+                    continue;
+                }
+
+                tab.ViewMode = DesktopPanel.NormalizeViewMode(tab.ViewMode);
+                tab.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(tab.MetadataOrder);
+                ApplyLayoutDefaultsToTabWhenMatching(tab, oldDefaults, newDefaults);
+            }
+        }
+
+        private static void CopyTabBehaviorSettings(PanelTabData source, PanelTabData target)
+        {
+            target.ShowHidden = source.ShowHidden;
+            target.ShowParentNavigationItem = source.ShowParentNavigationItem;
+            target.ShowFileExtensions = source.ShowFileExtensions;
+            target.OpenFoldersExternally = source.OpenFoldersExternally;
+            target.OpenItemsOnSingleClick = source.OpenItemsOnSingleClick;
+            target.ViewMode = DesktopPanel.NormalizeViewMode(source.ViewMode);
+            target.ShowMetadataType = source.ShowMetadataType;
+            target.ShowMetadataSize = source.ShowMetadataSize;
+            target.ShowMetadataCreated = source.ShowMetadataCreated;
+            target.ShowMetadataModified = source.ShowMetadataModified;
+            target.ShowMetadataDimensions = source.ShowMetadataDimensions;
+            target.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(source.MetadataOrder);
+        }
+
+        private static PanelTabData? FindMatchingTab(IReadOnlyList<PanelTabData> sourceTabs, PanelTabData targetTab, int targetIndex)
+        {
+            if (!string.IsNullOrWhiteSpace(targetTab.TabId))
+            {
+                var byId = sourceTabs.FirstOrDefault(tab =>
+                    !string.IsNullOrWhiteSpace(tab.TabId) &&
+                    string.Equals(tab.TabId, targetTab.TabId, StringComparison.OrdinalIgnoreCase));
+                if (byId != null)
+                {
+                    return byId;
+                }
+            }
+
+            return targetIndex >= 0 && targetIndex < sourceTabs.Count ? sourceTabs[targetIndex] : null;
+        }
+
+        private static void CopyPanelTabBehaviorSettings(WindowData source, WindowData target)
+        {
+            if (source.Tabs == null || target.Tabs == null || source.Tabs.Count == 0 || target.Tabs.Count == 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < target.Tabs.Count; i++)
+            {
+                var targetTab = target.Tabs[i];
+                if (targetTab == null)
+                {
+                    continue;
+                }
+
+                var sourceTab = FindMatchingTab(source.Tabs, targetTab, i);
+                if (sourceTab == null)
+                {
+                    continue;
+                }
+
+                CopyTabBehaviorSettings(sourceTab, targetTab);
+            }
+        }
+
+        private static void ApplyPanelTabBehaviorToOpenPanel(DesktopPanel panel, WindowData source)
+        {
+            if (source.Tabs == null || source.Tabs.Count == 0 || panel.Tabs.Count == 0)
+            {
+                return;
+            }
+
+            panel.SaveActiveTabState();
+
+            for (int i = 0; i < panel.Tabs.Count; i++)
+            {
+                var targetTab = panel.Tabs[i];
+                if (targetTab == null)
+                {
+                    continue;
+                }
+
+                var sourceTab = FindMatchingTab(source.Tabs, targetTab, i);
+                if (sourceTab == null)
+                {
+                    continue;
+                }
+
+                CopyTabBehaviorSettings(sourceTab, targetTab);
+            }
+
+            panel.SaveActiveTabState();
+        }
+
         private static void CopyPanelBehaviorSettings(WindowData source, WindowData target)
         {
             target.PresetName = source.PresetName;
@@ -120,6 +383,7 @@ namespace DesktopPlus
             target.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(source.MetadataOrder);
             target.MovementMode = NormalizePanelMovementMode(source.MovementMode);
             target.SearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(source.SearchVisibilityMode);
+            CopyPanelTabBehaviorSettings(source, target);
         }
 
         private static void ApplyPanelBehaviorToOpenPanel(DesktopPanel panel, WindowData source)
@@ -154,6 +418,7 @@ namespace DesktopPlus
                 source.ShowMetadataDimensions,
                 metadataOrderOverride: source.MetadataOrder,
                 persistSettings: false);
+            ApplyPanelTabBehaviorToOpenPanel(panel, source);
 
             if ((hiddenChanged || parentNavigationChanged || fileExtensionsChanged) &&
                 !string.IsNullOrWhiteSpace(panel.currentFolderPath))
@@ -472,87 +737,8 @@ namespace DesktopPlus
                 }
 
                 panel.PresetName = effectivePresetName;
-
-                if (panel.ShowHidden == oldDefaults.ShowHidden)
-                {
-                    panel.ShowHidden = newDefaults.ShowHidden;
-                }
-
-                if (panel.ShowParentNavigationItem == oldDefaults.ShowParentNavigationItem)
-                {
-                    panel.ShowParentNavigationItem = newDefaults.ShowParentNavigationItem;
-                }
-
-                if (panel.ShowFileExtensions == oldDefaults.ShowFileExtensions)
-                {
-                    panel.ShowFileExtensions = newDefaults.ShowFileExtensions;
-                }
-
-                if (panel.ExpandOnHover == oldDefaults.ExpandOnHover)
-                {
-                    panel.ExpandOnHover = newDefaults.ExpandOnHover;
-                }
-
-                if (panel.OpenFoldersExternally == oldDefaults.OpenFoldersExternally)
-                {
-                    panel.OpenFoldersExternally = newDefaults.OpenFoldersExternally;
-                }
-
-                if (panel.OpenItemsOnSingleClick == oldDefaults.OpenItemsOnSingleClick)
-                {
-                    panel.OpenItemsOnSingleClick = newDefaults.OpenItemsOnSingleClick;
-                }
-
-                if (panel.ShowSettingsButton == oldDefaults.ShowSettingsButton)
-                {
-                    panel.ShowSettingsButton = newDefaults.ShowSettingsButton;
-                }
-
-                if (string.Equals(NormalizePanelMovementMode(panel.MovementMode), oldDefaults.MovementMode, StringComparison.OrdinalIgnoreCase))
-                {
-                    panel.MovementMode = newDefaults.MovementMode;
-                }
-
-                if (string.Equals(DesktopPanel.NormalizeSearchVisibilityMode(panel.SearchVisibilityMode), oldDefaults.SearchVisibilityMode, StringComparison.OrdinalIgnoreCase))
-                {
-                    panel.SearchVisibilityMode = newDefaults.SearchVisibilityMode;
-                }
-
-                if (string.Equals(DesktopPanel.NormalizeViewMode(panel.ViewMode), oldDefaults.ViewMode, StringComparison.OrdinalIgnoreCase))
-                {
-                    panel.ViewMode = newDefaults.ViewMode;
-                }
-
-                if (panel.ShowMetadataType == oldDefaults.ShowMetadataType)
-                {
-                    panel.ShowMetadataType = newDefaults.ShowMetadataType;
-                }
-
-                if (panel.ShowMetadataSize == oldDefaults.ShowMetadataSize)
-                {
-                    panel.ShowMetadataSize = newDefaults.ShowMetadataSize;
-                }
-
-                if (panel.ShowMetadataCreated == oldDefaults.ShowMetadataCreated)
-                {
-                    panel.ShowMetadataCreated = newDefaults.ShowMetadataCreated;
-                }
-
-                if (panel.ShowMetadataModified == oldDefaults.ShowMetadataModified)
-                {
-                    panel.ShowMetadataModified = newDefaults.ShowMetadataModified;
-                }
-
-                if (panel.ShowMetadataDimensions == oldDefaults.ShowMetadataDimensions)
-                {
-                    panel.ShowMetadataDimensions = newDefaults.ShowMetadataDimensions;
-                }
-
-                var normalizedPanelMetadataOrder = DesktopPanel.NormalizeMetadataOrder(panel.MetadataOrder);
-                if (normalizedPanelMetadataOrder.SequenceEqual(oldDefaults.MetadataOrder, StringComparer.OrdinalIgnoreCase))
-                {
-                    panel.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(newDefaults.MetadataOrder);
-                }
+                ApplyLayoutDefaultsToPanelWhenMatching(panel, oldDefaults, newDefaults);
+                ApplyLayoutDefaultsToPanelTabsWhenMatching(panel, oldDefaults, newDefaults);
             }
 
             layout.Panels = panelMap.Values

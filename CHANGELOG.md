@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.20] - 2026-03-04
+
+### Changed
+
+- Layout default behavior synchronization now also updates matching tab-level behavior settings (saved and open panels) instead of only panel-level values.
+- Automatic background update checks now run continuously at a short fixed interval for testing purposes.
+- Start-with-Windows registration from development builds now prefers the installed DesktopPlus executable path, preventing accidental autostart links to the dev binary.
+
+### Added
+
+- Added tray notification text when an automatic update installer has finished downloading and is ready for installation.
+
 ## [1.0.19] - 2026-03-04
 
 ### Changed

@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
+using WinForms = System.Windows.Forms;
 
 namespace DesktopPlus
 {
@@ -24,7 +25,7 @@ namespace DesktopPlus
         private static readonly Regex VersionPrefixRegex = new Regex(@"^\d+(?:\.\d+){0,3}", RegexOptions.Compiled);
         private static readonly HttpClient UpdateHttpClient = CreateUpdateRequestHttpClient();
         private static readonly HttpClient UpdateDownloadHttpClient = CreateUpdateDownloadHttpClient();
-        private static readonly TimeSpan AutomaticUpdateCheckDelayAfterStartup = TimeSpan.FromMinutes(10);
+        private static readonly TimeSpan AutomaticUpdateCheckInterval = TimeSpan.FromSeconds(10);
         private bool _autoCheckUpdates = false;
         private bool _isUpdateCheckInProgress = false;
         private bool _isAutomaticUpdateRoutineInProgress = false;
@@ -426,6 +427,7 @@ namespace DesktopPlus
                     DownloadedUtc = DateTime.UtcNow
                 });
                 CleanupOldDownloadedInstallers(targetInstallerPath);
+                ShowUpdateInstallerReadyNotification(normalizedTargetVersion);
 
                 Debug.WriteLine($"Update installer downloaded: {targetInstallerPath}");
             }
@@ -438,6 +440,39 @@ namespace DesktopPlus
                 TryDeleteFile(tempInstallerPath);
                 _isUpdateDownloadInProgress = false;
                 _updateDownloadVersionInProgress = string.Empty;
+            }
+        }
+
+        private void ShowUpdateInstallerReadyNotification(string versionText)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                _ = Dispatcher.BeginInvoke(new Action(() => ShowUpdateInstallerReadyNotification(versionText)));
+                return;
+            }
+
+            if (_notifyIcon == null)
+            {
+                return;
+            }
+
+            string normalizedVersion = NormalizeVersionToken(versionText);
+            string displayVersion = string.IsNullOrWhiteSpace(normalizedVersion)
+                ? versionText
+                : normalizedVersion;
+            string title = GetString("Loc.UpdateInstallerReadyTitle");
+            string message = string.Format(GetString("Loc.UpdateInstallerReadyBody"), displayVersion);
+
+            try
+            {
+                _notifyIcon.BalloonTipTitle = title;
+                _notifyIcon.BalloonTipText = message;
+                _notifyIcon.BalloonTipIcon = WinForms.ToolTipIcon.Info;
+                _notifyIcon.ShowBalloonTip(6000);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to show update ready notification: {ex}");
             }
         }
 
@@ -788,17 +823,20 @@ namespace DesktopPlus
             _isAutomaticUpdateRoutineInProgress = true;
             try
             {
-                if (AutomaticUpdateCheckDelayAfterStartup > TimeSpan.Zero)
+                while (!_isExit && _autoCheckUpdates)
                 {
-                    await Task.Delay(AutomaticUpdateCheckDelayAfterStartup);
-                }
+                    await CheckForUpdatesOnceAsync(userInitiated: false);
 
-                if (_isExit || !_autoCheckUpdates)
-                {
-                    return;
-                }
+                    if (_isExit || !_autoCheckUpdates)
+                    {
+                        break;
+                    }
 
-                await CheckForUpdatesOnceAsync(userInitiated: false);
+                    if (AutomaticUpdateCheckInterval > TimeSpan.Zero)
+                    {
+                        await Task.Delay(AutomaticUpdateCheckInterval);
+                    }
+                }
             }
             finally
             {
@@ -922,6 +960,10 @@ namespace DesktopPlus
 
             _autoCheckUpdates = AutoUpdateToggle?.IsChecked == true;
             SaveSettings();
+            if (_autoCheckUpdates)
+            {
+                _ = CheckForUpdatesAsync(userInitiated: false);
+            }
         }
 
         private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
