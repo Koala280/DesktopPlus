@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.18] - 2026-03-04
+
+### Changed
+
+- Pending automatic updates are now applied during app startup before the main window is created.
+- Startup now defers normal app initialization until a pending silent installer run has been started.
+
+### Fixed
+
+- Automatic installation of already-downloaded updates no longer depends on opening the main window.
+- Stale pending-update metadata and orphaned downloaded installers are cleaned up when the pending version is no longer newer than the installed version.
+
 ## [1.0.17] - 2026-03-04
 
 ### Changed

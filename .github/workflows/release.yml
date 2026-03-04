@@ -8,7 +8,8 @@ on:
     inputs:
       version:
         description: "Release version (example: 1.2.3)"
-        required: true
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -36,7 +37,18 @@ jobs:
         shell: pwsh
         run: |
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $version = "${{ inputs.version }}"
+            $version = "${{ inputs.version }}".Trim()
+            if ([string]::IsNullOrWhiteSpace($version)) {
+              $changelog = Get-Content -Path ".\CHANGELOG.md" -Raw
+              $match = [regex]::Match(
+                $changelog,
+                '(?m)^##\s+\[(?!Unreleased\])(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z\.-]+)?(?:\+[0-9A-Za-z\.-]+)?)\]'
+              )
+              if (-not $match.Success) {
+                throw "No release version found in CHANGELOG.md."
+              }
+              $version = $match.Groups["version"].Value.Trim()
+            }
           } else {
             $version = "${{ github.ref_name }}"
             if ($version.StartsWith("v")) { $version = $version.Substring(1) }
@@ -44,6 +56,10 @@ jobs:
 
           if ([string]::IsNullOrWhiteSpace($version)) {
             throw "Version could not be resolved."
+          }
+
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z\.-]+)?(?:\+[0-9A-Za-z\.-]+)?$') {
+            throw "Resolved version '$version' is not valid SemVer."
           }
 
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8

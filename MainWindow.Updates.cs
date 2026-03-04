@@ -24,12 +24,7 @@ namespace DesktopPlus
         private static readonly Regex VersionPrefixRegex = new Regex(@"^\d+(?:\.\d+){0,3}", RegexOptions.Compiled);
         private static readonly HttpClient UpdateHttpClient = CreateUpdateRequestHttpClient();
         private static readonly HttpClient UpdateDownloadHttpClient = CreateUpdateDownloadHttpClient();
-        private static readonly TimeSpan[] AutomaticUpdateCheckAttemptOffsets = new[]
-        {
-            TimeSpan.FromSeconds(30),
-            TimeSpan.FromMinutes(1),
-            TimeSpan.FromMinutes(3)
-        };
+        private static readonly TimeSpan AutomaticUpdateCheckDelayAfterStartup = TimeSpan.FromMinutes(10);
         private bool _autoCheckUpdates = false;
         private bool _isUpdateCheckInProgress = false;
         private bool _isAutomaticUpdateRoutineInProgress = false;
@@ -724,6 +719,22 @@ namespace DesktopPlus
 
         private bool TryApplyPendingUpdateAndExit()
         {
+            if (!TryStartPendingUpdateInstall())
+            {
+                return false;
+            }
+
+            ShutdownForUpdateInstall();
+            return true;
+        }
+
+        internal static bool TryStartPendingUpdateInstall()
+        {
+            if (IsDevelopmentBuildForUpdates)
+            {
+                return false;
+            }
+
             if (!TryReadPendingUpdateInfo(out var pendingInfo))
             {
                 return false;
@@ -733,6 +744,8 @@ namespace DesktopPlus
             if (string.IsNullOrWhiteSpace(pendingVersion) ||
                 !IsRemoteVersionNewer(GetInstalledVersionText(), pendingVersion))
             {
+                TryDeleteFile(PendingUpdateInfoPath);
+                TryDeleteFile(pendingInfo.InstallerPath);
                 return false;
             }
 
@@ -748,22 +761,11 @@ namespace DesktopPlus
                     GetPostUpdateExecutableCandidates());
             }
 
-            ShutdownForUpdateInstall();
             return true;
         }
 
         private bool TryApplyPendingUpdateOnMainWindowOpen()
         {
-            if (IsDevelopmentBuildForUpdates)
-            {
-                return false;
-            }
-
-            if (!_autoCheckUpdates)
-            {
-                return false;
-            }
-
             return TryApplyPendingUpdateAndExit();
         }
 
@@ -786,31 +788,17 @@ namespace DesktopPlus
             _isAutomaticUpdateRoutineInProgress = true;
             try
             {
-                DateTime routineStartUtc = DateTime.UtcNow;
-                foreach (var attemptOffset in AutomaticUpdateCheckAttemptOffsets)
+                if (AutomaticUpdateCheckDelayAfterStartup > TimeSpan.Zero)
                 {
-                    if (_isExit || !_autoCheckUpdates)
-                    {
-                        return;
-                    }
-
-                    TimeSpan remainingDelay = attemptOffset - (DateTime.UtcNow - routineStartUtc);
-                    if (remainingDelay > TimeSpan.Zero)
-                    {
-                        await Task.Delay(remainingDelay);
-                    }
-
-                    if (_isExit || !_autoCheckUpdates)
-                    {
-                        return;
-                    }
-
-                    bool success = await CheckForUpdatesOnceAsync(userInitiated: false);
-                    if (success)
-                    {
-                        return;
-                    }
+                    await Task.Delay(AutomaticUpdateCheckDelayAfterStartup);
                 }
+
+                if (_isExit || !_autoCheckUpdates)
+                {
+                    return;
+                }
+
+                await CheckForUpdatesOnceAsync(userInitiated: false);
             }
             finally
             {

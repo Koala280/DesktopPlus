@@ -71,7 +71,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version 1.
 The workflow `.github/workflows/release.yml` runs on:
 
 - tag push `v*.*.*`
-- manual `workflow_dispatch` with `version`
+- manual `workflow_dispatch` with optional `version`
+  - if `version` is empty, the workflow resolves the newest version header from `CHANGELOG.md` (first `## [X.Y.Z]` after `[Unreleased]`)
 
 It performs:
 

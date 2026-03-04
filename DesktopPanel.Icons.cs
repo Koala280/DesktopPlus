@@ -2048,7 +2048,9 @@ namespace DesktopPlus
                 availableWidth = pixelAlignedAvailableWidth;
             }
 
-            availableWidth = Math.Max(120, availableWidth - PhotoWrapSafetyDip);
+            // PhotoWrapSafetyDip is already subtracted in UpdateWrapPanelWidth when
+            // setting wrapPanel.Width, so do NOT subtract it again here.
+            availableWidth = Math.Max(120, availableWidth);
             double targetRowHeight = Math.Clamp(180 * zoomFactor, 110, 280);
             var photos = new List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>();
             foreach (ListBoxItem item in FileList.Items.OfType<ListBoxItem>())

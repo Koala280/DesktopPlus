@@ -361,6 +361,16 @@ namespace DesktopPlus
             }
             InitNotifyIcon();
 
+            if (TryApplyPendingUpdateOnMainWindowOpen())
+            {
+                return;
+            }
+
+            if (_autoCheckUpdates)
+            {
+                _ = CheckForUpdatesAsync(userInitiated: false);
+            }
+
             this.Closing += OnWindowClosing;
             this.StateChanged += OnWindowStateChanged;
             this.LocationChanged += (_, __) => QueueColorPickerPopupReposition();
