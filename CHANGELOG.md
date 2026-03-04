@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.22] - 2026-03-05
+
+### Changed
+
+- Switched automatic background update checks to a 10-second interval for short-cycle testing.
+
+### Fixed
+
+- Post-update relaunch now starts DesktopPlus with `--startup`, so the main window launches minimized/hidden as expected.
+- Removed silent installer `/CLOSEAPPLICATIONS` usage in the app-driven update flow to avoid panel windows being persisted as hidden during update shutdown.
+
 ## [1.0.21] - 2026-03-04
 
 ### Changed

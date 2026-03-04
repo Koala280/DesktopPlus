@@ -25,7 +25,7 @@ namespace DesktopPlus
         private static readonly Regex VersionPrefixRegex = new Regex(@"^\d+(?:\.\d+){0,3}", RegexOptions.Compiled);
         private static readonly HttpClient UpdateHttpClient = CreateUpdateRequestHttpClient();
         private static readonly HttpClient UpdateDownloadHttpClient = CreateUpdateDownloadHttpClient();
-        private static readonly TimeSpan AutomaticUpdateCheckInterval = TimeSpan.FromMinutes(10);
+        private static readonly TimeSpan AutomaticUpdateCheckInterval = TimeSpan.FromSeconds(10);
         private bool _autoCheckUpdates = false;
         private bool _isUpdateCheckInProgress = false;
         private bool _isAutomaticUpdateRoutineInProgress = false;
@@ -515,7 +515,9 @@ namespace DesktopPlus
                 installerProcess = Process.Start(new ProcessStartInfo
                 {
                     FileName = installerPath,
-                    Arguments = "/SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS",
+                    // App shutdown is handled by DesktopPlus itself after installer start.
+                    // Avoid /CLOSEAPPLICATIONS here so panel windows are not marked hidden by forced close events.
+                    Arguments = "/SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
                     UseShellExecute = true,
                     WorkingDirectory = Path.GetDirectoryName(installerPath) ?? string.Empty
                 });
@@ -610,7 +612,7 @@ namespace DesktopPlus
                 "foreach ($target in $targets) {" +
                 " if ([string]::IsNullOrWhiteSpace($target)) { continue }" +
                 " if (-not (Test-Path -LiteralPath $target)) { continue }" +
-                " try { Start-Process -FilePath $target | Out-Null; break } catch { }" +
+                " try { Start-Process -FilePath $target -ArgumentList '--startup' | Out-Null; break } catch { }" +
                 "}";
 
             try
