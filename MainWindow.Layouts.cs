@@ -79,6 +79,7 @@ namespace DesktopPlus
             target.ShowFileExtensions = source.ShowFileExtensions;
             target.ExpandOnHover = source.ExpandOnHover;
             target.OpenFoldersExternally = source.OpenFoldersExternally;
+            target.OpenItemsOnSingleClick = source.OpenItemsOnSingleClick;
             target.ShowSettingsButton = source.ShowSettingsButton;
             target.MovementMode = NormalizePanelMovementMode(source.MovementMode);
             target.SearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(source.SearchVisibilityMode);
@@ -100,6 +101,7 @@ namespace DesktopPlus
             panel.showFileExtensions = source.ShowFileExtensions;
             panel.SetExpandOnHover(source.ExpandOnHover);
             panel.openFoldersExternally = source.OpenFoldersExternally;
+            panel.openItemsOnSingleClick = source.OpenItemsOnSingleClick;
             panel.showSettingsButton = source.ShowSettingsButton;
             panel.ApplySettingsButtonVisibility();
             panel.ApplyMovementMode(NormalizePanelMovementMode(source.MovementMode));

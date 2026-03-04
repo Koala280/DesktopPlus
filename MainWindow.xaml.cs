@@ -307,6 +307,7 @@ namespace DesktopPlus
                 ShowSettingsButton = panel.showSettingsButton,
                 ExpandOnHover = panel.expandOnHover,
                 OpenFoldersExternally = panel.openFoldersExternally,
+                OpenItemsOnSingleClick = panel.openItemsOnSingleClick,
                 ViewMode = panel.viewMode,
                 ShowMetadataType = panel.showMetadataType,
                 ShowMetadataSize = panel.showMetadataSize,
@@ -332,6 +333,7 @@ namespace DesktopPlus
                     ShowParentNavigationItem = t.ShowParentNavigationItem,
                     ShowFileExtensions = t.ShowFileExtensions,
                     OpenFoldersExternally = t.OpenFoldersExternally,
+                    OpenItemsOnSingleClick = t.OpenItemsOnSingleClick,
                     ViewMode = t.ViewMode,
                     ShowMetadataType = t.ShowMetadataType,
                     ShowMetadataSize = t.ShowMetadataSize,
@@ -668,6 +670,12 @@ namespace DesktopPlus
         private void ShowMainWindow()
         {
             CloseTrayMenuWindow();
+
+            if (TryApplyPendingUpdateOnMainWindowOpen())
+            {
+                return;
+            }
+
             ShowInTaskbar = true;
             if (WindowState != WindowState.Normal)
             {
@@ -1020,7 +1028,12 @@ namespace DesktopPlus
             ConfigureDesktopAutoSortWatcher();
             _isUiReady = true;
             ApplyStartupWindowVisibilityPreference();
-            if (_autoCheckUpdates && IsVisible)
+            if (TryApplyPendingUpdateOnMainWindowOpen())
+            {
+                return;
+            }
+
+            if (_autoCheckUpdates)
             {
                 _ = CheckForUpdatesAsync(userInitiated: false);
             }
@@ -1131,6 +1144,7 @@ namespace DesktopPlus
                 ShowSettingsButton = source.ShowSettingsButton,
                 ExpandOnHover = source.ExpandOnHover,
                 OpenFoldersExternally = source.OpenFoldersExternally,
+                OpenItemsOnSingleClick = source.OpenItemsOnSingleClick,
                 ViewMode = source.ViewMode ?? DesktopPanel.ViewModeIcons,
                 ShowMetadataType = source.ShowMetadataType,
                 ShowMetadataSize = source.ShowMetadataSize,
@@ -1171,6 +1185,7 @@ namespace DesktopPlus
             target.ShowSettingsButton = source.ShowSettingsButton;
             target.ExpandOnHover = source.ExpandOnHover;
             target.OpenFoldersExternally = source.OpenFoldersExternally;
+            target.OpenItemsOnSingleClick = source.OpenItemsOnSingleClick;
             target.ViewMode = source.ViewMode ?? DesktopPanel.ViewModeIcons;
             target.ShowMetadataType = source.ShowMetadataType;
             target.ShowMetadataSize = source.ShowMetadataSize;
@@ -1198,6 +1213,7 @@ namespace DesktopPlus
                 ShowParentNavigationItem = source.ShowParentNavigationItem,
                 ShowFileExtensions = source.ShowFileExtensions,
                 OpenFoldersExternally = source.OpenFoldersExternally,
+                OpenItemsOnSingleClick = source.OpenItemsOnSingleClick,
                 ViewMode = source.ViewMode ?? DesktopPanel.ViewModeIcons,
                 ShowMetadataType = source.ShowMetadataType,
                 ShowMetadataSize = source.ShowMetadataSize,

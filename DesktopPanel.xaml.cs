@@ -30,6 +30,7 @@ namespace DesktopPlus
         public bool showFileExtensions = true;
         public bool expandOnHover = false;
         public bool openFoldersExternally = false;
+        public bool openItemsOnSingleClick = false;
         public bool showSettingsButton = true;
         public string defaultFolderPath = "";
         public string movementMode = "titlebar";
@@ -39,7 +40,7 @@ namespace DesktopPlus
         public bool showMetadataSize = true;
         public bool showMetadataCreated = false;
         public bool showMetadataModified = true;
-        public bool showMetadataDimensions = true;
+        public bool showMetadataDimensions = false;
         public List<string> metadataOrder = new List<string> { "type", "size", "created", "modified", "dimensions" };
         private bool _hoverTemporarilySuspendedByDoubleClick = false;
         private bool _hoverExpanded = false;
@@ -125,6 +126,7 @@ namespace DesktopPlus
         private const uint SwpNoMove = 0x0002;
         private const uint SwpNoActivate = 0x0010;
         private const uint SwpNoOwnerZOrder = 0x0200;
+        private const double MouseWheelZoomStep = 0.05;
 
         [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
         private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
@@ -2044,9 +2046,7 @@ namespace DesktopPlus
             if (Keyboard.IsKeyDown(Key.LeftCtrl) || Keyboard.IsKeyDown(Key.RightCtrl))
             {
                 e.Handled = true;
-                zoomFactor += (e.Delta > 0) ? 0.1 : -0.1;
-                zoomFactor = Math.Max(0.7, Math.Min(2.0, zoomFactor));
-                ApplyZoom();
+                ApplyMouseWheelZoom(e.Delta);
                 return;
             }
 
@@ -2057,6 +2057,86 @@ namespace DesktopPlus
                 ContentContainer.ScrollToVerticalOffset(newOffset);
                 e.Handled = true;
             }
+        }
+
+        private void ApplyMouseWheelZoom(int wheelDelta)
+        {
+            bool zoomIn = wheelDelta > 0;
+            double currentZoom = zoomFactor;
+            double step = zoomIn ? MouseWheelZoomStep : -MouseWheelZoomStep;
+            double targetZoom = Math.Round(currentZoom + step, 3, MidpointRounding.AwayFromZero);
+            targetZoom = Math.Max(0.7, Math.Min(2.0, targetZoom));
+            if (Math.Abs(targetZoom - currentZoom) < 0.0001)
+            {
+                return;
+            }
+
+            if (!zoomIn)
+            {
+                zoomFactor = targetZoom;
+                ApplyZoom();
+                return;
+            }
+
+            int baselineFirstRowCount = GetCurrentFirstRowItemCount();
+            if (baselineFirstRowCount <= 1)
+            {
+                zoomFactor = targetZoom;
+                ApplyZoom();
+                return;
+            }
+
+            int targetFirstRowCount = ApplyZoomAndMeasureFirstRowCount(targetZoom);
+            if (targetFirstRowCount >= baselineFirstRowCount || targetFirstRowCount <= 0)
+            {
+                return;
+            }
+
+            double low = currentZoom;
+            double high = targetZoom;
+            for (int i = 0; i < 9; i++)
+            {
+                double mid = (low + high) * 0.5;
+                int midCount = ApplyZoomAndMeasureFirstRowCount(mid);
+                if (midCount >= baselineFirstRowCount || midCount <= 0)
+                {
+                    low = mid;
+                }
+                else
+                {
+                    high = mid;
+                }
+            }
+
+            zoomFactor = Math.Round(low, 3, MidpointRounding.AwayFromZero);
+            zoomFactor = Math.Max(0.7, Math.Min(2.0, zoomFactor));
+            ApplyZoom();
+        }
+
+        private int GetCurrentFirstRowItemCount()
+        {
+            if (FileList == null)
+            {
+                return 0;
+            }
+
+            UpdateLayout();
+            var wrapPanel = FindVisualChild<System.Windows.Controls.WrapPanel>(FileList);
+            if (wrapPanel == null)
+            {
+                return 0;
+            }
+
+            UpdateWrapPanelWidth();
+            UpdateLayout();
+            return GetFirstRowItemCount(FileList, wrapPanel);
+        }
+
+        private int ApplyZoomAndMeasureFirstRowCount(double requestedZoom)
+        {
+            zoomFactor = Math.Max(0.7, Math.Min(2.0, requestedZoom));
+            ApplyZoom();
+            return GetCurrentFirstRowItemCount();
         }
 
         private void MinimizeWindow_Click(object sender, RoutedEventArgs e)

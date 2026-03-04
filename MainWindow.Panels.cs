@@ -161,6 +161,7 @@ namespace DesktopPlus
             panel.assignedPresetName = string.IsNullOrWhiteSpace(data.PresetName) ? DefaultPresetName : data.PresetName;
             panel.SetExpandOnHover(data.ExpandOnHover);
             panel.openFoldersExternally = data.OpenFoldersExternally;
+            panel.openItemsOnSingleClick = data.OpenItemsOnSingleClick;
             panel.showSettingsButton = data.ShowSettingsButton;
             panel.ApplyMovementMode(string.IsNullOrWhiteSpace(data.MovementMode) ? "titlebar" : data.MovementMode);
             panel.ApplySettingsButtonVisibility();

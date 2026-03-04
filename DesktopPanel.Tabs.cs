@@ -54,6 +54,7 @@ namespace DesktopPlus
             tab.ShowParentNavigationItem = showParentNavigationItem;
             tab.ShowFileExtensions = showFileExtensions;
             tab.OpenFoldersExternally = openFoldersExternally;
+            tab.OpenItemsOnSingleClick = openItemsOnSingleClick;
             tab.ViewMode = viewMode;
             tab.ShowMetadataType = showMetadataType;
             tab.ShowMetadataSize = showMetadataSize;
@@ -70,6 +71,7 @@ namespace DesktopPlus
             showParentNavigationItem = tab.ShowParentNavigationItem;
             showFileExtensions = tab.ShowFileExtensions;
             openFoldersExternally = tab.OpenFoldersExternally;
+            openItemsOnSingleClick = tab.OpenItemsOnSingleClick;
             viewMode = NormalizeViewMode(tab.ViewMode);
             showMetadataType = tab.ShowMetadataType;
             showMetadataSize = tab.ShowMetadataSize;
@@ -199,6 +201,7 @@ namespace DesktopPlus
                 ShowParentNavigationItem = showParentNavigationItem,
                 ShowFileExtensions = showFileExtensions,
                 OpenFoldersExternally = openFoldersExternally,
+                OpenItemsOnSingleClick = openItemsOnSingleClick,
                 ViewMode = viewMode,
                 ShowMetadataType = showMetadataType,
                 ShowMetadataSize = showMetadataSize,
@@ -336,6 +339,7 @@ namespace DesktopPlus
                 ShowParentNavigationItem = showParentNavigationItem,
                 ShowFileExtensions = showFileExtensions,
                 OpenFoldersExternally = openFoldersExternally,
+                OpenItemsOnSingleClick = openItemsOnSingleClick,
                 ViewMode = viewMode,
                 ShowMetadataType = showMetadataType,
                 ShowMetadataSize = showMetadataSize,
@@ -1239,6 +1243,7 @@ namespace DesktopPlus
                         PanelType = PanelKind.Folder.ToString(),
                         FolderPath = path,
                         DefaultFolderPath = path,
+                        OpenItemsOnSingleClick = openItemsOnSingleClick,
                     };
                     InsertTab(tab, dropIndex, switchTo: true);
                     break;

@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.12] - 2026-03-04
+
+### Fixed
+
+- Fixed photo collage layout gaps in photo view by keeping item-container spacing chrome-free so justified rows fill consistently.
+- Fixed corrupted parent-navigation back symbol rendering in panel lists.
+
+### Changed
+
+- Updated update toggle wording to reflect actual behavior: automatic installation instead of only checking.
+
 ## [1.0.11] - 2026-03-03
 
 ### Changed

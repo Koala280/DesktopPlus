@@ -1324,6 +1324,38 @@ namespace DesktopPlus
             {
                 EndRubberBandSelection();
                 e.Handled = true;
+                return;
+            }
+
+            if (!openItemsOnSingleClick ||
+                e.ChangedButton != MouseButton.Left ||
+                e.ClickCount != 1 ||
+                _renameEditBox != null ||
+                IsToggleModifierPressed() ||
+                IsRangeModifierPressed() ||
+                FileList == null)
+            {
+                return;
+            }
+
+            Point currentPosition = e.GetPosition(null);
+            Vector diff = _dragStartPoint - currentPosition;
+            if (Math.Abs(diff.X) > 2 || Math.Abs(diff.Y) > 2)
+            {
+                return;
+            }
+
+            if (FileList.SelectedItems.Count != 1)
+            {
+                return;
+            }
+
+            var clickedItem = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject);
+            if (clickedItem?.Tag is string path &&
+                !string.IsNullOrWhiteSpace(path))
+            {
+                OpenPanelItemPath(path);
+                e.Handled = true;
             }
         }
 

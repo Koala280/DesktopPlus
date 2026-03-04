@@ -75,6 +75,7 @@ namespace DesktopPlus
             MetaDimensionsToggle.Unchecked += (_, __) => TryAutoApplySettings();
 
             FolderActionSelect.SelectionChanged += (_, __) => TryAutoApplySettings();
+            OpenClickBehaviorSelect.SelectionChanged += (_, __) => TryAutoApplySettings();
             MovementModeSelect.SelectionChanged += (_, __) => TryAutoApplySettings();
             SearchVisibilitySelect.SelectionChanged += (_, __) => TryAutoApplySettings();
             ViewModeSelect.SelectionChanged += (_, __) =>
@@ -197,6 +198,7 @@ namespace DesktopPlus
             FileExtensionsToggle.IsChecked = _panel.showFileExtensions;
             SettingsButtonToggle.IsChecked = _panel.showSettingsButton;
             FolderActionSelect.SelectedIndex = _panel.openFoldersExternally ? 1 : 0;
+            SetOpenClickBehaviorSelection(_panel.openItemsOnSingleClick);
             SetMovementModeSelection(_panel.movementMode);
             SetSearchVisibilitySelection(_panel.searchVisibilityMode);
             SetViewModeSelection(_panel.viewMode);
@@ -263,6 +265,24 @@ namespace DesktopPlus
             if (SearchVisibilitySelect.SelectedItem == null)
             {
                 SearchVisibilitySelect.SelectedIndex = 0;
+            }
+        }
+
+        private void SetOpenClickBehaviorSelection(bool openOnSingleClick)
+        {
+            string expectedTag = openOnSingleClick ? "single" : "double";
+            foreach (ComboBoxItem item in OpenClickBehaviorSelect.Items)
+            {
+                if (string.Equals(item.Tag?.ToString(), expectedTag, StringComparison.OrdinalIgnoreCase))
+                {
+                    OpenClickBehaviorSelect.SelectedItem = item;
+                    break;
+                }
+            }
+
+            if (OpenClickBehaviorSelect.SelectedItem == null)
+            {
+                OpenClickBehaviorSelect.SelectedIndex = 0;
             }
         }
 
@@ -441,6 +461,11 @@ namespace DesktopPlus
             _panel.showSettingsButton = SettingsButtonToggle.IsChecked != false;
             _panel.ApplySettingsButtonVisibility();
             _panel.openFoldersExternally = FolderActionSelect.SelectedIndex == 1;
+            _panel.openItemsOnSingleClick =
+                string.Equals(
+                    (OpenClickBehaviorSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString(),
+                    "single",
+                    StringComparison.OrdinalIgnoreCase);
 
             if (MovementModeSelect.SelectedItem is ComboBoxItem modeItem)
             {
@@ -534,6 +559,7 @@ namespace DesktopPlus
             newPanel.showSettingsButton = _panel.showSettingsButton;
             newPanel.ApplySettingsButtonVisibility();
             newPanel.openFoldersExternally = _panel.openFoldersExternally;
+            newPanel.openItemsOnSingleClick = _panel.openItemsOnSingleClick;
             newPanel.ApplyMovementMode(_panel.movementMode);
             newPanel.SetSearchVisibilityMode(_panel.searchVisibilityMode);
             newPanel.ApplyViewSettings(

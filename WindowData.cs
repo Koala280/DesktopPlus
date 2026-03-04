@@ -26,13 +26,14 @@ namespace DesktopPlus
         public bool ShowSettingsButton { get; set; } = true;
         public bool ExpandOnHover { get; set; } = false;
         public bool OpenFoldersExternally { get; set; }
+        public bool OpenItemsOnSingleClick { get; set; }
         public bool ShowFileExtensions { get; set; } = true;
         public string ViewMode { get; set; } = "icons";
         public bool ShowMetadataType { get; set; } = true;
         public bool ShowMetadataSize { get; set; } = true;
         public bool ShowMetadataCreated { get; set; }
         public bool ShowMetadataModified { get; set; } = true;
-        public bool ShowMetadataDimensions { get; set; } = true;
+        public bool ShowMetadataDimensions { get; set; } = false;
         public List<string> MetadataOrder { get; set; } = new List<string>
         {
             "type",

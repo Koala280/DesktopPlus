@@ -389,11 +389,11 @@ namespace DesktopPlus
             if (showParentNavigationItem && parentFolderPath != null)
             {
                 string parentFolderName = BuildParentNavigationDisplayName(parentFolderPath);
-                ListBoxItem backItem = new ListBoxItem
-                {
-                    Content = CreateListBoxItem(parentFolderName, parentFolderPath, true, _currentAppearance),
-                    Tag = parentFolderPath
-                };
+                ListBoxItem backItem = CreateFileListBoxItem(
+                    parentFolderName,
+                    parentFolderPath,
+                    isBackButton: true,
+                    _currentAppearance);
                 FileList.Items.Add(backItem);
                 _baseItemPaths.Add(parentFolderPath);
             }
@@ -508,11 +508,11 @@ namespace DesktopPlus
                                 displayName = entryPath;
                             }
 
-                            var listItem = new ListBoxItem
-                            {
-                                Content = CreateListBoxItem(displayName, entryPath, false, _currentAppearance),
-                                Tag = entryPath
-                            };
+                            var listItem = CreateFileListBoxItem(
+                                displayName,
+                                entryPath,
+                                isBackButton: false,
+                                _currentAppearance);
 
                             if (hasFilter &&
                                 displayName.IndexOf(activeFilter, StringComparison.OrdinalIgnoreCase) < 0)
@@ -692,11 +692,11 @@ namespace DesktopPlus
                 displayName = filePath;
             }
 
-            ListBoxItem item = new ListBoxItem
-            {
-                Content = CreateListBoxItem(displayName, filePath, false, _currentAppearance),
-                Tag = filePath
-            };
+            ListBoxItem item = CreateFileListBoxItem(
+                displayName,
+                filePath,
+                isBackButton: false,
+                _currentAppearance);
             FileList.Items.Add(item);
             _baseItemPaths.Add(filePath);
             if (entryAnimationOrder >= 0)
@@ -781,6 +781,61 @@ namespace DesktopPlus
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleY, HandoffBehavior.SnapshotAndReplace);
         }
 
+        private void OpenPanelItemPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            if (PanelType == PanelKind.List)
+            {
+                try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
+                catch (Exception ex)
+                {
+                    string msgKey = Directory.Exists(path) ? "Loc.MsgOpenFolderError" : "Loc.MsgOpenFileError";
+                    System.Windows.MessageBox.Show(
+                        string.Format(MainWindow.GetString(msgKey), ex.Message),
+                        MainWindow.GetString("Loc.MsgError"),
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+                return;
+            }
+
+            if (Directory.Exists(path))
+            {
+                if (openFoldersExternally)
+                {
+                    try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
+                    catch (Exception ex)
+                    {
+                        System.Windows.MessageBox.Show(
+                            string.Format(MainWindow.GetString("Loc.MsgOpenFolderError"), ex.Message),
+                            MainWindow.GetString("Loc.MsgError"),
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Error);
+                    }
+                }
+                else
+                {
+                    LoadFolder(path);
+                }
+            }
+            else if (File.Exists(path))
+            {
+                try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
+                catch (Exception ex)
+                {
+                    System.Windows.MessageBox.Show(
+                        string.Format(MainWindow.GetString("Loc.MsgOpenFileError"), ex.Message),
+                        MainWindow.GetString("Loc.MsgError"),
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+            }
+        }
+
         private void FileList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
             if (_renameEditBox != null)
@@ -789,54 +844,14 @@ namespace DesktopPlus
                 return;
             }
 
+            if (openItemsOnSingleClick)
+            {
+                return;
+            }
+
             if (FileList.SelectedItem is ListBoxItem selectedItem && selectedItem.Tag is string path)
             {
-                if (PanelType == PanelKind.List)
-                {
-                    try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
-                    catch (Exception ex)
-                    {
-                        string msgKey = Directory.Exists(path) ? "Loc.MsgOpenFolderError" : "Loc.MsgOpenFileError";
-                        System.Windows.MessageBox.Show(
-                            string.Format(MainWindow.GetString(msgKey), ex.Message),
-                            MainWindow.GetString("Loc.MsgError"),
-                            MessageBoxButton.OK,
-                            MessageBoxImage.Error);
-                    }
-                    return;
-                }
-
-                if (Directory.Exists(path))
-                {
-                    if (openFoldersExternally)
-                    {
-                        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
-                        catch (Exception ex)
-                        {
-                            System.Windows.MessageBox.Show(
-                                string.Format(MainWindow.GetString("Loc.MsgOpenFolderError"), ex.Message),
-                                MainWindow.GetString("Loc.MsgError"),
-                                MessageBoxButton.OK,
-                                MessageBoxImage.Error);
-                        }
-                    }
-                    else
-                    {
-                        LoadFolder(path);
-                    }
-                }
-                else if (File.Exists(path))
-                {
-                    try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
-                    catch (Exception ex)
-                    {
-                        System.Windows.MessageBox.Show(
-                            string.Format(MainWindow.GetString("Loc.MsgOpenFileError"), ex.Message),
-                            MainWindow.GetString("Loc.MsgError"),
-                            MessageBoxButton.OK,
-                            MessageBoxImage.Error);
-                    }
-                }
+                OpenPanelItemPath(path);
             }
         }
 
@@ -1091,11 +1106,11 @@ namespace DesktopPlus
                             displayName = foundPath;
                         }
 
-                        var listItem = new ListBoxItem
-                        {
-                            Content = CreateListBoxItem(displayName, foundPath, false, _currentAppearance),
-                            Tag = foundPath
-                        };
+                        var listItem = CreateFileListBoxItem(
+                            displayName,
+                            foundPath,
+                            isBackButton: false,
+                            _currentAppearance);
 
                         FileList.Items.Add(listItem);
                         _searchInjectedPaths.Add(foundPath);

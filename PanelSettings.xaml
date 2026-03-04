@@ -189,6 +189,17 @@
                             <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsOpenInternal}" Tag="internal"/>
                             <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsOpenExternal}" Tag="external"/>
                         </ComboBox>
+
+                        <TextBlock Text="{DynamicResource Loc.PanelSettingsOpenBehavior}"
+                                   Foreground="{StaticResource Muted}" FontSize="12"
+                                   Margin="0,10,0,0"/>
+                        <ComboBox x:Name="OpenClickBehaviorSelect"
+                                  Height="34"
+                                  Style="{StaticResource FlatCombo}"
+                                  Margin="0,4,0,0">
+                            <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsOpenByDoubleClick}" Tag="double"/>
+                            <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsOpenBySingleClick}" Tag="single"/>
+                        </ComboBox>
                     </StackPanel>
                 </Border>
 
