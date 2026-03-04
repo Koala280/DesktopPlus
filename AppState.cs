@@ -10,7 +10,7 @@ namespace DesktopPlus
         public List<LayoutDefinition> Layouts { get; set; } = new List<LayoutDefinition>();
         public string LayoutDefaultPresetName { get; set; } = "Graphite";
         public string ActiveLayoutName { get; set; } = "";
-        public string Language { get; set; } = "de";
+        public string Language { get; set; } = "en";
         public bool StartWithWindows { get; set; }
         public bool AutoCheckUpdates { get; set; }
         public string CloseBehavior { get; set; } = "Minimize";

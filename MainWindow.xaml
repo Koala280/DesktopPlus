@@ -878,7 +878,7 @@
                             ResizeBorderThickness="6"/>
     </shell:WindowChrome.WindowChrome>
 
-    <Grid>
+    <Grid x:Name="MainRootGrid">
         <Grid.RowDefinitions>
             <RowDefinition Height="44"/>
             <RowDefinition Height="*"/>
@@ -1010,7 +1010,16 @@
                                               SelectionChanged="LanguageCombo_SelectionChanged">
                                         <ComboBoxItem Content="{DynamicResource Loc.LanguageGerman}" Tag="de"/>
                                         <ComboBoxItem Content="{DynamicResource Loc.LanguageEnglish}" Tag="en"/>
+                                        <ComboBoxItem Content="{DynamicResource Loc.LanguageLatvian}" Tag="lv"/>
                                     </ComboBox>
+
+                                    <Button x:Name="ImportLanguageButton"
+                                            Content="{DynamicResource Loc.GeneralImportLanguageButton}"
+                                            Style="{StaticResource GhostButton}"
+                                            Padding="10,6"
+                                            Margin="0,8,0,0"
+                                            HorizontalAlignment="Left"
+                                            Click="ImportLanguageButton_Click"/>
 
                                     <TextBlock Text="{DynamicResource Loc.GeneralCloseLabel}"
                                                Foreground="{StaticResource Muted}"
@@ -2537,9 +2546,10 @@
         <Popup x:Name="ColorPickerPopup"
                AllowsTransparency="True"
                StaysOpen="False"
-               Placement="Bottom"
+               Placement="RelativePoint"
                PopupAnimation="Fade"
-               HorizontalOffset="-150">
+               Opened="ColorPickerPopup_Opened"
+               Closed="ColorPickerPopup_Closed">
             <local:ColorPickerPopup x:Name="ColorPicker"/>
         </Popup>
     </Grid>

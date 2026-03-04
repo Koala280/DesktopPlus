@@ -50,7 +50,52 @@ DesktopPlus is built for people who want a fast desktop workflow without replaci
 | Themes | Header/body/tabs theming with presets, typography, colors, shadows, and preview. |
 | Global shortcuts | System-wide shortcuts for panel toggle and temporary foreground mode. |
 | Tray integration | Run from system tray, reopen main window, and control app behavior. |
-| Localization | German and English interface. |
+| Localization | German, English, Latvian, plus custom language import via JSON. |
+
+## Custom Language JSON Import
+
+Import path in app: `General` tab -> `Import language JSON`.
+
+Supported JSON shapes:
+
+1. Flat keys
+```json
+{
+  "code": "fr",
+  "name": "Francais",
+  "Loc.TabGeneral": "General",
+  "Loc.PanelsTitle": "Panneaux"
+}
+```
+2. Nested translations
+```json
+{
+  "code": "fr",
+  "name": "Francais",
+  "translations": {
+    "Loc.TabGeneral": "General",
+    "Loc.PanelsTitle": "Panneaux"
+  }
+}
+```
+3. i18next-style resources
+```json
+{
+  "resources": {
+    "fr": {
+      "translation": {
+        "Loc.TabGeneral": "General",
+        "Loc.PanelsTitle": "Panneaux"
+      }
+    }
+  }
+}
+```
+
+Notes:
+- Only `Loc.*` keys are imported.
+- Keys without `Loc.` are also accepted when they map to known keys (for example `TabGeneral` -> `Loc.TabGeneral`).
+- Missing keys automatically fall back to English.
 
 ## Code signing policy
 

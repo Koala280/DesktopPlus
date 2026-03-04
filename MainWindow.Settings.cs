@@ -34,6 +34,7 @@ namespace DesktopPlus
         private void LoadSettings()
         {
             _hideMainWindowOnStartup = false;
+            LoadCustomLanguagesFromDisk();
             if (!File.Exists(settingsFilePath)) return;
 
             try

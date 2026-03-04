@@ -85,10 +85,7 @@ namespace DesktopPlus
         private const int ExplorerIconCacheLimit = 512;
         private const double PhotoCardHorizontalPadding = 0;
         private const double PhotoCardHorizontalMargin = 0;
-        private const double PhotoWideSingleRowAspectThreshold = 1.4;
-        private const double PhotoMinPreviewWidth = 60;
         private const double PhotoWrapSafetyDip = 0.35;
-        private const double PhotoScrollbarReserveDip = 10;
 
         private sealed class PhotoTileLayoutInfo
         {
@@ -681,7 +678,7 @@ namespace DesktopPlus
             }
 
             SortCurrentFolderItemsInPlace();
-            RebuildListItemVisuals();
+            RebuildListItemVisuals(sortItems: false);
             e.Handled = true;
         }
 
@@ -970,7 +967,7 @@ namespace DesktopPlus
                 isPhotoFile &&
                 TryGetPhotoPixelDimensions(path, out int pixelWidth, out int pixelHeight))
             {
-                previewAspect = Math.Clamp((double)pixelWidth / Math.Max(1, pixelHeight), 0.18, 6.2);
+                previewAspect = Math.Clamp((double)pixelWidth / Math.Max(1, pixelHeight), 0.08, 20.0);
             }
 
             double previewHeight, previewWidth;
@@ -1540,7 +1537,7 @@ namespace DesktopPlus
             }
         }
 
-        private void RebuildListItemVisuals()
+        private void RebuildListItemVisuals(bool sortItems = true)
         {
             if (FileList == null)
             {
@@ -1567,7 +1564,10 @@ namespace DesktopPlus
                 ApplyListItemContainerSpacing(item);
             }
 
-            SortCurrentFolderItemsInPlace();
+            if (sortItems)
+            {
+                SortCurrentFolderItemsInPlace();
+            }
             UpdateWrapPanelWidth();
             UpdateDropZoneVisibility();
         }
@@ -1581,7 +1581,13 @@ namespace DesktopPlus
 
         private void ApplyZoom()
         {
-            RebuildListItemVisuals();
+            if (string.Equals(NormalizeViewMode(viewMode), ViewModePhotos, StringComparison.OrdinalIgnoreCase))
+            {
+                UpdateWrapPanelWidth();
+                return;
+            }
+
+            RebuildListItemVisuals(sortItems: false);
         }
 
         private void ContentContainer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
@@ -1970,8 +1976,6 @@ namespace DesktopPlus
 
             availableWidth = Math.Max(120, availableWidth - PhotoWrapSafetyDip);
             double targetRowHeight = Math.Clamp(180 * zoomFactor, 110, 280);
-            double minRowHeight = Math.Clamp(targetRowHeight * 0.66, 84, 210);
-            double maxRowHeight = Math.Clamp(targetRowHeight * 1.45, 156, 340);
             var photos = new List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>();
             foreach (ListBoxItem item in FileList.Items.OfType<ListBoxItem>())
             {
@@ -1989,7 +1993,7 @@ namespace DesktopPlus
                 {
                     measuredAspect = (double)bitmapSource.PixelWidth / bitmapSource.PixelHeight;
                 }
-                double aspect = Math.Clamp(measuredAspect, 0.25, 5.0);
+                double aspect = Math.Clamp(measuredAspect, 0.08, 20.0);
                 photos.Add((item, root, layout, aspect));
             }
             if (photos.Count == 0)
@@ -2008,61 +2012,24 @@ namespace DesktopPlus
                     continue;
                 }
 
-                bool isLastRow = rowIndex == rows.Count - 1;
                 int count = row.Count;
                 double rowAspectSum = row.Sum(entry => entry.Aspect);
-                double naturalJustifiedHeight = GetJustifiedRowHeight(availableWidth, rowAspectSum, count, gap);
-                bool singleWideRow = count == 1 && row[0].Aspect >= PhotoWideSingleRowAspectThreshold;
-                bool shouldJustify = !isLastRow || count >= 2 || singleWideRow;
-
-                if (shouldJustify && naturalJustifiedHeight <= maxRowHeight)
+                if (rowAspectSum <= 0.0001)
                 {
-                    double usableWidth = Math.Max(count / dpiScaleX, availableWidth - ((count - 1) * gap));
-                    int targetRowPixels = Math.Max(count, (int)Math.Floor(usableWidth * dpiScaleX));
-                    int[] pixelWidths = DistributeJustifiedPixels(
-                        row.Select(entry => entry.Aspect).ToArray(),
-                        targetRowPixels);
-                    double rowHeight = (targetRowPixels / dpiScaleX) / Math.Max(0.01, rowAspectSum);
-
-                    for (int j = 0; j < count; j++)
-                    {
-                        double width = pixelWidths[j] / dpiScaleX;
-                        ApplyPhotoTileSize(row[j].Container, row[j].Root, row[j].Layout, width, rowHeight, leftOffset: 0);
-                        ReloadPhotoIfNeeded(row[j].Layout, width, rowHeight);
-                    }
                     continue;
                 }
 
-                // Relaxed row for outliers (typically a single portrait at the end).
-                double relaxedRowHeight = Math.Clamp(Math.Min(targetRowHeight, naturalJustifiedHeight), minRowHeight, maxRowHeight);
-                double consumedWidth = 0;
-                var widths = new double[count];
+                double usableWidth = Math.Max(count / dpiScaleX, availableWidth - ((count - 1) * gap));
+                int targetRowPixels = Math.Max(count, (int)Math.Floor(usableWidth * dpiScaleX));
+                int[] pixelWidths = DistributeJustifiedPixels(
+                    row.Select(entry => entry.Aspect).ToArray(),
+                    targetRowPixels);
+                double rowHeight = (targetRowPixels / dpiScaleX) / rowAspectSum;
                 for (int j = 0; j < count; j++)
                 {
-                    double width = Math.Max(PhotoMinPreviewWidth, relaxedRowHeight * row[j].Aspect);
-                    double pixelAlignedWidth = Math.Floor(width * dpiScaleX) / dpiScaleX;
-                    widths[j] = pixelAlignedWidth > 1 ? pixelAlignedWidth : width;
-                    consumedWidth += widths[j];
-                }
-                consumedWidth += Math.Max(0, count - 1) * gap;
-
-                double rowLeftOffset = 0;
-                if (count == 1 && consumedWidth < availableWidth)
-                {
-                    rowLeftOffset = (availableWidth - consumedWidth) * 0.5;
-                }
-
-                for (int j = 0; j < count; j++)
-                {
-                    double leftOffset = j == 0 ? rowLeftOffset : 0;
-                    ApplyPhotoTileSize(
-                        row[j].Container,
-                        row[j].Root,
-                        row[j].Layout,
-                        widths[j],
-                        relaxedRowHeight,
-                        leftOffset);
-                    ReloadPhotoIfNeeded(row[j].Layout, widths[j], relaxedRowHeight);
+                    double width = pixelWidths[j] / dpiScaleX;
+                    ApplyPhotoTileSize(row[j].Container, row[j].Root, row[j].Layout, width, rowHeight, leftOffset: 0);
+                    ReloadPhotoIfNeeded(row[j].Layout, width, rowHeight);
                 }
             }
         }
@@ -2408,9 +2375,18 @@ namespace DesktopPlus
                 return 0;
             }
 
-            return ContentContainer.ComputedVerticalScrollBarVisibility == Visibility.Visible
-                ? PhotoScrollbarReserveDip
-                : 0;
+            if (ContentContainer.ComputedVerticalScrollBarVisibility != Visibility.Visible)
+            {
+                return 0;
+            }
+
+            double measuredReserve = ContentContainer.ActualWidth - ContentContainer.ViewportWidth;
+            if (double.IsNaN(measuredReserve) || double.IsInfinity(measuredReserve))
+            {
+                return 0;
+            }
+
+            return Math.Max(0, measuredReserve);
         }
 
         private static int GetFirstRowItemCount(System.Windows.Controls.ListBox fileList, WrapPanel wrapPanel)

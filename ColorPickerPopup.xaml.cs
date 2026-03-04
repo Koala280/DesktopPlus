@@ -1,8 +1,12 @@
 using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using WinForms = System.Windows.Forms;
 using MediaColor = System.Windows.Media.Color;
 using WpfPoint = System.Windows.Point;
 
@@ -16,7 +20,26 @@ namespace DesktopPlus
         private bool _draggingSv;
         private bool _draggingHue;
         private bool _suppressUpdate;
+        private bool _isScreenPickActive;
         private MediaColor _originalColor;
+        private readonly List<MediaColor> _presetColors = new List<MediaColor>();
+        private static readonly string[] DefaultPresetHexColors =
+        {
+            "#6E8BFF",
+            "#64A9FF",
+            "#6BD5C1",
+            "#70E4C6",
+            "#4ADE80",
+            "#F5A524",
+            "#E8B76B",
+            "#FF7EB6",
+            "#3B82F6",
+            "#A3B1C2",
+            "#F2F5FA",
+            "#A7B0C0",
+            "#2A303B",
+            "#242833"
+        };
 
         public event Action<MediaColor>? ColorChanged;
 
@@ -33,6 +56,10 @@ namespace DesktopPlus
             UpdateOverlaySize();
             SvCanvas.SizeChanged += (_, _) => { UpdateOverlaySize(); UpdateSvCursorPosition(); };
             HueCanvas.SizeChanged += (_, _) => UpdateHueCursorPosition();
+            if (_presetColors.Count == 0)
+            {
+                SetPresetColors(null);
+            }
         }
 
         public void SetColor(MediaColor color)
@@ -45,6 +72,52 @@ namespace DesktopPlus
             _suppressUpdate = true;
             UpdateAllFromHsv();
             _suppressUpdate = false;
+        }
+
+        public void SetPresetColors(IEnumerable<MediaColor>? colors)
+        {
+            _presetColors.Clear();
+            var unique = new HashSet<int>();
+
+            void AddColor(MediaColor value)
+            {
+                int key = (value.R << 16) | (value.G << 8) | value.B;
+                if (unique.Add(key))
+                {
+                    _presetColors.Add(value);
+                }
+            }
+
+            if (colors != null)
+            {
+                foreach (var color in colors)
+                {
+                    AddColor(color);
+                    if (_presetColors.Count >= 14)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            foreach (string hex in DefaultPresetHexColors)
+            {
+                try
+                {
+                    var fallbackColor = (MediaColor)System.Windows.Media.ColorConverter.ConvertFromString(hex);
+                    AddColor(fallbackColor);
+                }
+                catch
+                {
+                }
+
+                if (_presetColors.Count >= 14)
+                {
+                    break;
+                }
+            }
+
+            RebuildPresetSwatches();
         }
 
         // ─── HSV ↔ RGB ───────────────────────────────────
@@ -251,13 +324,188 @@ namespace DesktopPlus
 
         // ─── Presets ─────────────────────────────────────
 
-        private void Preset_Click(object sender, MouseButtonEventArgs e)
+        private void ApplyColor(MediaColor color)
         {
-            if (sender is not System.Windows.Controls.Border border) return;
-            if (border.Background is not SolidColorBrush brush) return;
-            var color = brush.Color;
             RgbToHsv(color.R, color.G, color.B, out _hue, out _saturation, out _value);
             UpdateAllFromHsv();
         }
+
+        private void RebuildPresetSwatches()
+        {
+            if (PresetColorsHost == null)
+            {
+                return;
+            }
+
+            PresetColorsHost.Children.Clear();
+            foreach (MediaColor color in _presetColors)
+            {
+                var swatch = CreatePresetSwatch(color);
+                swatch.MouseLeftButtonDown += Preset_Click;
+                PresetColorsHost.Children.Add(swatch);
+            }
+        }
+
+        private static Border CreatePresetSwatch(MediaColor color)
+        {
+            bool needsOutline = color.R > 230 && color.G > 230 && color.B > 230;
+            return new Border
+            {
+                Width = 20,
+                Height = 20,
+                CornerRadius = new CornerRadius(4),
+                Margin = new Thickness(0, 0, 4, 4),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                Background = new SolidColorBrush(color),
+                BorderBrush = needsOutline
+                    ? new SolidColorBrush(MediaColor.FromRgb(66, 83, 109))
+                    : System.Windows.Media.Brushes.Transparent,
+                BorderThickness = needsOutline ? new Thickness(1) : new Thickness(0),
+                SnapsToDevicePixels = true
+            };
+        }
+
+        private void Preset_Click(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is not Border border) return;
+            if (border.Background is not SolidColorBrush brush) return;
+            ApplyColor(brush.Color);
+        }
+
+        private void PickScreenButton_Click(object sender, RoutedEventArgs e)
+        {
+            _ = PickScreenColorAsync();
+        }
+
+        private async Task PickScreenColorAsync()
+        {
+            if (_isScreenPickActive)
+            {
+                return;
+            }
+
+            _isScreenPickActive = true;
+            if (PickScreenButton != null)
+            {
+                PickScreenButton.IsEnabled = false;
+            }
+
+            try
+            {
+                MediaColor? picked = await CaptureScreenColorAsync();
+                if (picked.HasValue)
+                {
+                    ApplyColor(picked.Value);
+                }
+            }
+            finally
+            {
+                _isScreenPickActive = false;
+                if (PickScreenButton != null)
+                {
+                    PickScreenButton.IsEnabled = true;
+                }
+            }
+        }
+
+        private static Task<MediaColor?> CaptureScreenColorAsync()
+        {
+            var tcs = new TaskCompletionSource<MediaColor?>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var overlay = new Window
+            {
+                WindowStyle = WindowStyle.None,
+                ResizeMode = ResizeMode.NoResize,
+                AllowsTransparency = true,
+                Background = System.Windows.Media.Brushes.Transparent,
+                Opacity = 0.01,
+                Topmost = true,
+                ShowInTaskbar = false,
+                ShowActivated = true,
+                Left = SystemParameters.VirtualScreenLeft,
+                Top = SystemParameters.VirtualScreenTop,
+                Width = SystemParameters.VirtualScreenWidth,
+                Height = SystemParameters.VirtualScreenHeight,
+                Cursor = System.Windows.Input.Cursors.Cross
+            };
+
+            void Complete(MediaColor? result)
+            {
+                if (tcs.TrySetResult(result))
+                {
+                    try
+                    {
+                        overlay.Close();
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+
+            overlay.Loaded += (_, _) =>
+            {
+                overlay.Activate();
+                overlay.Focus();
+                Keyboard.Focus(overlay);
+            };
+
+            overlay.MouseLeftButtonDown += (_, _) =>
+            {
+                var point = WinForms.Control.MousePosition;
+                Complete(TryGetPixelColor(point.X, point.Y));
+            };
+
+            overlay.MouseRightButtonDown += (_, _) => Complete(null);
+            overlay.KeyDown += (_, args) =>
+            {
+                if (args.Key == Key.Escape)
+                {
+                    args.Handled = true;
+                    Complete(null);
+                }
+            };
+
+            overlay.Closed += (_, _) => tcs.TrySetResult(null);
+            overlay.Show();
+            return tcs.Task;
+        }
+
+        private static MediaColor? TryGetPixelColor(int screenX, int screenY)
+        {
+            IntPtr hdc = GetDC(IntPtr.Zero);
+            if (hdc == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            try
+            {
+                uint raw = GetPixel(hdc, screenX, screenY);
+                if (raw == 0xFFFFFFFF)
+                {
+                    return null;
+                }
+
+                byte r = (byte)(raw & 0x000000FF);
+                byte g = (byte)((raw & 0x0000FF00) >> 8);
+                byte b = (byte)((raw & 0x00FF0000) >> 16);
+                return MediaColor.FromRgb(r, g, b);
+            }
+            finally
+            {
+                _ = ReleaseDC(IntPtr.Zero, hdc);
+            }
+        }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetDC(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDc);
+
+        [DllImport("gdi32.dll")]
+        private static extern uint GetPixel(IntPtr hdc, int x, int y);
     }
 }

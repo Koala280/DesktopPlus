@@ -75,6 +75,8 @@ namespace DesktopPlus
         private FileSystemWatcher? _folderContentWatcher;
         private FileSystemWatcher? _folderParentWatcher;
         private CancellationTokenSource? _folderWatcherRefreshCts;
+        private double _pendingWheelZoomTarget = double.NaN;
+        private System.Windows.Threading.DispatcherTimer? _wheelZoomApplyTimer;
         private bool _suppressSearchTextChanged = false;
         private readonly HashSet<string> _searchInjectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly List<System.Windows.Controls.ListBoxItem> _searchInjectedItems = new List<System.Windows.Controls.ListBoxItem>();
@@ -193,6 +195,12 @@ namespace DesktopPlus
                 _folderWatcherRefreshCts?.Cancel();
                 _folderWatcherRefreshCts?.Dispose();
                 _folderWatcherRefreshCts = null;
+                _pendingWheelZoomTarget = double.NaN;
+                if (_wheelZoomApplyTimer != null)
+                {
+                    _wheelZoomApplyTimer.Stop();
+                    _wheelZoomApplyTimer = null;
+                }
 
                 MainWindow.AppearanceChanged -= OnAppearanceChanged;
                 if (_windowSource != null)
@@ -2061,82 +2069,50 @@ namespace DesktopPlus
 
         private void ApplyMouseWheelZoom(int wheelDelta)
         {
-            bool zoomIn = wheelDelta > 0;
-            double currentZoom = zoomFactor;
-            double step = zoomIn ? MouseWheelZoomStep : -MouseWheelZoomStep;
-            double targetZoom = Math.Round(currentZoom + step, 3, MidpointRounding.AwayFromZero);
+            double baseZoom = double.IsNaN(_pendingWheelZoomTarget) ? zoomFactor : _pendingWheelZoomTarget;
+            double step = wheelDelta > 0 ? MouseWheelZoomStep : -MouseWheelZoomStep;
+            double targetZoom = Math.Round(baseZoom + step, 3, MidpointRounding.AwayFromZero);
             targetZoom = Math.Max(0.7, Math.Min(2.0, targetZoom));
-            if (Math.Abs(targetZoom - currentZoom) < 0.0001)
+            if (Math.Abs(targetZoom - baseZoom) < 0.0001)
             {
                 return;
             }
 
-            if (!zoomIn)
+            _pendingWheelZoomTarget = targetZoom;
+            if (_wheelZoomApplyTimer == null)
             {
-                zoomFactor = targetZoom;
-                ApplyZoom();
-                return;
-            }
-
-            int baselineFirstRowCount = GetCurrentFirstRowItemCount();
-            if (baselineFirstRowCount <= 1)
-            {
-                zoomFactor = targetZoom;
-                ApplyZoom();
-                return;
-            }
-
-            int targetFirstRowCount = ApplyZoomAndMeasureFirstRowCount(targetZoom);
-            if (targetFirstRowCount >= baselineFirstRowCount || targetFirstRowCount <= 0)
-            {
-                return;
-            }
-
-            double low = currentZoom;
-            double high = targetZoom;
-            for (int i = 0; i < 9; i++)
-            {
-                double mid = (low + high) * 0.5;
-                int midCount = ApplyZoomAndMeasureFirstRowCount(mid);
-                if (midCount >= baselineFirstRowCount || midCount <= 0)
+                _wheelZoomApplyTimer = new System.Windows.Threading.DispatcherTimer(
+                    System.Windows.Threading.DispatcherPriority.Render)
                 {
-                    low = mid;
-                }
-                else
+                    Interval = TimeSpan.FromMilliseconds(22)
+                };
+                _wheelZoomApplyTimer.Tick += (_, __) =>
                 {
-                    high = mid;
-                }
+                    if (double.IsNaN(_pendingWheelZoomTarget))
+                    {
+                        _wheelZoomApplyTimer!.Stop();
+                        return;
+                    }
+
+                    double queuedZoom = _pendingWheelZoomTarget;
+                    _pendingWheelZoomTarget = double.NaN;
+                    if (Math.Abs(queuedZoom - zoomFactor) > 0.0001)
+                    {
+                        zoomFactor = queuedZoom;
+                        ApplyZoom();
+                    }
+
+                    if (double.IsNaN(_pendingWheelZoomTarget))
+                    {
+                        _wheelZoomApplyTimer!.Stop();
+                    }
+                };
             }
 
-            zoomFactor = Math.Round(low, 3, MidpointRounding.AwayFromZero);
-            zoomFactor = Math.Max(0.7, Math.Min(2.0, zoomFactor));
-            ApplyZoom();
-        }
-
-        private int GetCurrentFirstRowItemCount()
-        {
-            if (FileList == null)
+            if (!_wheelZoomApplyTimer.IsEnabled)
             {
-                return 0;
+                _wheelZoomApplyTimer.Start();
             }
-
-            UpdateLayout();
-            var wrapPanel = FindVisualChild<System.Windows.Controls.WrapPanel>(FileList);
-            if (wrapPanel == null)
-            {
-                return 0;
-            }
-
-            UpdateWrapPanelWidth();
-            UpdateLayout();
-            return GetFirstRowItemCount(FileList, wrapPanel);
-        }
-
-        private int ApplyZoomAndMeasureFirstRowCount(double requestedZoom)
-        {
-            zoomFactor = Math.Max(0.7, Math.Min(2.0, requestedZoom));
-            ApplyZoom();
-            return GetCurrentFirstRowItemCount();
         }
 
         private void MinimizeWindow_Click(object sender, RoutedEventArgs e)

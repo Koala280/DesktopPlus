@@ -308,6 +308,8 @@ namespace DesktopPlus
         }
 
         private System.Windows.Controls.TextBox? _activeColorTextBox;
+        private System.Windows.Controls.Border? _activeColorSwatch;
+        private bool _colorPickerPopupRepositionQueued;
 
         private void Swatch_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
@@ -326,6 +328,7 @@ namespace DesktopPlus
 
             if (targetInput == null) return;
             _activeColorTextBox = targetInput;
+            _activeColorSwatch = swatch;
 
             // Parse current color
             MediaColor currentColor;
@@ -339,17 +342,159 @@ namespace DesktopPlus
             }
 
             ColorPicker.ColorChanged -= OnColorPickerChanged;
+            ColorPicker.SetPresetColors(BuildColorPickerPresetPalette());
             ColorPicker.SetColor(currentColor);
             ColorPicker.ColorChanged += OnColorPickerChanged;
 
-            ColorPickerPopup.PlacementTarget = swatch;
+            ColorPickerPopup.PlacementTarget = MainRootGrid;
+            ColorPickerPopup.Placement = System.Windows.Controls.Primitives.PlacementMode.RelativePoint;
+            ColorPickerPopup.HorizontalOffset = 0;
+            ColorPickerPopup.VerticalOffset = 0;
             ColorPickerPopup.IsOpen = true;
+            QueueColorPickerPopupReposition();
         }
 
         private void OnColorPickerChanged(MediaColor color)
         {
             if (_activeColorTextBox == null) return;
             _activeColorTextBox.Text = $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+        }
+
+        private IReadOnlyList<MediaColor> BuildColorPickerPresetPalette()
+        {
+            var result = new List<MediaColor>();
+            var seen = new HashSet<int>();
+
+            void Add(MediaColor color)
+            {
+                int key = (color.R << 16) | (color.G << 8) | color.B;
+                if (seen.Add(key))
+                {
+                    result.Add(color);
+                }
+            }
+
+            void AddFromInput(System.Windows.Controls.TextBox? input, MediaColor fallback)
+            {
+                if (input == null) return;
+                Add(ParseColorOrFallback(input.Text, fallback));
+            }
+
+            AddFromInput(BackgroundColorInput, MediaColor.FromRgb(36, 40, 51));
+            AddFromInput(HeaderColorInput, MediaColor.FromRgb(42, 48, 59));
+            AddFromInput(AccentColorInput, MediaColor.FromRgb(110, 139, 255));
+            AddFromInput(TextColorInput, MediaColor.FromRgb(242, 245, 250));
+            AddFromInput(FolderColorInput, MediaColor.FromRgb(110, 139, 255));
+            AddFromInput(TabActiveColorInput, MediaColor.FromRgb(110, 139, 255));
+            AddFromInput(TabInactiveColorInput, MediaColor.FromRgb(95, 106, 126));
+            AddFromInput(TabHoverColorInput, MediaColor.FromRgb(132, 154, 196));
+            AddFromInput(PatternColorInput, MediaColor.FromRgb(110, 139, 255));
+
+            foreach (var preset in GetDefaultPresets())
+            {
+                if (preset?.Settings == null)
+                {
+                    continue;
+                }
+
+                Add(ParseColorOrFallback(preset.Settings.AccentColor, MediaColor.FromRgb(110, 139, 255)));
+                Add(ParseColorOrFallback(preset.Settings.FolderTextColor, MediaColor.FromRgb(110, 139, 255)));
+                Add(ParseColorOrFallback(preset.Settings.HeaderColor, MediaColor.FromRgb(42, 48, 59)));
+                Add(ParseColorOrFallback(preset.Settings.BackgroundColor, MediaColor.FromRgb(36, 40, 51)));
+                if (result.Count >= 16)
+                {
+                    break;
+                }
+            }
+
+            return result;
+        }
+
+        private void ColorPickerPopup_Opened(object sender, EventArgs e)
+        {
+            QueueColorPickerPopupReposition();
+        }
+
+        private void ColorPickerPopup_Closed(object sender, EventArgs e)
+        {
+            _activeColorSwatch = null;
+            _colorPickerPopupRepositionQueued = false;
+        }
+
+        private void QueueColorPickerPopupReposition()
+        {
+            if (ColorPickerPopup == null ||
+                !ColorPickerPopup.IsOpen ||
+                _activeColorSwatch == null ||
+                MainRootGrid == null)
+            {
+                return;
+            }
+
+            if (_colorPickerPopupRepositionQueued)
+            {
+                return;
+            }
+
+            _colorPickerPopupRepositionQueued = true;
+            _ = Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _colorPickerPopupRepositionQueued = false;
+                PositionColorPickerPopupWithinMainWindow();
+            }), System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
+        private void PositionColorPickerPopupWithinMainWindow()
+        {
+            if (ColorPickerPopup == null ||
+                !ColorPickerPopup.IsOpen ||
+                _activeColorSwatch == null ||
+                MainRootGrid == null)
+            {
+                return;
+            }
+
+            ColorPicker.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
+            double popupWidth = ColorPicker.ActualWidth > 1
+                ? ColorPicker.ActualWidth
+                : Math.Max(1, ColorPicker.DesiredSize.Width > 1 ? ColorPicker.DesiredSize.Width : ColorPicker.Width);
+            double popupHeight = ColorPicker.ActualHeight > 1
+                ? ColorPicker.ActualHeight
+                : Math.Max(1, ColorPicker.DesiredSize.Height > 1 ? ColorPicker.DesiredSize.Height : ColorPicker.Height);
+
+            double hostWidth = MainRootGrid.ActualWidth;
+            double hostHeight = MainRootGrid.ActualHeight;
+            if (hostWidth <= 1 || hostHeight <= 1)
+            {
+                return;
+            }
+
+            System.Windows.Point swatchBottom = _activeColorSwatch.TranslatePoint(
+                new System.Windows.Point(_activeColorSwatch.ActualWidth * 0.5, _activeColorSwatch.ActualHeight + 8),
+                MainRootGrid);
+            System.Windows.Point swatchTop = _activeColorSwatch.TranslatePoint(
+                new System.Windows.Point(_activeColorSwatch.ActualWidth * 0.5, -8),
+                MainRootGrid);
+
+            double horizontalPadding = 6;
+            double verticalPadding = 6;
+            double minX = horizontalPadding;
+            double maxX = Math.Max(minX, hostWidth - popupWidth - horizontalPadding);
+            double minY = verticalPadding;
+            double maxY = Math.Max(minY, hostHeight - popupHeight - verticalPadding);
+
+            double targetX = swatchBottom.X - (popupWidth * 0.5);
+            targetX = Math.Max(minX, Math.Min(maxX, targetX));
+
+            double targetY = swatchBottom.Y;
+            if (targetY > maxY)
+            {
+                targetY = swatchTop.Y - popupHeight;
+            }
+
+            targetY = Math.Max(minY, Math.Min(maxY, targetY));
+            ColorPickerPopup.HorizontalOffset = Math.Round(targetX);
+            ColorPickerPopup.VerticalOffset = Math.Round(targetY);
         }
 
         private void UpdateBackgroundEditorVisibility(string? selectedMode = null)

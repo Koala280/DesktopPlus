@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -450,8 +451,10 @@ namespace DesktopPlus
             }
         }
 
-        private static bool TryStartSilentInstaller(string installerPath)
+        private static bool TryStartSilentInstaller(string installerPath, out Process? installerProcess)
         {
+            installerProcess = null;
+
             if (string.IsNullOrWhiteSpace(installerPath) || !File.Exists(installerPath))
             {
                 return false;
@@ -459,19 +462,122 @@ namespace DesktopPlus
 
             try
             {
-                Process.Start(new ProcessStartInfo
+                installerProcess = Process.Start(new ProcessStartInfo
                 {
                     FileName = installerPath,
                     Arguments = "/SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS",
                     UseShellExecute = true,
                     WorkingDirectory = Path.GetDirectoryName(installerPath) ?? string.Empty
                 });
-                return true;
+                return installerProcess != null;
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"Failed to start silent installer: {ex}");
                 return false;
+            }
+        }
+
+        private static IReadOnlyList<string> GetPostUpdateExecutableCandidates()
+        {
+            var candidates = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            void AddCandidate(string path)
+            {
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    return;
+                }
+
+                string fullPath;
+                try
+                {
+                    fullPath = Path.GetFullPath(path);
+                }
+                catch
+                {
+                    return;
+                }
+
+                if (seen.Add(fullPath))
+                {
+                    candidates.Add(fullPath);
+                }
+            }
+
+            string defaultInstalledPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Programs",
+                "DesktopPlus",
+                "DesktopPlus.exe");
+            AddCandidate(defaultInstalledPath);
+
+            string processPath = Environment.ProcessPath ?? string.Empty;
+            AddCandidate(processPath);
+
+            if (!string.IsNullOrWhiteSpace(processPath))
+            {
+                string? processDirectory = Path.GetDirectoryName(processPath);
+                if (!string.IsNullOrWhiteSpace(processDirectory))
+                {
+                    AddCandidate(Path.Combine(processDirectory, "DesktopPlus.exe"));
+                }
+            }
+
+            return candidates;
+        }
+
+        private static void TrySchedulePostUpdateRelaunch(int installerProcessId, IReadOnlyList<string> executableCandidates)
+        {
+            if (installerProcessId <= 0 ||
+                executableCandidates == null ||
+                executableCandidates.Count == 0)
+            {
+                return;
+            }
+
+            static string EscapeForPowerShellSingleQuoted(string value)
+            {
+                return value.Replace("'", "''");
+            }
+
+            string targetArrayLiteral = string.Join(
+                ",",
+                executableCandidates
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Select(path => $"'{EscapeForPowerShellSingleQuoted(path)}'"));
+            if (string.IsNullOrWhiteSpace(targetArrayLiteral))
+            {
+                return;
+            }
+
+            string relaunchScript =
+                $"$installerId={installerProcessId};" +
+                "try { Wait-Process -Id $installerId -ErrorAction SilentlyContinue } catch { };" +
+                "Start-Sleep -Milliseconds 1200;" +
+                $"$targets=@({targetArrayLiteral});" +
+                "foreach ($target in $targets) {" +
+                " if ([string]::IsNullOrWhiteSpace($target)) { continue }" +
+                " if (-not (Test-Path -LiteralPath $target)) { continue }" +
+                " try { Start-Process -FilePath $target | Out-Null; break } catch { }" +
+                "}";
+
+            try
+            {
+                string encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(relaunchScript));
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "powershell.exe",
+                    Arguments = $"-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand {encodedScript}",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                });
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to schedule post-update relaunch: {ex}");
             }
         }
 
@@ -489,9 +595,16 @@ namespace DesktopPlus
                 return false;
             }
 
-            if (!TryStartSilentInstaller(pendingInfo.InstallerPath))
+            if (!TryStartSilentInstaller(pendingInfo.InstallerPath, out var installerProcess))
             {
                 return false;
+            }
+
+            if (installerProcess != null)
+            {
+                TrySchedulePostUpdateRelaunch(
+                    installerProcess.Id,
+                    GetPostUpdateExecutableCandidates());
             }
 
             _isExit = true;

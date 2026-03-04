@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
@@ -10,12 +11,20 @@ namespace DesktopPlus
     {
         private static readonly NotifyFilters FolderWatcherNotifyFilters =
             NotifyFilters.FileName |
-            NotifyFilters.DirectoryName |
-            NotifyFilters.LastWrite |
-            NotifyFilters.Size |
-            NotifyFilters.Attributes |
-            NotifyFilters.CreationTime |
-            NotifyFilters.Security;
+            NotifyFilters.DirectoryName;
+
+        private static readonly string[] TransientDownloadExtensions =
+        {
+            ".crdownload",
+            ".part",
+            ".partial",
+            ".tmp",
+            ".temp",
+            ".download",
+            ".opdownload",
+            ".filepart",
+            ".!qb"
+        };
 
         private static bool ArePathsEqual(string? left, string? right)
         {
@@ -36,6 +45,61 @@ namespace DesktopPlus
             {
                 return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
             }
+        }
+
+        private static bool IsTransientDownloadPath(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            string fileName;
+            try
+            {
+                fileName = Path.GetFileName(path);
+            }
+            catch
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                return false;
+            }
+
+            if (fileName.StartsWith("~$", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            string extension = Path.GetExtension(fileName);
+            if (string.IsNullOrWhiteSpace(extension))
+            {
+                return false;
+            }
+
+            return TransientDownloadExtensions.Any(candidate =>
+                string.Equals(candidate, extension, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool ShouldIgnoreContentWatcherEvent(FileSystemEventArgs e)
+        {
+            if (e == null)
+            {
+                return true;
+            }
+
+            if (e is RenamedEventArgs renamed)
+            {
+                bool oldIsTransient = IsTransientDownloadPath(renamed.OldFullPath);
+                bool newIsTransient = IsTransientDownloadPath(renamed.FullPath);
+                // Keep refresh when a temp download is finalized (.part -> .zip).
+                return oldIsTransient && newIsTransient;
+            }
+
+            return IsTransientDownloadPath(e.FullPath);
         }
 
         private void StartOrUpdateFolderWatchers(string folderPath)
@@ -98,7 +162,6 @@ namespace DesktopPlus
                     EnableRaisingEvents = true
                 };
 
-                _folderParentWatcher.Changed += FolderParentWatcher_Changed;
                 _folderParentWatcher.Created += FolderParentWatcher_Created;
                 _folderParentWatcher.Deleted += FolderParentWatcher_Deleted;
                 _folderParentWatcher.Renamed += FolderParentWatcher_Renamed;
@@ -136,7 +199,6 @@ namespace DesktopPlus
                     EnableRaisingEvents = true
                 };
 
-                _folderContentWatcher.Changed += FolderContentWatcher_Changed;
                 _folderContentWatcher.Created += FolderContentWatcher_Created;
                 _folderContentWatcher.Deleted += FolderContentWatcher_Deleted;
                 _folderContentWatcher.Renamed += FolderContentWatcher_Renamed;
@@ -160,7 +222,6 @@ namespace DesktopPlus
             try
             {
                 previous.EnableRaisingEvents = false;
-                previous.Changed -= FolderParentWatcher_Changed;
                 previous.Created -= FolderParentWatcher_Created;
                 previous.Deleted -= FolderParentWatcher_Deleted;
                 previous.Renamed -= FolderParentWatcher_Renamed;
@@ -184,7 +245,6 @@ namespace DesktopPlus
             try
             {
                 previous.EnableRaisingEvents = false;
-                previous.Changed -= FolderContentWatcher_Changed;
                 previous.Created -= FolderContentWatcher_Created;
                 previous.Deleted -= FolderContentWatcher_Deleted;
                 previous.Renamed -= FolderContentWatcher_Renamed;
@@ -202,29 +262,29 @@ namespace DesktopPlus
             StopParentFolderWatcher();
         }
 
-        private void FolderContentWatcher_Changed(object sender, FileSystemEventArgs e)
-        {
-            QueueFolderRefreshFromWatcher();
-        }
-
         private void FolderContentWatcher_Created(object sender, FileSystemEventArgs e)
         {
+            if (ShouldIgnoreContentWatcherEvent(e))
+            {
+                return;
+            }
+
             QueueFolderRefreshFromWatcher();
         }
 
         private void FolderContentWatcher_Deleted(object sender, FileSystemEventArgs e)
         {
+            if (ShouldIgnoreContentWatcherEvent(e))
+            {
+                return;
+            }
+
             QueueFolderRefreshFromWatcher();
         }
 
         private void FolderContentWatcher_Renamed(object sender, RenamedEventArgs e)
         {
-            QueueFolderRefreshFromWatcher();
-        }
-
-        private void FolderParentWatcher_Changed(object sender, FileSystemEventArgs e)
-        {
-            if (!ArePathsEqual(e.FullPath, currentFolderPath))
+            if (ShouldIgnoreContentWatcherEvent(e))
             {
                 return;
             }

@@ -31,11 +31,7 @@ namespace DesktopPlus
         private bool _isUiReady = false;
         private bool _suspendPresetSelection = false;
         private bool _suspendGeneralHandlers = false;
-        private bool _isMainWindowDragActive = false;
         private bool _hideMainWindowOnStartup = false;
-        private UIElement? _mainWindowDragHandle;
-        private System.Windows.Point _mainWindowDragStartMouseScreen;
-        private System.Windows.Point _mainWindowDragStartWindowPosition;
         private const string DefaultPresetName = "Graphite";
         private const string DefaultLanguageCode = "en";
         private const string CloseBehaviorMinimize = "Minimize";
@@ -368,6 +364,8 @@ namespace DesktopPlus
 
             this.Closing += OnWindowClosing;
             this.StateChanged += OnWindowStateChanged;
+            this.LocationChanged += (_, __) => QueueColorPickerPopupReposition();
+            this.SizeChanged += (_, __) => QueueColorPickerPopupReposition();
             this.Loaded += (s, e) => RefreshPanelOverview();
             PanelsChanged += RefreshPanelOverview;
             this.Closed += (s, e) =>
@@ -711,10 +709,49 @@ namespace DesktopPlus
         {
             if (e.ChangedButton != MouseButton.Left) return;
             if (IsSourceInsideButton(e.OriginalSource as DependencyObject)) return;
-            if (sender is UIElement dragHandle)
+            if (e.ClickCount == 2)
             {
-                BeginMainWindowDrag(dragHandle);
+                MaximizeRestore_Click(sender, new RoutedEventArgs());
                 e.Handled = true;
+                return;
+            }
+
+            BeginMainWindowDrag(e);
+            e.Handled = true;
+        }
+
+        private void BeginMainWindowDrag(MouseButtonEventArgs e)
+        {
+            if (e.LeftButton != MouseButtonState.Pressed)
+            {
+                return;
+            }
+
+            if (WindowState == WindowState.Maximized)
+            {
+                System.Windows.Point cursorScreen = GetMouseScreenPositionDip();
+                double relativeMouseX = Math.Clamp(
+                    e.GetPosition(this).X / Math.Max(1, ActualWidth),
+                    0,
+                    1);
+                double titleBarOffsetY = Math.Clamp(e.GetPosition(this).Y, 0, 48);
+
+                Rect restoreBounds = RestoreBounds;
+                WindowState = WindowState.Normal;
+
+                double restoredWidth = restoreBounds.Width > 0 ? restoreBounds.Width : ActualWidth;
+                double restoredLeft = cursorScreen.X - (restoredWidth * relativeMouseX);
+                Left = restoredLeft;
+                Top = cursorScreen.Y - titleBarOffsetY;
+            }
+
+            try
+            {
+                DragMove();
+            }
+            catch
+            {
+                // DragMove can throw if mouse state changes between input and call.
             }
         }
 
@@ -795,67 +832,6 @@ namespace DesktopPlus
             return new System.Windows.Point(raw.X, raw.Y);
         }
 
-        private void BeginMainWindowDrag(UIElement dragHandle)
-        {
-            if (_isMainWindowDragActive || WindowState != WindowState.Normal) return;
-
-            _mainWindowDragHandle = dragHandle;
-            _mainWindowDragStartMouseScreen = GetMouseScreenPositionDip();
-            _mainWindowDragStartWindowPosition = new System.Windows.Point(Left, Top);
-            _isMainWindowDragActive = true;
-
-            dragHandle.MouseMove += MainWindowDragHandle_MouseMove;
-            dragHandle.MouseLeftButtonUp += MainWindowDragHandle_MouseLeftButtonUp;
-            dragHandle.LostMouseCapture += MainWindowDragHandle_LostMouseCapture;
-            dragHandle.CaptureMouse();
-        }
-
-        private void EndMainWindowDrag()
-        {
-            var handle = _mainWindowDragHandle;
-            if (handle != null)
-            {
-                handle.MouseMove -= MainWindowDragHandle_MouseMove;
-                handle.MouseLeftButtonUp -= MainWindowDragHandle_MouseLeftButtonUp;
-                handle.LostMouseCapture -= MainWindowDragHandle_LostMouseCapture;
-                if (handle.IsMouseCaptured)
-                {
-                    handle.ReleaseMouseCapture();
-                }
-                _mainWindowDragHandle = null;
-            }
-
-            _isMainWindowDragActive = false;
-        }
-
-        private void MainWindowDragHandle_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
-        {
-            if (!_isMainWindowDragActive) return;
-
-            if (e.LeftButton != MouseButtonState.Pressed)
-            {
-                EndMainWindowDrag();
-                return;
-            }
-
-            System.Windows.Point current = GetMouseScreenPositionDip();
-            double deltaX = current.X - _mainWindowDragStartMouseScreen.X;
-            double deltaY = current.Y - _mainWindowDragStartMouseScreen.Y;
-            Left = _mainWindowDragStartWindowPosition.X + deltaX;
-            Top = _mainWindowDragStartWindowPosition.Y + deltaY;
-        }
-
-        private void MainWindowDragHandle_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-        {
-            EndMainWindowDrag();
-            e.Handled = true;
-        }
-
-        private void MainWindowDragHandle_LostMouseCapture(object sender, System.Windows.Input.MouseEventArgs e)
-        {
-            EndMainWindowDrag();
-        }
-
         private void MaximizeRestore_Click(object sender, RoutedEventArgs e)
         {
             WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
@@ -922,6 +898,7 @@ namespace DesktopPlus
             }
 
             ShowInTaskbar = true;
+            QueueColorPickerPopupReposition();
         }
 
         public static void NotifyPanelsChanged()
@@ -960,6 +937,7 @@ namespace DesktopPlus
             _suspendGeneralHandlers = true;
             if (LanguageCombo != null)
             {
+                RefreshLanguageComboItems();
                 LanguageCombo.SelectedValue = _languageCode;
             }
             if (StartupToggle != null)
@@ -983,20 +961,25 @@ namespace DesktopPlus
             if (_suspendGeneralHandlers) return;
             if (LanguageCombo?.SelectedValue is string code)
             {
-                string previousLanguageCode = CurrentLanguageCode;
-                _languageCode = code;
-                ApplyLanguage(_languageCode);
-                ApplyAutoSortLanguageMigration(previousLanguageCode, CurrentLanguageCode);
-                RefreshPanelOverview();
-                RefreshLayoutList();
-                RefreshPresetSelectors();
-                RefreshDesktopAutoSortRuleViews();
-                SetDesktopAutoSortStatus(_desktopAutoSort.AutoSortEnabled
-                    ? GetString("Loc.AutoSortStatusEnabled")
-                    : GetString("Loc.AutoSortStatusDisabled"));
-                ApplyGeneralSettingsToUi();
-                SaveSettings();
+                ApplyLanguageSelection(code);
             }
+        }
+
+        private void ApplyLanguageSelection(string code)
+        {
+            string previousLanguageCode = CurrentLanguageCode;
+            _languageCode = code;
+            ApplyLanguage(_languageCode);
+            ApplyAutoSortLanguageMigration(previousLanguageCode, CurrentLanguageCode);
+            RefreshPanelOverview();
+            RefreshLayoutList();
+            RefreshPresetSelectors();
+            RefreshDesktopAutoSortRuleViews();
+            SetDesktopAutoSortStatus(_desktopAutoSort.AutoSortEnabled
+                ? GetString("Loc.AutoSortStatusEnabled")
+                : GetString("Loc.AutoSortStatusDisabled"));
+            ApplyGeneralSettingsToUi();
+            SaveSettings();
         }
 
         private void StartupToggle_Changed(object sender, RoutedEventArgs e)

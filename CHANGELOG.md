@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.14] - 2026-03-04
+
+### Added
+
+- Added built-in Latvian (`lv`) UI language.
+- Added custom language import from common JSON formats (flat key/value, nested translation dictionaries, and i18next-style resources).
+- Added theme-aware color presets in the color picker plus screen eyedropper support.
+
+### Changed
+
+- Color picker popup now stays inside the MainWindow bounds, including fullscreen/maximized usage.
+- Optimized panel zoom (`Ctrl + Mouse Wheel`) by batching wheel events before applying layout updates.
+- Default app-state language for fresh settings remains English (`en`).
+
+### Fixed
+
+- Automatically relaunch the app after a silently installed automatic update completes.
+- Reduced panel refresh flicker during active downloads by ignoring transient temporary download files in folder watchers.
+- Improved photo collage row sizing to better use available width and reserve measured scrollbar width.
+
 ## [1.0.13] - 2026-03-04
 
 ### Changed

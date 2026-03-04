@@ -1,5 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.Json;
 using System.Windows;
 
 namespace DesktopPlus
@@ -21,11 +25,13 @@ namespace DesktopPlus
                     ["Loc.GeneralLanguageLabel"] = "Sprache",
                     ["Loc.LanguageGerman"] = "Deutsch",
                     ["Loc.LanguageEnglish"] = "Englisch",
+                    ["Loc.LanguageLatvian"] = "Lettisch",
                     ["Loc.GeneralStartupCheckbox"] = "Mit Windows starten",
                     ["Loc.GeneralCloseLabel"] = "Beim Schließen",
                     ["Loc.GeneralUpdatesLabel"] = "Updates",
                     ["Loc.GeneralAutoUpdateCheckbox"] = "Updates automatisch installieren",
                     ["Loc.GeneralCheckUpdatesButton"] = "Jetzt nach Updates suchen",
+                    ["Loc.GeneralImportLanguageButton"] = "Sprache aus JSON importieren",
                     ["Loc.GeneralCurrentVersion"] = "Installierte Version: {0}",
                     ["Loc.CloseBehaviorMinimize"] = "Minimieren",
                     ["Loc.CloseBehaviorExit"] = "Programm beenden",
@@ -290,6 +296,10 @@ namespace DesktopPlus
                     ["Loc.MsgUpdateUpToDate"] = "Du bist auf dem neuesten Stand (Version {0}).",
                     ["Loc.MsgUpdateCheckFailed"] = "Update-Pruefung fehlgeschlagen:\n{0}",
                     ["Loc.MsgUpdateOpenPageFailed"] = "Release-Seite konnte nicht geoeffnet werden.",
+                    ["Loc.MsgLanguageImportSuccess"] = "Sprache \"{0}\" ({1}) wurde importiert.",
+                    ["Loc.MsgLanguageImportInvalid"] = "Die JSON-Datei ist kein gueltiges Sprachpaket.",
+                    ["Loc.MsgLanguageImportFailed"] = "Sprach-Import fehlgeschlagen:\n{0}",
+                    ["Loc.MsgLanguageImportReservedCode"] = "Der Sprachcode \"{0}\" ist fuer eingebaute Sprachen reserviert.",
                     ["Loc.PromptLayoutName"] = "Layout-Name",
                     ["Loc.PromptPanelName"] = "Panel-Name",
                     ["Loc.PromptPresetName"] = "Preset-Name",
@@ -307,11 +317,13 @@ namespace DesktopPlus
                     ["Loc.GeneralLanguageLabel"] = "Language",
                     ["Loc.LanguageGerman"] = "German",
                     ["Loc.LanguageEnglish"] = "English",
+                    ["Loc.LanguageLatvian"] = "Latvian",
                     ["Loc.GeneralStartupCheckbox"] = "Start with Windows",
                     ["Loc.GeneralCloseLabel"] = "On close",
                     ["Loc.GeneralUpdatesLabel"] = "Updates",
                     ["Loc.GeneralAutoUpdateCheckbox"] = "Automatically install updates",
                     ["Loc.GeneralCheckUpdatesButton"] = "Check for updates now",
+                    ["Loc.GeneralImportLanguageButton"] = "Import language JSON",
                     ["Loc.GeneralCurrentVersion"] = "Installed version: {0}",
                     ["Loc.CloseBehaviorMinimize"] = "Minimize",
                     ["Loc.CloseBehaviorExit"] = "Exit application",
@@ -576,6 +588,10 @@ namespace DesktopPlus
                     ["Loc.MsgUpdateUpToDate"] = "You're up to date (version {0}).",
                     ["Loc.MsgUpdateCheckFailed"] = "Update check failed:\n{0}",
                     ["Loc.MsgUpdateOpenPageFailed"] = "Could not open the release page.",
+                    ["Loc.MsgLanguageImportSuccess"] = "Language \"{0}\" ({1}) was imported.",
+                    ["Loc.MsgLanguageImportInvalid"] = "The JSON file is not a valid language pack.",
+                    ["Loc.MsgLanguageImportFailed"] = "Language import failed:\n{0}",
+                    ["Loc.MsgLanguageImportReservedCode"] = "Language code \"{0}\" is reserved for built-in languages.",
                     ["Loc.PromptLayoutName"] = "Layout name",
                     ["Loc.PromptPanelName"] = "Panel name",
                     ["Loc.PromptPresetName"] = "Preset name",
@@ -583,21 +599,738 @@ namespace DesktopPlus
                 }
             };
 
+        private static readonly HashSet<string> BuiltInLanguageCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "de",
+            "en",
+            "lv"
+        };
+
+        private static readonly HashSet<string> LoadedCustomLanguageCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, string> CustomLanguageDisplayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        private sealed class ImportedLanguagePack
+        {
+            public string Code { get; init; } = "";
+            public string Name { get; init; } = "";
+            public Dictionary<string, string> Translations { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        static MainWindow()
+        {
+            EnsureBuiltInLanguages();
+        }
+
+        private static string CustomLanguageFolderPath => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "DesktopPlus",
+            "Languages");
+
+        private static void EnsureBuiltInLanguages()
+        {
+            if (LocalizationData.ContainsKey("lv"))
+            {
+                return;
+            }
+
+            if (!LocalizationData.TryGetValue("en", out var english))
+            {
+                return;
+            }
+
+            var latvian = new Dictionary<string, string>(english, StringComparer.OrdinalIgnoreCase)
+            {
+                ["Loc.TabGeneral"] = "Visparigi",
+                ["Loc.TabPanels"] = "Paneli",
+                ["Loc.TabLayouts"] = "Izkartojumi",
+                ["Loc.TabThemes"] = "Temas",
+                ["Loc.TabAutoSort"] = "Auto kartosana",
+                ["Loc.TabShortcuts"] = "Saistnes",
+                ["Loc.GeneralTitle"] = "Visparigi",
+                ["Loc.GeneralLanguageLabel"] = "Valoda",
+                ["Loc.LanguageGerman"] = "Vacu",
+                ["Loc.LanguageEnglish"] = "Anglu",
+                ["Loc.LanguageLatvian"] = "Latviesu",
+                ["Loc.GeneralImportLanguageButton"] = "Importet valodas JSON",
+                ["Loc.GeneralStartupCheckbox"] = "Palaist ar Windows",
+                ["Loc.GeneralCloseLabel"] = "Aizverot",
+                ["Loc.GeneralUpdatesLabel"] = "Atjauninajumi",
+                ["Loc.GeneralAutoUpdateCheckbox"] = "Automatiski installet atjauninajumus",
+                ["Loc.GeneralCheckUpdatesButton"] = "Parbaudit atjauninajumus",
+                ["Loc.CloseBehaviorMinimize"] = "Minimizet",
+                ["Loc.CloseBehaviorExit"] = "Iziet no lietotnes",
+                ["Loc.MsgError"] = "Kluuda",
+                ["Loc.MsgInfo"] = "Informacija",
+                ["Loc.MsgLanguageImportSuccess"] = "Valoda \"{0}\" ({1}) tika importeta.",
+                ["Loc.MsgLanguageImportInvalid"] = "JSON fails nav deriga valodas pakotne.",
+                ["Loc.MsgLanguageImportFailed"] = "Valodas imports neizdevas:\n{0}",
+                ["Loc.MsgLanguageImportReservedCode"] = "Valodas kods \"{0}\" ir rezervets iebuvetajam valodam."
+            };
+
+            LocalizationData["lv"] = latvian;
+        }
+
+        private static void LoadCustomLanguagesFromDisk()
+        {
+            EnsureBuiltInLanguages();
+
+            foreach (string code in LoadedCustomLanguageCodes.ToList())
+            {
+                LocalizationData.Remove(code);
+            }
+
+            LoadedCustomLanguageCodes.Clear();
+            CustomLanguageDisplayNames.Clear();
+
+            if (!Directory.Exists(CustomLanguageFolderPath))
+            {
+                return;
+            }
+
+            foreach (string filePath in Directory.EnumerateFiles(CustomLanguageFolderPath, "*.json"))
+            {
+                if (!TryLoadLanguagePackFromFile(filePath, out ImportedLanguagePack pack, out _))
+                {
+                    continue;
+                }
+
+                if (BuiltInLanguageCodes.Contains(pack.Code))
+                {
+                    continue;
+                }
+
+                RegisterCustomLanguage(pack);
+            }
+        }
+
+        private static void RegisterCustomLanguage(ImportedLanguagePack pack)
+        {
+            if (string.IsNullOrWhiteSpace(pack.Code) || pack.Translations.Count == 0)
+            {
+                return;
+            }
+
+            var merged = LocalizationData.TryGetValue(DefaultLanguageCode, out var defaults)
+                ? new Dictionary<string, string>(defaults, StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var pair in pack.Translations)
+            {
+                if (string.IsNullOrWhiteSpace(pair.Key) || string.IsNullOrWhiteSpace(pair.Value))
+                {
+                    continue;
+                }
+
+                merged[pair.Key] = pair.Value;
+            }
+
+            LocalizationData[pack.Code] = merged;
+            LoadedCustomLanguageCodes.Add(pack.Code);
+            CustomLanguageDisplayNames[pack.Code] = string.IsNullOrWhiteSpace(pack.Name)
+                ? pack.Code.ToUpperInvariant()
+                : pack.Name.Trim();
+        }
+
+        private static bool ImportCustomLanguageFromFile(
+            string filePath,
+            out string importedCode,
+            out string importedName,
+            out string errorMessage)
+        {
+            importedCode = string.Empty;
+            importedName = string.Empty;
+            errorMessage = string.Empty;
+
+            if (!TryLoadLanguagePackFromFile(filePath, out ImportedLanguagePack pack, out string parseError))
+            {
+                errorMessage = parseError;
+                return false;
+            }
+
+            if (BuiltInLanguageCodes.Contains(pack.Code))
+            {
+                errorMessage = string.Format(GetString("Loc.MsgLanguageImportReservedCode"), pack.Code);
+                return false;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(CustomLanguageFolderPath);
+                string targetFilePath = Path.Combine(CustomLanguageFolderPath, $"{pack.Code}.json");
+                var normalizedPack = new
+                {
+                    code = pack.Code,
+                    name = pack.Name,
+                    translations = pack.Translations
+                        .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.OrdinalIgnoreCase)
+                };
+
+                string normalizedJson = JsonSerializer.Serialize(
+                    normalizedPack,
+                    new JsonSerializerOptions
+                    {
+                        WriteIndented = true
+                    });
+
+                File.WriteAllText(targetFilePath, normalizedJson, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                errorMessage = string.Format(GetString("Loc.MsgLanguageImportFailed"), ex.Message);
+                return false;
+            }
+
+            RegisterCustomLanguage(pack);
+            importedCode = pack.Code;
+            importedName = pack.Name;
+            return true;
+        }
+
+        private static bool TryLoadLanguagePackFromFile(string filePath, out ImportedLanguagePack pack, out string errorMessage)
+        {
+            pack = new ImportedLanguagePack();
+            errorMessage = GetString("Loc.MsgLanguageImportInvalid");
+
+            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            {
+                return false;
+            }
+
+            try
+            {
+                string json = File.ReadAllText(filePath, Encoding.UTF8);
+                string fallbackCode = NormalizeLanguageCode(Path.GetFileNameWithoutExtension(filePath));
+                string fallbackName = Path.GetFileNameWithoutExtension(filePath);
+                return TryParseLanguagePack(json, fallbackCode, fallbackName, out pack, out errorMessage);
+            }
+            catch (Exception ex)
+            {
+                errorMessage = string.Format(GetString("Loc.MsgLanguageImportFailed"), ex.Message);
+                return false;
+            }
+        }
+
+        private static bool TryParseLanguagePack(
+            string json,
+            string fallbackCode,
+            string fallbackName,
+            out ImportedLanguagePack pack,
+            out string errorMessage)
+        {
+            pack = new ImportedLanguagePack();
+            errorMessage = GetString("Loc.MsgLanguageImportInvalid");
+
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return false;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(
+                    json,
+                    new JsonDocumentOptions
+                    {
+                        AllowTrailingCommas = true,
+                        CommentHandling = JsonCommentHandling.Skip
+                    });
+
+                if (document.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    return false;
+                }
+
+                JsonElement root = document.RootElement;
+                string code = NormalizeLanguageCode(ReadFirstStringProperty(root, "code", "languageCode", "language", "lang", "locale"));
+                if (string.IsNullOrWhiteSpace(code))
+                {
+                    code = DetectLanguageCode(root);
+                }
+                if (string.IsNullOrWhiteSpace(code))
+                {
+                    code = fallbackCode;
+                }
+                if (string.IsNullOrWhiteSpace(code))
+                {
+                    return false;
+                }
+
+                string name = ReadFirstStringProperty(root, "name", "displayName", "nativeName", "languageName");
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    name = fallbackName;
+                }
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    name = code.ToUpperInvariant();
+                }
+
+                var translations = ExtractTranslationValues(root, code);
+                if (translations.Count == 0)
+                {
+                    return false;
+                }
+
+                pack = new ImportedLanguagePack
+                {
+                    Code = code,
+                    Name = name.Trim(),
+                    Translations = translations
+                };
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                errorMessage = string.Format(GetString("Loc.MsgLanguageImportFailed"), ex.Message);
+                return false;
+            }
+        }
+
+        private static Dictionary<string, string> ExtractTranslationValues(JsonElement root, string languageCode)
+        {
+            (JsonElement translationRoot, bool usedNestedRoot) = ResolveTranslationRoot(root, languageCode);
+            var rawValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            FlattenTranslationObject(translationRoot, null, rawValues);
+            if (rawValues.Count == 0 && usedNestedRoot)
+            {
+                FlattenTranslationObject(root, null, rawValues);
+            }
+
+            var knownDefaultKeys = LocalizationData.TryGetValue(DefaultLanguageCode, out var defaults)
+                ? new HashSet<string>(defaults.Keys, StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            var normalized = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in rawValues)
+            {
+                string key = pair.Key?.Trim() ?? string.Empty;
+                string value = pair.Value?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(value))
+                {
+                    continue;
+                }
+
+                if (key.StartsWith("Loc.", StringComparison.OrdinalIgnoreCase))
+                {
+                    normalized[key] = value;
+                    continue;
+                }
+
+                string prefixed = $"Loc.{key}";
+                if (knownDefaultKeys.Contains(prefixed))
+                {
+                    normalized[prefixed] = value;
+                }
+            }
+
+            return normalized;
+        }
+
+        private static (JsonElement TranslationRoot, bool UsedNestedRoot) ResolveTranslationRoot(JsonElement root, string languageCode)
+        {
+            if (TryGetPropertyIgnoreCase(root, "translations", out JsonElement translations))
+            {
+                return (UnwrapLanguageContainer(translations, languageCode), true);
+            }
+
+            if (TryGetPropertyIgnoreCase(root, "messages", out JsonElement messages))
+            {
+                return (UnwrapLanguageContainer(messages, languageCode), true);
+            }
+
+            if (TryGetPropertyIgnoreCase(root, "strings", out JsonElement strings))
+            {
+                return (UnwrapLanguageContainer(strings, languageCode), true);
+            }
+
+            if (TryGetPropertyIgnoreCase(root, "dictionary", out JsonElement dictionary))
+            {
+                return (UnwrapLanguageContainer(dictionary, languageCode), true);
+            }
+
+            if (TryGetPropertyIgnoreCase(root, "translation", out JsonElement translation))
+            {
+                return (translation, true);
+            }
+
+            if (TryGetPropertyIgnoreCase(root, "resources", out JsonElement resources) &&
+                resources.ValueKind == JsonValueKind.Object)
+            {
+                string primaryLanguageCode = GetPrimaryLanguageCode(languageCode);
+                if (!string.IsNullOrWhiteSpace(languageCode) &&
+                    (TryGetPropertyIgnoreCase(resources, languageCode, out JsonElement languageNode) ||
+                     (!string.IsNullOrWhiteSpace(primaryLanguageCode) &&
+                      TryGetPropertyIgnoreCase(resources, primaryLanguageCode, out languageNode))))
+                {
+                    if (TryGetPropertyIgnoreCase(languageNode, "translation", out JsonElement resourceTranslation))
+                    {
+                        return (resourceTranslation, true);
+                    }
+
+                    return (languageNode, true);
+                }
+
+                foreach (var resource in resources.EnumerateObject())
+                {
+                    if (resource.Value.ValueKind != JsonValueKind.Object)
+                    {
+                        continue;
+                    }
+
+                    if (TryGetPropertyIgnoreCase(resource.Value, "translation", out JsonElement firstTranslation))
+                    {
+                        return (firstTranslation, true);
+                    }
+
+                    return (resource.Value, true);
+                }
+            }
+
+            string primaryCode = GetPrimaryLanguageCode(languageCode);
+            if (!string.IsNullOrWhiteSpace(languageCode) &&
+                (TryGetPropertyIgnoreCase(root, languageCode, out JsonElement rootLanguageNode) ||
+                 (!string.IsNullOrWhiteSpace(primaryCode) &&
+                  TryGetPropertyIgnoreCase(root, primaryCode, out rootLanguageNode))))
+            {
+                if (TryGetPropertyIgnoreCase(rootLanguageNode, "translation", out JsonElement rootLanguageTranslation))
+                {
+                    return (rootLanguageTranslation, true);
+                }
+
+                return (rootLanguageNode, true);
+            }
+
+            return (root, false);
+        }
+
+        private static JsonElement UnwrapLanguageContainer(JsonElement container, string languageCode)
+        {
+            if (container.ValueKind != JsonValueKind.Object)
+            {
+                return container;
+            }
+
+            string primaryCode = GetPrimaryLanguageCode(languageCode);
+            if (!string.IsNullOrWhiteSpace(languageCode) &&
+                (TryGetPropertyIgnoreCase(container, languageCode, out JsonElement scoped) ||
+                 (!string.IsNullOrWhiteSpace(primaryCode) &&
+                  TryGetPropertyIgnoreCase(container, primaryCode, out scoped))))
+            {
+                if (TryGetPropertyIgnoreCase(scoped, "translation", out JsonElement scopedTranslation))
+                {
+                    return scopedTranslation;
+                }
+
+                return scoped;
+            }
+
+            return container;
+        }
+
+        private static string GetPrimaryLanguageCode(string languageCode)
+        {
+            if (string.IsNullOrWhiteSpace(languageCode))
+            {
+                return string.Empty;
+            }
+
+            string[] parts = languageCode.Split('-', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            return parts[0];
+        }
+
+        private static void FlattenTranslationObject(JsonElement element, string? prefix, Dictionary<string, string> output)
+        {
+            switch (element.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    foreach (var property in element.EnumerateObject())
+                    {
+                        string childPrefix = string.IsNullOrWhiteSpace(prefix)
+                            ? property.Name
+                            : $"{prefix}.{property.Name}";
+                        FlattenTranslationObject(property.Value, childPrefix, output);
+                    }
+                    break;
+
+                case JsonValueKind.String:
+                    if (!string.IsNullOrWhiteSpace(prefix))
+                    {
+                        output[prefix] = element.GetString() ?? string.Empty;
+                    }
+                    break;
+
+                case JsonValueKind.Number:
+                case JsonValueKind.True:
+                case JsonValueKind.False:
+                    if (!string.IsNullOrWhiteSpace(prefix))
+                    {
+                        output[prefix] = element.ToString();
+                    }
+                    break;
+            }
+        }
+
+        private static string DetectLanguageCode(JsonElement root)
+        {
+            foreach (string containerName in new[] { "translations", "messages", "strings", "dictionary" })
+            {
+                if (!TryGetPropertyIgnoreCase(root, containerName, out JsonElement container) ||
+                    container.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                foreach (var languageProperty in container.EnumerateObject())
+                {
+                    string code = NormalizeLanguageCode(languageProperty.Name);
+                    if (IsLikelyLanguageCode(code))
+                    {
+                        return code;
+                    }
+                }
+            }
+
+            if (TryGetPropertyIgnoreCase(root, "resources", out JsonElement resources) &&
+                resources.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var resource in resources.EnumerateObject())
+                {
+                    string code = NormalizeLanguageCode(resource.Name);
+                    if (IsLikelyLanguageCode(code))
+                    {
+                        return code;
+                    }
+                }
+            }
+
+            foreach (var property in root.EnumerateObject())
+            {
+                if (property.Value.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                string code = NormalizeLanguageCode(property.Name);
+                if (!IsLikelyLanguageCode(code))
+                {
+                    continue;
+                }
+
+                if (TryGetPropertyIgnoreCase(property.Value, "translation", out _) ||
+                    TryGetPropertyIgnoreCase(property.Value, "translations", out _))
+                {
+                    return code;
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private static bool IsLikelyLanguageCode(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            string[] parts = value.Split('-', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0 || parts.Length > 3)
+            {
+                return false;
+            }
+
+            foreach (string part in parts)
+            {
+                if (part.Length < 2 || part.Length > 8)
+                {
+                    return false;
+                }
+
+                if (!part.All(char.IsLetter))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static string NormalizeLanguageCode(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            var builder = new StringBuilder(value.Length);
+            foreach (char ch in value.Trim())
+            {
+                if (char.IsLetter(ch))
+                {
+                    builder.Append(char.ToLowerInvariant(ch));
+                }
+                else if (ch == '-' || ch == '_')
+                {
+                    builder.Append('-');
+                }
+            }
+
+            string normalized = builder.ToString().Trim('-');
+            while (normalized.Contains("--", StringComparison.Ordinal))
+            {
+                normalized = normalized.Replace("--", "-", StringComparison.Ordinal);
+            }
+
+            if (!IsLikelyLanguageCode(normalized))
+            {
+                return string.Empty;
+            }
+
+            return normalized;
+        }
+
+        private static string ReadFirstStringProperty(JsonElement element, params string[] propertyNames)
+        {
+            foreach (string propertyName in propertyNames)
+            {
+                if (!TryGetPropertyIgnoreCase(element, propertyName, out JsonElement value))
+                {
+                    continue;
+                }
+
+                switch (value.ValueKind)
+                {
+                    case JsonValueKind.String:
+                        return value.GetString() ?? string.Empty;
+                    case JsonValueKind.Number:
+                    case JsonValueKind.True:
+                    case JsonValueKind.False:
+                        return value.ToString();
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private static bool TryGetPropertyIgnoreCase(JsonElement element, string propertyName, out JsonElement value)
+        {
+            if (element.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        value = property.Value;
+                        return true;
+                    }
+                }
+            }
+
+            value = default;
+            return false;
+        }
+
+        private void RefreshLanguageComboItems()
+        {
+            if (LanguageCombo == null)
+            {
+                return;
+            }
+
+            var dynamicItems = LanguageCombo.Items
+                .OfType<System.Windows.Controls.ComboBoxItem>()
+                .Where(item => item.Tag is string code && !BuiltInLanguageCodes.Contains(code))
+                .ToList();
+
+            foreach (var item in dynamicItems)
+            {
+                LanguageCombo.Items.Remove(item);
+            }
+
+            foreach (var language in CustomLanguageDisplayNames
+                .OrderBy(entry => entry.Value, StringComparer.CurrentCultureIgnoreCase))
+            {
+                LanguageCombo.Items.Add(new System.Windows.Controls.ComboBoxItem
+                {
+                    Tag = language.Key,
+                    Content = language.Value
+                });
+            }
+        }
+
+        private void ImportLanguageButton_Click(object sender, RoutedEventArgs e)
+        {
+            var openFileDialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = "JSON (*.json)|*.json|All files (*.*)|*.*",
+                Title = GetString("Loc.GeneralImportLanguageButton"),
+                Multiselect = false,
+                CheckFileExists = true
+            };
+
+            if (openFileDialog.ShowDialog(this) != true)
+            {
+                return;
+            }
+
+            if (!ImportCustomLanguageFromFile(
+                    openFileDialog.FileName,
+                    out string importedCode,
+                    out string importedName,
+                    out string errorMessage))
+            {
+                System.Windows.MessageBox.Show(
+                    string.IsNullOrWhiteSpace(errorMessage)
+                        ? GetString("Loc.MsgLanguageImportInvalid")
+                        : errorMessage,
+                    GetString("Loc.MsgError"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            ApplyLanguageSelection(importedCode);
+            System.Windows.MessageBox.Show(
+                string.Format(GetString("Loc.MsgLanguageImportSuccess"), importedName, importedCode),
+                GetString("Loc.MsgInfo"),
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+
         private void ApplyLanguage(string? code)
         {
-            string normalized = string.IsNullOrWhiteSpace(code) ? DefaultLanguageCode : code.Trim();
-            if (!LocalizationData.ContainsKey(normalized))
+            EnsureBuiltInLanguages();
+
+            string normalized = NormalizeLanguageCode(code);
+            if (string.IsNullOrWhiteSpace(normalized) || !LocalizationData.ContainsKey(normalized))
             {
                 normalized = DefaultLanguageCode;
             }
 
             CurrentLanguageCode = normalized;
-            if (System.Windows.Application.Current?.Resources != null &&
-                LocalizationData.TryGetValue(normalized, out var values))
+            if (System.Windows.Application.Current?.Resources != null)
             {
-                foreach (var pair in values)
+                if (LocalizationData.TryGetValue(DefaultLanguageCode, out var defaultValues))
                 {
-                    System.Windows.Application.Current.Resources[pair.Key] = pair.Value;
+                    foreach (var pair in defaultValues)
+                    {
+                        System.Windows.Application.Current.Resources[pair.Key] = pair.Value;
+                    }
+                }
+
+                if (LocalizationData.TryGetValue(normalized, out var values))
+                {
+                    foreach (var pair in values)
+                    {
+                        System.Windows.Application.Current.Resources[pair.Key] = pair.Value;
+                    }
                 }
             }
 
@@ -613,9 +1346,17 @@ namespace DesktopPlus
             }
 
             if (LocalizationData.TryGetValue(CurrentLanguageCode, out var values) &&
-                values.TryGetValue(key, out var value))
+                values.TryGetValue(key, out var value) &&
+                !string.IsNullOrWhiteSpace(value))
             {
                 return value;
+            }
+
+            if (LocalizationData.TryGetValue(DefaultLanguageCode, out var defaultValues) &&
+                defaultValues.TryGetValue(key, out var fallbackValue) &&
+                !string.IsNullOrWhiteSpace(fallbackValue))
+            {
+                return fallbackValue;
             }
 
             return key;
