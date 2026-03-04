@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.21] - 2026-03-04
+
+### Changed
+
+- Restored the automatic background update check interval to 10 minutes (after temporary short-interval test mode).
+
 ## [1.0.20] - 2026-03-04
 
 ### Changed
