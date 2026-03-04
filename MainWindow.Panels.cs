@@ -86,11 +86,16 @@ namespace DesktopPlus
             })
             .ToList();
 
+            var representedPanelKeys = new HashSet<string>(
+                items.Select(x => x.PanelKey).Where(x => !string.IsNullOrWhiteSpace(x)),
+                StringComparer.OrdinalIgnoreCase);
+
             var openWithoutType = openPanelList
                 .Where(p => p.IsVisible &&
                             ResolvePanelKind(p) == PanelKind.None &&
                             string.IsNullOrWhiteSpace(p.currentFolderPath) &&
                             p.PinnedItems.Count == 0)
+                .Where(panel => !representedPanelKeys.Contains(GetPanelKey(panel)))
                 .Select(panel =>
                 {
                     string title = !string.IsNullOrWhiteSpace(panel.Title) ? panel.Title : GetString("Loc.Untitled");

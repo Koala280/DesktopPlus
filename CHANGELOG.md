@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.27] - 2026-03-05
+
+### Changed
+
+- Automatic background update checks are now scheduled once per app start/enable cycle, executed after a 10-minute delay instead of running repeatedly.
+
+### Fixed
+
+- Prevented duplicate entries in the panel overview after hiding and re-showing an empty panel.
+
+## [1.0.26] - 2026-03-05
+
+### Changed
+
+- Temporary local test build used a 10-second automatic background update check interval.
+
 ## [1.0.25] - 2026-03-05
 
 ### Changed
