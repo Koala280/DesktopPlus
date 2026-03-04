@@ -85,9 +85,10 @@ namespace DesktopPlus
         private const int ExplorerIconCacheLimit = 512;
         private const double PhotoCardHorizontalPadding = 0;
         private const double PhotoCardHorizontalMargin = 0;
-        private const double PhotoWideSingleRowAspectThreshold = 2.2;
+        private const double PhotoWideSingleRowAspectThreshold = 1.4;
         private const double PhotoMinPreviewWidth = 60;
         private const double PhotoWrapSafetyDip = 0.35;
+        private const double PhotoScrollbarReserveDip = 10;
 
         private sealed class PhotoTileLayoutInfo
         {
@@ -1830,7 +1831,7 @@ namespace DesktopPlus
                 double availableWidth = Math.Max(0, baseWidth - GetHorizontalMargin(wrapPanel));
                 if (isPhotoMode)
                 {
-                    availableWidth = Math.Max(0, availableWidth - PhotoWrapSafetyDip);
+                    availableWidth = Math.Max(0, availableWidth - PhotoWrapSafetyDip - GetPhotoScrollbarReserveWidth());
                 }
                 if (availableWidth > 0)
                 {
@@ -1860,16 +1861,31 @@ namespace DesktopPlus
                 if (item.Content is not FrameworkElement root ||
                     root.Tag is not PhotoTileLayoutInfo layout)
                 {
+                    if (isPhotoMode &&
+                        item.Tag is string pathTag &&
+                        !IsPhotoPath(pathTag))
+                    {
+                        item.Visibility = Visibility.Collapsed;
+                        item.IsHitTestVisible = false;
+                    }
+                    else
+                    {
+                        item.Visibility = Visibility.Visible;
+                        item.IsHitTestVisible = true;
+                    }
                     continue;
                 }
 
                 if (isPhotoMode)
                 {
+                    bool isPhoto = layout.IsPhotoFile;
+                    item.Visibility = isPhoto ? Visibility.Visible : Visibility.Collapsed;
+                    item.IsHitTestVisible = isPhoto;
                     item.Margin = new Thickness(0);
                     item.Padding = new Thickness(0);
                     item.BorderThickness = new Thickness(0);
 
-                    if (!layout.IsPhotoFile)
+                    if (!isPhoto)
                     {
                         item.Width = 0;
                         item.Height = 0;
@@ -1889,11 +1905,13 @@ namespace DesktopPlus
                     item.ClearValue(FrameworkElement.MinHeightProperty);
                     item.ClearValue(FrameworkElement.MaxWidthProperty);
                     item.ClearValue(FrameworkElement.MaxHeightProperty);
-                    item.Opacity = 1;
-                    item.IsHitTestVisible = true;
+                    // Avoid "load once as tiles, then morph into collage" flicker.
+                    // The collage pass makes items visible after final size is applied.
+                    item.Opacity = 0;
                     continue;
                 }
 
+                item.Visibility = Visibility.Visible;
                 item.ClearValue(FrameworkElement.WidthProperty);
                 item.ClearValue(FrameworkElement.HeightProperty);
                 item.ClearValue(FrameworkElement.MinWidthProperty);
@@ -1915,12 +1933,15 @@ namespace DesktopPlus
             {
                 return;
             }
+
             double contentWidth = GetContentLayoutWidth();
             if (contentWidth <= 1)
             {
                 return;
             }
-            double gap = PhotoCardHorizontalPadding + (2 * PhotoCardHorizontalMargin);
+
+            // Horizontal gap between collage items; keep at zero for dense packing.
+            double gap = 0;
             var wrapPanel = FindVisualChild<WrapPanel>(FileList);
             double wrapWidth = 0;
             if (wrapPanel != null)
@@ -1929,7 +1950,8 @@ namespace DesktopPlus
                     ? wrapPanel.Width
                     : Math.Max(0, contentWidth - GetHorizontalMargin(wrapPanel));
             }
-            double availableWidth = Math.Max(120, wrapWidth > 1 ? wrapWidth : contentWidth);
+            double fallbackWidth = Math.Max(0, contentWidth - GetPhotoScrollbarReserveWidth());
+            double availableWidth = Math.Max(120, wrapWidth > 1 ? wrapWidth : fallbackWidth);
             double dpiScaleX = 1.0;
             try
             {
@@ -1946,10 +1968,11 @@ namespace DesktopPlus
                 availableWidth = pixelAlignedAvailableWidth;
             }
 
-            // Keep a tiny safety margin so WrapPanel never wraps one item too early due subpixel accumulation.
-            availableWidth = Math.Max(80, availableWidth - PhotoWrapSafetyDip);
+            availableWidth = Math.Max(120, availableWidth - PhotoWrapSafetyDip);
             double targetRowHeight = Math.Clamp(180 * zoomFactor, 110, 280);
-            var photos = new List<(FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>();
+            double minRowHeight = Math.Clamp(targetRowHeight * 0.66, 84, 210);
+            double maxRowHeight = Math.Clamp(targetRowHeight * 1.45, 156, 340);
+            var photos = new List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>();
             foreach (ListBoxItem item in FileList.Items.OfType<ListBoxItem>())
             {
                 if (item.Visibility != Visibility.Visible ||
@@ -1967,66 +1990,157 @@ namespace DesktopPlus
                     measuredAspect = (double)bitmapSource.PixelWidth / bitmapSource.PixelHeight;
                 }
                 double aspect = Math.Clamp(measuredAspect, 0.25, 5.0);
-                photos.Add((root, layout, aspect));
+                photos.Add((item, root, layout, aspect));
             }
             if (photos.Count == 0)
             {
                 return;
             }
-            int i = 0;
-            while (i < photos.Count)
+
+            var rows = BuildPhotoRows(photos, availableWidth, targetRowHeight);
+            RebalancePhotoRows(rows);
+
+            for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
             {
-                var row = new List<(FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>();
-                double rowAspectSum = 0;
-                while (i < photos.Count)
-                {
-                    var candidate = photos[i];
-                    double newAspectSum = rowAspectSum + candidate.Aspect;
-                    int newCount = row.Count + 1;
-                    double neededWidth = (targetRowHeight * newAspectSum) + (newCount * gap);
-                    if (row.Count > 0 && neededWidth > availableWidth)
-                    {
-                        double currentHeight = GetJustifiedRowHeight(availableWidth, rowAspectSum, row.Count, gap);
-                        double candidateHeight = GetJustifiedRowHeight(availableWidth, newAspectSum, newCount, gap);
-                        if (Math.Abs(candidateHeight - targetRowHeight) < Math.Abs(currentHeight - targetRowHeight))
-                        {
-                            row.Add(candidate);
-                            rowAspectSum = newAspectSum;
-                            i++;
-                        }
-                        break;
-                    }
-                    row.Add(candidate);
-                    rowAspectSum = newAspectSum;
-                    i++;
-                }
+                var row = rows[rowIndex];
                 if (row.Count == 0)
                 {
-                    break;
+                    continue;
                 }
-                while (row.Count > 1)
-                {
-                    double currentHeight = GetJustifiedRowHeight(availableWidth, rowAspectSum, row.Count, gap);
-                    double minTileWidth = row.Min(entry => currentHeight * entry.Aspect);
-                    if (currentHeight >= 60 && minTileWidth >= PhotoMinPreviewWidth)
-                    {
-                        break;
-                    }
-                    var removed = row[row.Count - 1];
-                    row.RemoveAt(row.Count - 1);
-                    rowAspectSum -= removed.Aspect;
-                    i--;
-                }
+
+                bool isLastRow = rowIndex == rows.Count - 1;
                 int count = row.Count;
-                double usableWidth = Math.Max(count / dpiScaleX, availableWidth - (count * gap));
-                int targetRowPixels = Math.Max(count, (int)Math.Floor(usableWidth * dpiScaleX));
-                int[] pixelWidths = DistributeJustifiedPixels(row.Select(entry => entry.Aspect).ToArray(), targetRowPixels);
-                double rowHeight = (targetRowPixels / dpiScaleX) / Math.Max(0.01, rowAspectSum);
+                double rowAspectSum = row.Sum(entry => entry.Aspect);
+                double naturalJustifiedHeight = GetJustifiedRowHeight(availableWidth, rowAspectSum, count, gap);
+                bool singleWideRow = count == 1 && row[0].Aspect >= PhotoWideSingleRowAspectThreshold;
+                bool shouldJustify = !isLastRow || count >= 2 || singleWideRow;
+
+                if (shouldJustify && naturalJustifiedHeight <= maxRowHeight)
+                {
+                    double usableWidth = Math.Max(count / dpiScaleX, availableWidth - ((count - 1) * gap));
+                    int targetRowPixels = Math.Max(count, (int)Math.Floor(usableWidth * dpiScaleX));
+                    int[] pixelWidths = DistributeJustifiedPixels(
+                        row.Select(entry => entry.Aspect).ToArray(),
+                        targetRowPixels);
+                    double rowHeight = (targetRowPixels / dpiScaleX) / Math.Max(0.01, rowAspectSum);
+
+                    for (int j = 0; j < count; j++)
+                    {
+                        double width = pixelWidths[j] / dpiScaleX;
+                        ApplyPhotoTileSize(row[j].Container, row[j].Root, row[j].Layout, width, rowHeight, leftOffset: 0);
+                        ReloadPhotoIfNeeded(row[j].Layout, width, rowHeight);
+                    }
+                    continue;
+                }
+
+                // Relaxed row for outliers (typically a single portrait at the end).
+                double relaxedRowHeight = Math.Clamp(Math.Min(targetRowHeight, naturalJustifiedHeight), minRowHeight, maxRowHeight);
+                double consumedWidth = 0;
+                var widths = new double[count];
                 for (int j = 0; j < count; j++)
                 {
-                    double w = pixelWidths[j] / dpiScaleX;
-                    ApplyPhotoTileSize(row[j].Root, row[j].Layout, w, rowHeight);
-                    ReloadPhotoIfNeeded(row[j].Layout, w, rowHeight);
+                    double width = Math.Max(PhotoMinPreviewWidth, relaxedRowHeight * row[j].Aspect);
+                    double pixelAlignedWidth = Math.Floor(width * dpiScaleX) / dpiScaleX;
+                    widths[j] = pixelAlignedWidth > 1 ? pixelAlignedWidth : width;
+                    consumedWidth += widths[j];
+                }
+                consumedWidth += Math.Max(0, count - 1) * gap;
+
+                double rowLeftOffset = 0;
+                if (count == 1 && consumedWidth < availableWidth)
+                {
+                    rowLeftOffset = (availableWidth - consumedWidth) * 0.5;
+                }
+
+                for (int j = 0; j < count; j++)
+                {
+                    double leftOffset = j == 0 ? rowLeftOffset : 0;
+                    ApplyPhotoTileSize(
+                        row[j].Container,
+                        row[j].Root,
+                        row[j].Layout,
+                        widths[j],
+                        relaxedRowHeight,
+                        leftOffset);
+                    ReloadPhotoIfNeeded(row[j].Layout, widths[j], relaxedRowHeight);
+                }
+            }
+        }
+
+        private List<List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>> BuildPhotoRows(
+            List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)> photos,
+            double availableWidth,
+            double targetRowHeight)
+        {
+            var rows = new List<List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>>();
+            if (photos.Count == 0)
+            {
+                return rows;
+            }
+
+            var currentRow = new List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>();
+            double currentAspectSum = 0;
+            for (int i = 0; i < photos.Count; i++)
+            {
+                var photo = photos[i];
+                currentRow.Add(photo);
+                currentAspectSum += photo.Aspect;
+
+                int count = currentRow.Count;
+                if (count < 2)
+                {
+                    continue;
+                }
+
+                double rowHeight = GetJustifiedRowHeight(availableWidth, currentAspectSum, count, gap: 0);
+                bool reachedTargetHeight = rowHeight <= targetRowHeight;
+                bool safetyCutoff = count >= 7;
+                if (reachedTargetHeight || safetyCutoff)
+                {
+                    rows.Add(currentRow);
+                    currentRow = new List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>();
+                    currentAspectSum = 0;
+                }
+            }
+
+            if (currentRow.Count > 0)
+            {
+                rows.Add(currentRow);
+            }
+
+            return rows;
+        }
+
+        private static void RebalancePhotoRows(
+            List<List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>> rows)
+        {
+            if (rows.Count < 2)
+            {
+                return;
+            }
+
+            // Avoid 2+1 endings that leave a visible half-empty last row.
+            for (int i = rows.Count - 1; i > 0; i--)
+            {
+                var current = rows[i];
+                var previous = rows[i - 1];
+                if (current.Count != 1)
+                {
+                    continue;
+                }
+
+                if (previous.Count >= 3)
+                {
+                    var moved = previous[^1];
+                    previous.RemoveAt(previous.Count - 1);
+                    current.Insert(0, moved);
+                    continue;
+                }
+
+                if (previous.Count == 2)
+                {
+                    previous.Add(current[0]);
+                    rows.RemoveAt(i);
                 }
             }
         }
@@ -2036,7 +2150,7 @@ namespace DesktopPlus
             {
                 return 0;
             }
-            double usableWidth = availableWidth - (count * gap);
+            double usableWidth = availableWidth - ((count - 1) * gap);
             if (usableWidth <= 0)
             {
                 return 0;
@@ -2157,15 +2271,38 @@ namespace DesktopPlus
         }
 
         private static void ApplyPhotoTileSize(
+            ListBoxItem container,
             FrameworkElement root,
             PhotoTileLayoutInfo layout,
             double previewWidth,
-            double previewHeight)
+            double previewHeight,
+            double leftOffset)
         {
             double cardWidth = previewWidth + PhotoCardHorizontalPadding;
             double imageWidth = Math.Max(18, previewWidth);
             double imageHeight = Math.Max(18, previewHeight);
             double textWidth = Math.Max(84, cardWidth - 8);
+
+            var targetMargin = leftOffset > 0.5
+                ? new Thickness(leftOffset, 0, 0, 0)
+                : new Thickness(0);
+            if (!container.Margin.Equals(targetMargin))
+            {
+                container.Margin = targetMargin;
+            }
+
+            if (Math.Abs(container.Width - cardWidth) > 0.5)
+            {
+                container.Width = cardWidth;
+            }
+
+            if (Math.Abs(container.Height - imageHeight) > 0.5)
+            {
+                container.Height = imageHeight;
+            }
+
+            container.Opacity = 1;
+            container.IsHitTestVisible = true;
 
             if (Math.Abs(root.Width - cardWidth) > 0.5)
             {
@@ -2262,6 +2399,18 @@ namespace DesktopPlus
         private static double GetHorizontalMargin(FrameworkElement element)
         {
             return element.Margin.Left + element.Margin.Right;
+        }
+
+        private double GetPhotoScrollbarReserveWidth()
+        {
+            if (ContentContainer == null)
+            {
+                return 0;
+            }
+
+            return ContentContainer.ComputedVerticalScrollBarVisibility == Visibility.Visible
+                ? PhotoScrollbarReserveDip
+                : 0;
         }
 
         private static int GetFirstRowItemCount(System.Windows.Controls.ListBox fileList, WrapPanel wrapPanel)

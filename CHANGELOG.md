@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.13] - 2026-03-04
+
+### Changed
+
+- Set English (`en`) as the default UI language for fresh/default settings.
+- Built-in Auto-Sort target panel names now re-localize when the app language changes.
+
+### Fixed
+
+- Preserved user-defined Auto-Sort target panel names during language switches.
+- Renamed existing built-in Auto-Sort panels/tabs on language switch only when they still used localized default names.
+- Reworked photo collage row packing to reduce empty gaps, use width more consistently, and reserve scrollbar space to avoid overlap.
+- Prevented non-photo placeholders and initial tile-to-collage flicker in photo mode.
+- Updated progressive photo loading to re-apply collage sizing while items stream in.
+
 ## [1.0.12] - 2026-03-04
 
 ### Fixed

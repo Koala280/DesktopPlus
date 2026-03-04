@@ -498,6 +498,10 @@ namespace DesktopPlus
                             return;
                         }
 
+                        bool isPhotoMode = string.Equals(
+                            NormalizeViewMode(viewMode),
+                            ViewModePhotos,
+                            StringComparison.OrdinalIgnoreCase);
                         string activeFilter = SearchBox?.Text?.Trim() ?? string.Empty;
                         bool hasFilter = !string.IsNullOrWhiteSpace(activeFilter);
                         foreach (string entryPath in batch)
@@ -522,6 +526,12 @@ namespace DesktopPlus
 
                             FileList.Items.Add(listItem);
                             _baseItemPaths.Add(entryPath);
+                        }
+
+                        if (isPhotoMode)
+                        {
+                            // Keep collage layout progressive while folder items stream in.
+                            UpdateWrapPanelWidth();
                         }
                     }, System.Windows.Threading.DispatcherPriority.ContextIdle);
 

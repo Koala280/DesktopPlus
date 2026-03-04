@@ -153,6 +153,55 @@ namespace DesktopPlus
             return DesktopSortTemplates.Any(t => string.Equals(t.RuleId, ruleId, StringComparison.OrdinalIgnoreCase));
         }
 
+        private static string GetLocalizedStringForLanguage(string? languageCode, string resourceKey)
+        {
+            string resolvedLanguage = string.IsNullOrWhiteSpace(languageCode)
+                ? DefaultLanguageCode
+                : languageCode.Trim();
+
+            if (LocalizationData.TryGetValue(resolvedLanguage, out var localizedValues) &&
+                localizedValues.TryGetValue(resourceKey, out string? localizedValue) &&
+                !string.IsNullOrWhiteSpace(localizedValue))
+            {
+                return localizedValue;
+            }
+
+            if (LocalizationData.TryGetValue(DefaultLanguageCode, out var defaultValues) &&
+                defaultValues.TryGetValue(resourceKey, out string? defaultValue) &&
+                !string.IsNullOrWhiteSpace(defaultValue))
+            {
+                return defaultValue;
+            }
+
+            return resourceKey;
+        }
+
+        private static string GetLocalizedDefaultAutoSortPanelName(DesktopSortTemplate template, string? languageCode)
+        {
+            return GetLocalizedStringForLanguage(languageCode, template.DefaultPanelResourceKey);
+        }
+
+        private static bool IsLocalizedDefaultAutoSortPanelName(DesktopSortTemplate template, string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            string candidate = value.Trim();
+            foreach (var localizedValues in LocalizationData.Values)
+            {
+                if (localizedValues.TryGetValue(template.DefaultPanelResourceKey, out string? localized) &&
+                    !string.IsNullOrWhiteSpace(localized) &&
+                    string.Equals(localized.Trim(), candidate, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private static string EnsureCustomRuleId(string? value)
         {
             if (!string.IsNullOrWhiteSpace(value) &&
@@ -386,10 +435,26 @@ namespace DesktopPlus
             foreach (var template in DesktopSortTemplates)
             {
                 existingBuiltIns.TryGetValue(template.RuleId, out var existing);
-                string targetPanel = existing?.TargetPanelName ?? "";
+                string targetPanel = existing?.TargetPanelName?.Trim() ?? "";
+                bool isCustomTargetPanelName = existing?.IsTargetPanelNameCustom ?? false;
+                string localizedDefaultPanelName = GetString(template.DefaultPanelResourceKey);
                 if (string.IsNullOrWhiteSpace(targetPanel))
                 {
-                    targetPanel = GetString(template.DefaultPanelResourceKey);
+                    targetPanel = localizedDefaultPanelName;
+                    isCustomTargetPanelName = false;
+                }
+                else if (!isCustomTargetPanelName)
+                {
+                    if (IsLocalizedDefaultAutoSortPanelName(template, targetPanel))
+                    {
+                        targetPanel = localizedDefaultPanelName;
+                    }
+                    else
+                    {
+                        // Legacy settings did not track manual edits on built-in target names.
+                        // Treat non-default values as user-defined to avoid overwriting them.
+                        isCustomTargetPanelName = true;
+                    }
                 }
 
                 mergedRules.Add(new DesktopSortRuleState
@@ -397,6 +462,7 @@ namespace DesktopPlus
                     RuleId = template.RuleId,
                     IsBuiltIn = true,
                     Enabled = existing?.Enabled ?? true,
+                    IsTargetPanelNameCustom = isCustomTargetPanelName,
                     MatchFolders = template.MatchFolders,
                     CatchAll = template.CatchAll,
                     RuleName = GetString(template.NameResourceKey),
@@ -420,6 +486,7 @@ namespace DesktopPlus
                         RuleId = EnsureCustomRuleId(r.RuleId),
                         IsBuiltIn = false,
                         Enabled = r.Enabled,
+                        IsTargetPanelNameCustom = true,
                         MatchFolders = false,
                         CatchAll = false,
                         RuleName = string.IsNullOrWhiteSpace(r.RuleName)
@@ -436,6 +503,220 @@ namespace DesktopPlus
             mergedRules.AddRange(customRules);
             _desktopAutoSort.Rules = mergedRules;
             RefreshDesktopAutoSortRuleViews();
+        }
+
+        private static bool TryResolveRenamedAutoSortTargetName(
+            IReadOnlyDictionary<string, string> renameMap,
+            string? currentName,
+            out string resolvedName)
+        {
+            resolvedName = currentName ?? "";
+            if (renameMap == null || renameMap.Count == 0 || string.IsNullOrWhiteSpace(currentName))
+            {
+                return false;
+            }
+
+            string normalized = currentName.Trim();
+            if (!renameMap.TryGetValue(normalized, out string? mappedName) ||
+                string.IsNullOrWhiteSpace(mappedName))
+            {
+                return false;
+            }
+
+            mappedName = mappedName.Trim();
+            if (string.Equals(normalized, mappedName, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            resolvedName = mappedName;
+            return true;
+        }
+
+        private bool RenameAutoSortTargetsInOpenPanels(IReadOnlyDictionary<string, string> renameMap)
+        {
+            if (renameMap == null || renameMap.Count == 0)
+            {
+                return false;
+            }
+
+            bool anyChanged = false;
+            foreach (var panel in System.Windows.Application.Current.Windows.OfType<DesktopPanel>().Where(IsUserPanel))
+            {
+                bool panelChanged = false;
+                bool hasMultipleTabs = panel.Tabs.Count > 1;
+
+                if (!hasMultipleTabs &&
+                    panel.PanelTitle != null &&
+                    TryResolveRenamedAutoSortTargetName(renameMap, panel.PanelTitle.Text, out string renamedPanelTitle))
+                {
+                    panel.Title = renamedPanelTitle;
+                    panel.PanelTitle.Text = renamedPanelTitle;
+                    panelChanged = true;
+                }
+
+                for (int i = 0; i < panel.Tabs.Count; i++)
+                {
+                    string tabName = panel.Tabs[i]?.TabName ?? "";
+                    if (!TryResolveRenamedAutoSortTargetName(renameMap, tabName, out string renamedTabName))
+                    {
+                        continue;
+                    }
+
+                    panel.RenameTab(i, renamedTabName);
+                    panelChanged = true;
+                }
+
+                if (!panelChanged)
+                {
+                    continue;
+                }
+
+                panel.SaveActiveTabState();
+                anyChanged = true;
+            }
+
+            return anyChanged;
+        }
+
+        private bool RenameAutoSortTargetsInSavedPanels(IReadOnlyDictionary<string, string> renameMap)
+        {
+            if (renameMap == null || renameMap.Count == 0)
+            {
+                return false;
+            }
+
+            bool anyChanged = false;
+            foreach (var savedPanel in savedWindows)
+            {
+                if (savedPanel == null || IsInternalPreviewWindowData(savedPanel))
+                {
+                    continue;
+                }
+
+                NormalizeWindowData(savedPanel);
+                bool panelChanged = false;
+                bool hasMultipleTabs = savedPanel.Tabs != null && savedPanel.Tabs.Count > 1;
+                if (!hasMultipleTabs &&
+                    TryResolveRenamedAutoSortTargetName(renameMap, savedPanel.PanelTitle, out string renamedPanelTitle))
+                {
+                    savedPanel.PanelTitle = renamedPanelTitle;
+                    panelChanged = true;
+                }
+
+                if (savedPanel.Tabs != null)
+                {
+                    foreach (var tab in savedPanel.Tabs)
+                    {
+                        if (tab == null)
+                        {
+                            continue;
+                        }
+
+                        if (!TryResolveRenamedAutoSortTargetName(renameMap, tab.TabName, out string renamedTabName))
+                        {
+                            continue;
+                        }
+
+                        tab.TabName = renamedTabName;
+                        panelChanged = true;
+                    }
+                }
+
+                anyChanged |= panelChanged;
+            }
+
+            return anyChanged;
+        }
+
+        private bool ApplyAutoSortLanguageMigration(string previousLanguageCode, string nextLanguageCode)
+        {
+            if (_desktopAutoSort?.Rules == null || _desktopAutoSort.Rules.Count == 0)
+            {
+                return false;
+            }
+
+            if (string.Equals(previousLanguageCode, nextLanguageCode, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            bool rulesChanged = false;
+            var renameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var template in DesktopSortTemplates)
+            {
+                var rule = _desktopAutoSort.Rules.FirstOrDefault(r =>
+                    r != null &&
+                    r.IsBuiltIn &&
+                    string.Equals(r.RuleId, template.RuleId, StringComparison.OrdinalIgnoreCase));
+                if (rule == null)
+                {
+                    continue;
+                }
+
+                string currentTargetName = (rule.TargetPanelName ?? "").Trim();
+                string nextDefaultName = GetLocalizedDefaultAutoSortPanelName(template, nextLanguageCode).Trim();
+                if (string.IsNullOrWhiteSpace(nextDefaultName))
+                {
+                    continue;
+                }
+
+                bool isCustomTarget = rule.IsTargetPanelNameCustom;
+                if (!isCustomTarget &&
+                    !string.IsNullOrWhiteSpace(currentTargetName) &&
+                    !IsLocalizedDefaultAutoSortPanelName(template, currentTargetName))
+                {
+                    // Upgrade legacy rules: if the value is not any localized default, keep it stable.
+                    isCustomTarget = true;
+                    rule.IsTargetPanelNameCustom = true;
+                    rulesChanged = true;
+                }
+
+                if (isCustomTarget)
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(currentTargetName) &&
+                    !IsLocalizedDefaultAutoSortPanelName(template, currentTargetName))
+                {
+                    continue;
+                }
+
+                if (!string.Equals(currentTargetName, nextDefaultName, StringComparison.OrdinalIgnoreCase))
+                {
+                    string previousNameForRename = currentTargetName;
+                    if (string.IsNullOrWhiteSpace(previousNameForRename))
+                    {
+                        previousNameForRename = GetLocalizedDefaultAutoSortPanelName(template, previousLanguageCode).Trim();
+                    }
+
+                    rule.TargetPanelName = nextDefaultName;
+                    rule.IsTargetPanelNameCustom = false;
+                    rulesChanged = true;
+
+                    if (!string.IsNullOrWhiteSpace(previousNameForRename) &&
+                        !string.Equals(previousNameForRename, nextDefaultName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        renameMap[previousNameForRename] = nextDefaultName;
+                    }
+                }
+                else if (rule.IsTargetPanelNameCustom)
+                {
+                    rule.IsTargetPanelNameCustom = false;
+                    rulesChanged = true;
+                }
+            }
+
+            bool panelsRenamed = false;
+            if (renameMap.Count > 0)
+            {
+                panelsRenamed = RenameAutoSortTargetsInOpenPanels(renameMap) |
+                                RenameAutoSortTargetsInSavedPanels(renameMap);
+            }
+
+            return rulesChanged || panelsRenamed;
         }
 
         private void RefreshDesktopAutoSortRuleViews()
@@ -1833,6 +2114,24 @@ namespace DesktopPlus
             }
 
             rule.TargetPanelName = textBox.Text ?? "";
+            if (rule.IsBuiltIn && IsBuiltInRuleId(rule.RuleId))
+            {
+                var template = DesktopSortTemplates.FirstOrDefault(t =>
+                    string.Equals(t.RuleId, rule.RuleId, StringComparison.OrdinalIgnoreCase));
+
+                if (template != null)
+                {
+                    string normalizedTarget = (rule.TargetPanelName ?? "").Trim();
+                    string localizedDefault = GetString(template.DefaultPanelResourceKey).Trim();
+                    rule.IsTargetPanelNameCustom =
+                        !string.IsNullOrWhiteSpace(normalizedTarget) &&
+                        !string.Equals(normalizedTarget, localizedDefault, StringComparison.OrdinalIgnoreCase);
+                }
+                else
+                {
+                    rule.IsTargetPanelNameCustom = !string.IsNullOrWhiteSpace(rule.TargetPanelName);
+                }
+            }
             ShowAutoSortTargetSuggestions(textBox, forceOpen: false);
             SaveSettings();
         }
@@ -1881,6 +2180,7 @@ namespace DesktopPlus
                 RuleId = EnsureCustomRuleId(null),
                 IsBuiltIn = false,
                 Enabled = true,
+                IsTargetPanelNameCustom = true,
                 MatchFolders = false,
                 CatchAll = false,
                 RuleName = string.Format(GetString("Loc.AutoSortCustomRuleNameFormat"), string.Join(", ", extensions)),

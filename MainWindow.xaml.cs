@@ -37,7 +37,7 @@ namespace DesktopPlus
         private System.Windows.Point _mainWindowDragStartMouseScreen;
         private System.Windows.Point _mainWindowDragStartWindowPosition;
         private const string DefaultPresetName = "Graphite";
-        private const string DefaultLanguageCode = "de";
+        private const string DefaultLanguageCode = "en";
         private const string CloseBehaviorMinimize = "Minimize";
         private const string CloseBehaviorExit = "Exit";
         private const string PreviewPanelIdPrefix = "preview:";
@@ -983,8 +983,10 @@ namespace DesktopPlus
             if (_suspendGeneralHandlers) return;
             if (LanguageCombo?.SelectedValue is string code)
             {
+                string previousLanguageCode = CurrentLanguageCode;
                 _languageCode = code;
                 ApplyLanguage(_languageCode);
+                ApplyAutoSortLanguageMigration(previousLanguageCode, CurrentLanguageCode);
                 RefreshPanelOverview();
                 RefreshLayoutList();
                 RefreshPresetSelectors();

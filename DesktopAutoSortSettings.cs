@@ -15,6 +15,7 @@ namespace DesktopPlus
         public string RuleId { get; set; } = "";
         public bool IsBuiltIn { get; set; }
         public bool Enabled { get; set; } = true;
+        public bool IsTargetPanelNameCustom { get; set; }
         public bool MatchFolders { get; set; }
         public bool CatchAll { get; set; }
         public string RuleName { get; set; } = "";
