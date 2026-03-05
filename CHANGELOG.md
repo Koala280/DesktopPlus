@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.34] - 2026-03-05
+
+### Changed
+
+- Automatic background update checks now run every 90 seconds while auto-updates are enabled.
+
+### Fixed
+
+- Prevented false panel `IsHidden=true` persistence during intentional shutdown/update install when WPF reports transient panel invisibility.
+- Manual "Install now" update flow now shuts down immediately after installer launch (no blocking dialog race), preventing panels from being saved as hidden during install handoff.
+
 ## [1.0.32] - 2026-03-05
 
 ### Fixed

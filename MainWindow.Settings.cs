@@ -257,21 +257,41 @@ namespace DesktopPlus
         {
             try
             {
-                var open = System.Windows.Application.Current.Windows
+                var openPanels = System.Windows.Application.Current.Windows
                     .OfType<DesktopPanel>()
                     .Where(IsUserPanel)
                     .Where(win => win.PanelType != PanelKind.None ||
                                   !string.IsNullOrWhiteSpace(win.currentFolderPath) ||
                                   win.PinnedItems.Count > 0)
-                    .Select(BuildWindowDataFromPanel)
                     .ToList();
 
                 var dict = CreateWindowDataMap(savedWindows, rewriteDuplicates: true);
 
-                foreach (var item in open)
+                foreach (var panel in openPanels)
                 {
+                    var item = BuildWindowDataFromPanel(panel);
+                    string panelKey = GetPanelKey(item);
+
+                    if (panel.IsVisible)
+                    {
+                        item.IsHidden = false;
+                    }
+                    else if (IsExiting)
+                    {
+                        // During shutdown/update install, WPF can transiently report panels as invisible.
+                        // Preserve explicit hidden state instead of turning every panel into hidden=true.
+                        if (dict.TryGetValue(panelKey, out var existing))
+                        {
+                            item.IsHidden = existing.IsHidden;
+                        }
+                        else
+                        {
+                            item.IsHidden = false;
+                        }
+                    }
+
                     NormalizeWindowData(item);
-                    dict[GetPanelKey(item)] = item;
+                    dict[panelKey] = item;
                 }
 
                 savedWindows = dict.Values

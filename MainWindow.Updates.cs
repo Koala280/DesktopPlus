@@ -25,7 +25,7 @@ namespace DesktopPlus
         private static readonly Regex VersionPrefixRegex = new Regex(@"^\d+(?:\.\d+){0,3}", RegexOptions.Compiled);
         private static readonly HttpClient UpdateHttpClient = CreateUpdateRequestHttpClient();
         private static readonly HttpClient UpdateDownloadHttpClient = CreateUpdateDownloadHttpClient();
-        private static readonly TimeSpan AutomaticUpdateCheckInterval = TimeSpan.FromSeconds(60);
+        private static readonly TimeSpan AutomaticUpdateCheckInterval = TimeSpan.FromSeconds(90);
         private bool _autoCheckUpdates = false;
         private bool _isUpdateCheckInProgress = false;
         private bool _isAutomaticUpdateRoutineInProgress = false;
@@ -750,12 +750,8 @@ namespace DesktopPlus
                     GetPostUpdateExecutableCandidates());
             }
 
-            System.Windows.MessageBox.Show(
-                string.Format(GetString("Loc.MsgUpdateInstallStarting"), normalizedLatestVersion),
-                GetString("Loc.MsgInfo"),
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-
+            // Do not block here with a dialog: installer can already start closing windows.
+            // Immediate shutdown avoids persisting panel visibility in an inconsistent transient state.
             ShutdownForUpdateInstall();
             return true;
         }
