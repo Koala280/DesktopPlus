@@ -211,9 +211,9 @@ namespace DesktopPlus
                 if (!MainWindow.IsExiting)
                 {
                     MainWindow.MarkPanelHidden(this);
+                    MainWindow.SaveSettings();
+                    MainWindow.NotifyPanelsChanged();
                 }
-                MainWindow.SaveSettings();
-                MainWindow.NotifyPanelsChanged();
             };
 
             this.Loaded += DesktopPanel_Loaded;

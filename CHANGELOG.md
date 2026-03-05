@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.30] - 2026-03-05
+
+### Fixed
+
+- Pending automatic updates are now applied only during app startup (before normal window initialization), not when opening the main window from tray.
+- Prevented panel visibility state corruption during exit/update shutdown by skipping panel hide/save writes while the app is intentionally exiting.
+
 ## [1.0.29] - 2026-03-05
 
 ### Changed

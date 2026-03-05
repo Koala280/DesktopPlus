@@ -361,11 +361,6 @@ namespace DesktopPlus
             }
             InitNotifyIcon();
 
-            if (TryApplyPendingUpdateOnMainWindowOpen())
-            {
-                return;
-            }
-
             RestoreSavedPanels(onlyWhenNoPanelsOpen: true);
 
             if (_autoCheckUpdates)
@@ -709,11 +704,6 @@ namespace DesktopPlus
 
             CloseTrayMenuWindow();
 
-            if (TryApplyPendingUpdateOnMainWindowOpen())
-            {
-                return;
-            }
-
             if (!IsVisible)
             {
                 Show();
@@ -1054,11 +1044,6 @@ namespace DesktopPlus
             ConfigureDesktopAutoSortWatcher();
             _isUiReady = true;
             ApplyStartupWindowVisibilityPreference();
-            if (TryApplyPendingUpdateOnMainWindowOpen())
-            {
-                return;
-            }
-
             RestoreSavedPanels(onlyWhenNoPanelsOpen: true);
 
             if (_autoCheckUpdates)

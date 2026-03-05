@@ -760,17 +760,6 @@ namespace DesktopPlus
             return true;
         }
 
-        private bool TryApplyPendingUpdateAndExit()
-        {
-            if (!TryStartPendingUpdateInstall())
-            {
-                return false;
-            }
-
-            ShutdownForUpdateInstall();
-            return true;
-        }
-
         internal static bool TryStartPendingUpdateInstall()
         {
             if (IsDevelopmentBuildForUpdates)
@@ -806,11 +795,6 @@ namespace DesktopPlus
             }
 
             return true;
-        }
-
-        private bool TryApplyPendingUpdateOnMainWindowOpen()
-        {
-            return TryApplyPendingUpdateAndExit();
         }
 
         private async Task CheckForUpdatesAsync(bool userInitiated)
