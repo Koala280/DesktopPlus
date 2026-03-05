@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.29] - 2026-03-05
+
+### Changed
+
+- Automatic background update checks now run every 90 seconds while auto-updates are enabled (test release).
+
 ## [1.0.28] - 2026-03-05
 
 ### Changed

@@ -25,7 +25,7 @@ namespace DesktopPlus
         private static readonly Regex VersionPrefixRegex = new Regex(@"^\d+(?:\.\d+){0,3}", RegexOptions.Compiled);
         private static readonly HttpClient UpdateHttpClient = CreateUpdateRequestHttpClient();
         private static readonly HttpClient UpdateDownloadHttpClient = CreateUpdateDownloadHttpClient();
-        private static readonly TimeSpan AutomaticUpdateCheckInterval = TimeSpan.FromMinutes(1);
+        private static readonly TimeSpan AutomaticUpdateCheckInterval = TimeSpan.FromSeconds(90);
         private bool _autoCheckUpdates = false;
         private bool _isUpdateCheckInProgress = false;
         private bool _isAutomaticUpdateRoutineInProgress = false;
