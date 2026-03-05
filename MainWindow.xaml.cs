@@ -391,11 +391,38 @@ namespace DesktopPlus
             _hideMainWindowOnStartup = false;
 
             ShowInTaskbar = false;
-            if (WindowState != WindowState.Minimized)
+            if (WindowState != WindowState.Normal)
             {
-                WindowState = WindowState.Minimized;
+                WindowState = WindowState.Normal;
             }
             Hide();
+        }
+
+        private void EnsureMainWindowWithinWorkArea()
+        {
+            var workArea = SystemParameters.WorkArea;
+            double width = ActualWidth > 0 ? ActualWidth : Width;
+            double height = ActualHeight > 0 ? ActualHeight : Height;
+
+            if (width <= 0 || double.IsNaN(width) || double.IsInfinity(width))
+            {
+                width = 1120;
+            }
+
+            if (height <= 0 || double.IsNaN(height) || double.IsInfinity(height))
+            {
+                height = 720;
+            }
+
+            bool outsideHorizontally = Left < workArea.Left || Left + width > workArea.Right;
+            bool outsideVertically = Top < workArea.Top || Top + height > workArea.Bottom;
+            if (!outsideHorizontally && !outsideVertically)
+            {
+                return;
+            }
+
+            Left = workArea.Left + Math.Max(0, (workArea.Width - width) / 2);
+            Top = workArea.Top + Math.Max(0, (workArea.Height - height) / 2);
         }
 
         private void InitNotifyIcon()
@@ -715,6 +742,7 @@ namespace DesktopPlus
                 WindowState = WindowState.Normal;
             }
 
+            EnsureMainWindowWithinWorkArea();
             Visibility = Visibility.Visible;
             Activate();
             Focus();

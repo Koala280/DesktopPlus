@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.32] - 2026-03-05
+
+### Fixed
+
+- Startup-hide mode now keeps the main window in normal state and hidden, preventing it from reappearing at the bottom edge after update relaunch.
+- Opening the main window from tray now re-centers it if its saved bounds are outside the visible work area.
+
 ## [1.0.31] - 2026-03-05
 
 ### Changed
