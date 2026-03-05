@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-03-05
+
+### Changed
+
+- Automatic background update checks now run once per app start/enable cycle after a 10-minute delay instead of running repeatedly.
+
 ## [1.0.35] - 2026-03-05
 
 ### Changed
