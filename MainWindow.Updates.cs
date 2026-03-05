@@ -25,7 +25,7 @@ namespace DesktopPlus
         private static readonly Regex VersionPrefixRegex = new Regex(@"^\d+(?:\.\d+){0,3}", RegexOptions.Compiled);
         private static readonly HttpClient UpdateHttpClient = CreateUpdateRequestHttpClient();
         private static readonly HttpClient UpdateDownloadHttpClient = CreateUpdateDownloadHttpClient();
-        private static readonly TimeSpan AutomaticUpdateCheckDelay = TimeSpan.FromMinutes(10);
+        private static readonly TimeSpan AutomaticUpdateCheckInterval = TimeSpan.FromMinutes(1);
         private bool _autoCheckUpdates = false;
         private bool _isUpdateCheckInProgress = false;
         private bool _isAutomaticUpdateRoutineInProgress = false;
@@ -832,17 +832,20 @@ namespace DesktopPlus
             _isAutomaticUpdateRoutineInProgress = true;
             try
             {
-                if (AutomaticUpdateCheckDelay > TimeSpan.Zero)
+                while (!_isExit && _autoCheckUpdates)
                 {
-                    await Task.Delay(AutomaticUpdateCheckDelay);
-                }
+                    if (AutomaticUpdateCheckInterval > TimeSpan.Zero)
+                    {
+                        await Task.Delay(AutomaticUpdateCheckInterval);
+                    }
 
-                if (_isExit || !_autoCheckUpdates)
-                {
-                    return;
-                }
+                    if (_isExit || !_autoCheckUpdates)
+                    {
+                        break;
+                    }
 
-                await CheckForUpdatesOnceAsync(userInitiated: false);
+                    await CheckForUpdatesOnceAsync(userInitiated: false);
+                }
             }
             finally
             {

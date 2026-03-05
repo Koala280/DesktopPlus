@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -152,22 +153,7 @@ namespace DesktopPlus
                     }
                 }
                 bool startupLaunch = IsStartupLaunch();
-                foreach (var winData in savedWindows)
-                {
-                    if (winData.IsHidden) continue;
-                    var kind = ResolvePanelKind(winData);
-                    if (kind == PanelKind.Folder)
-                    {
-                        string folderPath = ResolvePreferredFolderPath(winData);
-                        if (!Directory.Exists(folderPath)) continue;
-                    }
-                    else if (kind == PanelKind.None)
-                    {
-                        continue;
-                    }
-
-                    Dispatcher.Invoke(() => OpenPanelFromData(winData));
-                }
+                RestoreSavedPanels(onlyWhenNoPanelsOpen: false);
                 _hideMainWindowOnStartup = startupLaunch;
 
                 AppearanceChanged?.Invoke();
@@ -180,6 +166,59 @@ namespace DesktopPlus
                     GetString("Loc.MsgError"),
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
+            }
+        }
+
+        private void RestoreSavedPanels(bool onlyWhenNoPanelsOpen)
+        {
+            var openPanels = CreateOpenPanelMap(
+                System.Windows.Application.Current.Windows.OfType<DesktopPanel>().Where(IsUserPanel));
+            if (onlyWhenNoPanelsOpen && openPanels.Count > 0)
+            {
+                return;
+            }
+
+            foreach (var winData in savedWindows)
+            {
+                if (winData == null || winData.IsHidden)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    NormalizeWindowData(winData);
+                    PanelKind kind = ResolvePanelKind(winData);
+                    if (kind == PanelKind.None)
+                    {
+                        continue;
+                    }
+
+                    if (kind == PanelKind.Folder)
+                    {
+                        string folderPath = ResolvePreferredFolderPath(winData);
+                        if (!Directory.Exists(folderPath))
+                        {
+                            continue;
+                        }
+                    }
+
+                    string panelKey = GetPanelKey(winData);
+                    if (openPanels.ContainsKey(panelKey))
+                    {
+                        continue;
+                    }
+
+                    var panel = OpenPanelFromData(winData);
+                    openPanels[panelKey] = panel;
+                }
+                catch (Exception ex)
+                {
+                    string panelLabel = !string.IsNullOrWhiteSpace(winData.PanelTitle)
+                        ? winData.PanelTitle
+                        : winData.FolderPath ?? "(list)";
+                    Debug.WriteLine($"Failed to restore panel '{panelLabel}': {ex}");
+                }
             }
         }
 

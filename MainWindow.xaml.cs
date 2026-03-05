@@ -366,6 +366,8 @@ namespace DesktopPlus
                 return;
             }
 
+            RestoreSavedPanels(onlyWhenNoPanelsOpen: true);
+
             if (_autoCheckUpdates)
             {
                 _ = CheckForUpdatesAsync(userInitiated: false);
@@ -1056,6 +1058,8 @@ namespace DesktopPlus
             {
                 return;
             }
+
+            RestoreSavedPanels(onlyWhenNoPanelsOpen: true);
 
             if (_autoCheckUpdates)
             {

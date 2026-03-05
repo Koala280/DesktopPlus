@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.28] - 2026-03-05
+
+### Changed
+
+- Automatic background update checks now run continuously every 1 minute while auto-updates are enabled.
+
+### Fixed
+
+- Added single-instance startup protection to prevent duplicate DesktopPlus tray instances.
+- Improved startup panel restoration reliability after update relaunches by adding a guarded restore fallback path.
+
 ## [1.0.27] - 2026-03-05
 
 ### Changed
