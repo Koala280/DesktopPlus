@@ -18,6 +18,7 @@ namespace DesktopPlus
             public bool OpenFoldersExternally { get; set; }
             public bool OpenItemsOnSingleClick { get; set; }
             public bool ShowSettingsButton { get; set; } = true;
+            public bool ShowEmptyRecycleBinButton { get; set; } = true;
             public string MovementMode { get; set; } = "titlebar";
             public string SearchVisibilityMode { get; set; } = DesktopPanel.SearchVisibilityAlways;
             public string ViewMode { get; set; } = DesktopPanel.ViewModeIcons;
@@ -26,7 +27,12 @@ namespace DesktopPlus
             public bool ShowMetadataCreated { get; set; }
             public bool ShowMetadataModified { get; set; } = true;
             public bool ShowMetadataDimensions { get; set; }
+            public bool ShowMetadataAuthors { get; set; }
+            public bool ShowMetadataCategories { get; set; }
+            public bool ShowMetadataTags { get; set; }
+            public bool ShowMetadataTitle { get; set; }
             public List<string> MetadataOrder { get; set; } = DesktopPanel.NormalizeMetadataOrder(null);
+            public Dictionary<string, double> MetadataWidths { get; set; } = DesktopPanel.NormalizeMetadataWidths(null);
         }
 
         private static string NormalizePanelMovementMode(string? mode)
@@ -55,6 +61,7 @@ namespace DesktopPlus
             layout.PanelDefaultSearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(layout.PanelDefaultSearchVisibilityMode);
             layout.PanelDefaultViewMode = DesktopPanel.NormalizeViewMode(layout.PanelDefaultViewMode);
             layout.PanelDefaultMetadataOrder = DesktopPanel.NormalizeMetadataOrder(layout.PanelDefaultMetadataOrder);
+            layout.PanelDefaultMetadataWidths = DesktopPanel.NormalizeMetadataWidths(layout.PanelDefaultMetadataWidths);
         }
 
         private static LayoutPanelDefaultsSnapshot CaptureLayoutPanelDefaults(LayoutDefinition layout)
@@ -69,6 +76,7 @@ namespace DesktopPlus
                 OpenFoldersExternally = layout.PanelDefaultOpenFoldersExternally,
                 OpenItemsOnSingleClick = layout.PanelDefaultOpenItemsOnSingleClick,
                 ShowSettingsButton = layout.PanelDefaultShowSettingsButton,
+                ShowEmptyRecycleBinButton = layout.PanelDefaultShowEmptyRecycleBinButton,
                 MovementMode = layout.PanelDefaultMovementMode,
                 SearchVisibilityMode = layout.PanelDefaultSearchVisibilityMode,
                 ViewMode = layout.PanelDefaultViewMode,
@@ -77,7 +85,12 @@ namespace DesktopPlus
                 ShowMetadataCreated = layout.PanelDefaultShowMetadataCreated,
                 ShowMetadataModified = layout.PanelDefaultShowMetadataModified,
                 ShowMetadataDimensions = layout.PanelDefaultShowMetadataDimensions,
-                MetadataOrder = DesktopPanel.NormalizeMetadataOrder(layout.PanelDefaultMetadataOrder)
+                ShowMetadataAuthors = layout.PanelDefaultShowMetadataAuthors,
+                ShowMetadataCategories = layout.PanelDefaultShowMetadataCategories,
+                ShowMetadataTags = layout.PanelDefaultShowMetadataTags,
+                ShowMetadataTitle = layout.PanelDefaultShowMetadataTitle,
+                MetadataOrder = DesktopPanel.NormalizeMetadataOrder(layout.PanelDefaultMetadataOrder),
+                MetadataWidths = DesktopPanel.NormalizeMetadataWidths(layout.PanelDefaultMetadataWidths)
             };
         }
 
@@ -90,6 +103,7 @@ namespace DesktopPlus
             layout.PanelDefaultOpenFoldersExternally = defaults.OpenFoldersExternally;
             layout.PanelDefaultOpenItemsOnSingleClick = defaults.OpenItemsOnSingleClick;
             layout.PanelDefaultShowSettingsButton = defaults.ShowSettingsButton;
+            layout.PanelDefaultShowEmptyRecycleBinButton = defaults.ShowEmptyRecycleBinButton;
             layout.PanelDefaultMovementMode = NormalizePanelMovementMode(defaults.MovementMode);
             layout.PanelDefaultSearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(defaults.SearchVisibilityMode);
             layout.PanelDefaultViewMode = DesktopPanel.NormalizeViewMode(defaults.ViewMode);
@@ -98,7 +112,12 @@ namespace DesktopPlus
             layout.PanelDefaultShowMetadataCreated = defaults.ShowMetadataCreated;
             layout.PanelDefaultShowMetadataModified = defaults.ShowMetadataModified;
             layout.PanelDefaultShowMetadataDimensions = defaults.ShowMetadataDimensions;
+            layout.PanelDefaultShowMetadataAuthors = defaults.ShowMetadataAuthors;
+            layout.PanelDefaultShowMetadataCategories = defaults.ShowMetadataCategories;
+            layout.PanelDefaultShowMetadataTags = defaults.ShowMetadataTags;
+            layout.PanelDefaultShowMetadataTitle = defaults.ShowMetadataTitle;
             layout.PanelDefaultMetadataOrder = DesktopPanel.NormalizeMetadataOrder(defaults.MetadataOrder);
+            layout.PanelDefaultMetadataWidths = DesktopPanel.NormalizeMetadataWidths(defaults.MetadataWidths);
         }
 
         private static void ApplyLayoutDefaultsToPanelWhenMatching(
@@ -141,6 +160,11 @@ namespace DesktopPlus
                 panel.ShowSettingsButton = newDefaults.ShowSettingsButton;
             }
 
+            if (panel.ShowEmptyRecycleBinButton == oldDefaults.ShowEmptyRecycleBinButton)
+            {
+                panel.ShowEmptyRecycleBinButton = newDefaults.ShowEmptyRecycleBinButton;
+            }
+
             if (string.Equals(NormalizePanelMovementMode(panel.MovementMode), oldDefaults.MovementMode, StringComparison.OrdinalIgnoreCase))
             {
                 panel.MovementMode = newDefaults.MovementMode;
@@ -181,10 +205,37 @@ namespace DesktopPlus
                 panel.ShowMetadataDimensions = newDefaults.ShowMetadataDimensions;
             }
 
+            if (panel.ShowMetadataAuthors == oldDefaults.ShowMetadataAuthors)
+            {
+                panel.ShowMetadataAuthors = newDefaults.ShowMetadataAuthors;
+            }
+
+            if (panel.ShowMetadataCategories == oldDefaults.ShowMetadataCategories)
+            {
+                panel.ShowMetadataCategories = newDefaults.ShowMetadataCategories;
+            }
+
+            if (panel.ShowMetadataTags == oldDefaults.ShowMetadataTags)
+            {
+                panel.ShowMetadataTags = newDefaults.ShowMetadataTags;
+            }
+
+            if (panel.ShowMetadataTitle == oldDefaults.ShowMetadataTitle)
+            {
+                panel.ShowMetadataTitle = newDefaults.ShowMetadataTitle;
+            }
+
             var normalizedPanelMetadataOrder = DesktopPanel.NormalizeMetadataOrder(panel.MetadataOrder);
             if (normalizedPanelMetadataOrder.SequenceEqual(oldDefaults.MetadataOrder, StringComparer.OrdinalIgnoreCase))
             {
                 panel.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(newDefaults.MetadataOrder);
+            }
+
+            var normalizedPanelMetadataWidths = DesktopPanel.NormalizeMetadataWidths(panel.MetadataWidths);
+            if (normalizedPanelMetadataWidths.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .SequenceEqual(oldDefaults.MetadataWidths.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)))
+            {
+                panel.MetadataWidths = DesktopPanel.NormalizeMetadataWidths(newDefaults.MetadataWidths);
             }
         }
 
@@ -248,10 +299,37 @@ namespace DesktopPlus
                 tab.ShowMetadataDimensions = newDefaults.ShowMetadataDimensions;
             }
 
+            if (tab.ShowMetadataAuthors == oldDefaults.ShowMetadataAuthors)
+            {
+                tab.ShowMetadataAuthors = newDefaults.ShowMetadataAuthors;
+            }
+
+            if (tab.ShowMetadataCategories == oldDefaults.ShowMetadataCategories)
+            {
+                tab.ShowMetadataCategories = newDefaults.ShowMetadataCategories;
+            }
+
+            if (tab.ShowMetadataTags == oldDefaults.ShowMetadataTags)
+            {
+                tab.ShowMetadataTags = newDefaults.ShowMetadataTags;
+            }
+
+            if (tab.ShowMetadataTitle == oldDefaults.ShowMetadataTitle)
+            {
+                tab.ShowMetadataTitle = newDefaults.ShowMetadataTitle;
+            }
+
             var normalizedTabMetadataOrder = DesktopPanel.NormalizeMetadataOrder(tab.MetadataOrder);
             if (normalizedTabMetadataOrder.SequenceEqual(oldDefaults.MetadataOrder, StringComparer.OrdinalIgnoreCase))
             {
                 tab.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(newDefaults.MetadataOrder);
+            }
+
+            var normalizedTabMetadataWidths = DesktopPanel.NormalizeMetadataWidths(tab.MetadataWidths);
+            if (normalizedTabMetadataWidths.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .SequenceEqual(oldDefaults.MetadataWidths.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)))
+            {
+                tab.MetadataWidths = DesktopPanel.NormalizeMetadataWidths(newDefaults.MetadataWidths);
             }
         }
 
@@ -274,6 +352,7 @@ namespace DesktopPlus
 
                 tab.ViewMode = DesktopPanel.NormalizeViewMode(tab.ViewMode);
                 tab.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(tab.MetadataOrder);
+                tab.MetadataWidths = DesktopPanel.NormalizeMetadataWidths(tab.MetadataWidths);
                 ApplyLayoutDefaultsToTabWhenMatching(tab, oldDefaults, newDefaults);
             }
         }
@@ -291,7 +370,12 @@ namespace DesktopPlus
             target.ShowMetadataCreated = source.ShowMetadataCreated;
             target.ShowMetadataModified = source.ShowMetadataModified;
             target.ShowMetadataDimensions = source.ShowMetadataDimensions;
+            target.ShowMetadataAuthors = source.ShowMetadataAuthors;
+            target.ShowMetadataCategories = source.ShowMetadataCategories;
+            target.ShowMetadataTags = source.ShowMetadataTags;
+            target.ShowMetadataTitle = source.ShowMetadataTitle;
             target.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(source.MetadataOrder);
+            target.MetadataWidths = DesktopPanel.NormalizeMetadataWidths(source.MetadataWidths);
         }
 
         private static PanelTabData? FindMatchingTab(IReadOnlyList<PanelTabData> sourceTabs, PanelTabData targetTab, int targetIndex)
@@ -374,13 +458,19 @@ namespace DesktopPlus
             target.OpenFoldersExternally = source.OpenFoldersExternally;
             target.OpenItemsOnSingleClick = source.OpenItemsOnSingleClick;
             target.ShowSettingsButton = source.ShowSettingsButton;
+            target.ShowEmptyRecycleBinButton = source.ShowEmptyRecycleBinButton;
             target.ViewMode = DesktopPanel.NormalizeViewMode(source.ViewMode);
             target.ShowMetadataType = source.ShowMetadataType;
             target.ShowMetadataSize = source.ShowMetadataSize;
             target.ShowMetadataCreated = source.ShowMetadataCreated;
             target.ShowMetadataModified = source.ShowMetadataModified;
             target.ShowMetadataDimensions = source.ShowMetadataDimensions;
+            target.ShowMetadataAuthors = source.ShowMetadataAuthors;
+            target.ShowMetadataCategories = source.ShowMetadataCategories;
+            target.ShowMetadataTags = source.ShowMetadataTags;
+            target.ShowMetadataTitle = source.ShowMetadataTitle;
             target.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(source.MetadataOrder);
+            target.MetadataWidths = DesktopPanel.NormalizeMetadataWidths(source.MetadataWidths);
             target.MovementMode = NormalizePanelMovementMode(source.MovementMode);
             target.SearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(source.SearchVisibilityMode);
             CopyPanelTabBehaviorSettings(source, target);
@@ -416,7 +506,12 @@ namespace DesktopPlus
                 source.ShowMetadataCreated,
                 source.ShowMetadataModified,
                 source.ShowMetadataDimensions,
+                source.ShowMetadataAuthors,
+                source.ShowMetadataCategories,
+                source.ShowMetadataTags,
+                source.ShowMetadataTitle,
                 metadataOrderOverride: source.MetadataOrder,
+                metadataWidthsOverride: source.MetadataWidths,
                 persistSettings: false);
             ApplyPanelTabBehaviorToOpenPanel(panel, source);
 
@@ -586,6 +681,7 @@ namespace DesktopPlus
                 PanelDefaultOpenFoldersExternally = false,
                 PanelDefaultOpenItemsOnSingleClick = false,
                 PanelDefaultShowSettingsButton = true,
+                PanelDefaultShowEmptyRecycleBinButton = true,
                 PanelDefaultMovementMode = "titlebar",
                 PanelDefaultSearchVisibilityMode = DesktopPanel.SearchVisibilityAlways,
                 PanelDefaultViewMode = DesktopPanel.ViewModeIcons,
@@ -594,7 +690,12 @@ namespace DesktopPlus
                 PanelDefaultShowMetadataCreated = false,
                 PanelDefaultShowMetadataModified = true,
                 PanelDefaultShowMetadataDimensions = false,
+                PanelDefaultShowMetadataAuthors = false,
+                PanelDefaultShowMetadataCategories = false,
+                PanelDefaultShowMetadataTags = false,
+                PanelDefaultShowMetadataTitle = false,
                 PanelDefaultMetadataOrder = DesktopPanel.NormalizeMetadataOrder(null),
+                PanelDefaultMetadataWidths = DesktopPanel.NormalizeMetadataWidths(null),
                 Appearance = CloneAppearance(Appearance),
                 Panels = CaptureOpenPanelsForLayout(layoutDefaultPresetName)
             };
@@ -623,6 +724,7 @@ namespace DesktopPlus
                 PanelDefaultOpenFoldersExternally = false,
                 PanelDefaultOpenItemsOnSingleClick = false,
                 PanelDefaultShowSettingsButton = true,
+                PanelDefaultShowEmptyRecycleBinButton = true,
                 PanelDefaultMovementMode = "titlebar",
                 PanelDefaultSearchVisibilityMode = DesktopPanel.SearchVisibilityAlways,
                 PanelDefaultViewMode = DesktopPanel.ViewModeIcons,
@@ -631,7 +733,12 @@ namespace DesktopPlus
                 PanelDefaultShowMetadataCreated = false,
                 PanelDefaultShowMetadataModified = true,
                 PanelDefaultShowMetadataDimensions = false,
+                PanelDefaultShowMetadataAuthors = false,
+                PanelDefaultShowMetadataCategories = false,
+                PanelDefaultShowMetadataTags = false,
+                PanelDefaultShowMetadataTitle = false,
                 PanelDefaultMetadataOrder = DesktopPanel.NormalizeMetadataOrder(null),
+                PanelDefaultMetadataWidths = DesktopPanel.NormalizeMetadataWidths(null),
                 Appearance = CloneAppearance(Appearance),
                 Panels = new List<WindowData>()
             };
@@ -669,7 +776,12 @@ namespace DesktopPlus
             bool showMetadataCreated,
             bool showMetadataModified,
             bool showMetadataDimensions,
+            bool showMetadataAuthors,
+            bool showMetadataCategories,
+            bool showMetadataTags,
+            bool showMetadataTitle,
             IEnumerable<string>? metadataOrder,
+            IDictionary<string, double>? metadataWidths,
             string? defaultPresetName)
         {
             if (layout == null)
@@ -706,7 +818,12 @@ namespace DesktopPlus
                 ShowMetadataCreated = showMetadataCreated,
                 ShowMetadataModified = showMetadataModified,
                 ShowMetadataDimensions = showMetadataDimensions,
-                MetadataOrder = DesktopPanel.NormalizeMetadataOrder(metadataOrder)
+                ShowMetadataAuthors = showMetadataAuthors,
+                ShowMetadataCategories = showMetadataCategories,
+                ShowMetadataTags = showMetadataTags,
+                ShowMetadataTitle = showMetadataTitle,
+                MetadataOrder = DesktopPanel.NormalizeMetadataOrder(metadataOrder),
+                MetadataWidths = DesktopPanel.NormalizeMetadataWidths(metadataWidths)
             };
 
             var panelMap = CreateWindowDataMap(layout.Panels ?? new List<WindowData>(), rewriteDuplicates: true);

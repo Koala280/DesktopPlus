@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-03-07
+
+### Added
+
+- Configurable detail-view metadata columns with a dedicated column picker dialog.
+- Dedicated recycle bin panel support and update backups with an in-app backup restore dialog.
+
+### Changed
+
+- Panel overview now lists tabs individually and hide/show actions operate on tabs instead of hiding entire multi-tab panels.
+- Folder panels reopen at their configured default folder after app restart instead of the last navigated location.
+
+### Fixed
+
+- Reduced duplicate panel entries after detaching tabs or restoring hidden panels.
+- Preserved panel contents when hiding and re-showing tabs or panels.
+- Restored rename behavior for tab-backed panels in panel settings and the panel overview.
+
 ## [1.1.0] - 2026-03-05
 
 ### Changed

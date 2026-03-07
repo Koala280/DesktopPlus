@@ -523,10 +523,8 @@ namespace DesktopPlus
             UnregisterRegisteredGlobalShortcuts(handle);
             if (!TryRegisterConfiguredGlobalShortcuts(handle, showErrors: false))
             {
-                _globalShortcuts = new GlobalShortcutSettings();
-                NormalizeGlobalShortcutSettings();
-                UnregisterRegisteredGlobalShortcuts(handle);
-                TryRegisterConfiguredGlobalShortcuts(handle, showErrors: false);
+                _hidePanelsHotkeyRegistered = false;
+                _foregroundPanelsHotkeyRegistered = false;
             }
 
             ApplyGlobalShortcutSettingsToUi();

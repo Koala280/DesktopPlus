@@ -636,11 +636,6 @@ namespace DesktopPlus
                 return false;
             }
 
-            if (string.Equals(previousLanguageCode, nextLanguageCode, StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
             bool rulesChanged = false;
             var renameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 

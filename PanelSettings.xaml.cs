@@ -4,8 +4,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Animation;
+using Application = System.Windows.Application;
 using WinForms = System.Windows.Forms;
 
 namespace DesktopPlus
@@ -17,12 +16,8 @@ namespace DesktopPlus
         private string _layoutStandardPresetName = "";
         private bool _isInitializing = true;
         private bool _isApplyingSettings;
-        private System.Windows.Point _metadataDragStartPoint;
-        private Border? _metadataDragSourceItem;
-        private bool _metadataDragging;
-        private int _metadataDragOriginalIndex;
-        private int _metadataCurrentIndex;
-        private double _metadataDragItemStartY;
+        private DetailColumnSelectionState _detailColumnsState = new DetailColumnSelectionState();
+
         private bool IsGlobalLayoutMode => _layout != null;
 
         public PanelSettings(DesktopPanel panel)
@@ -63,16 +58,8 @@ namespace DesktopPlus
             FileExtensionsToggle.Unchecked += (_, __) => TryAutoApplySettings();
             SettingsButtonToggle.Checked += (_, __) => TryAutoApplySettings();
             SettingsButtonToggle.Unchecked += (_, __) => TryAutoApplySettings();
-            MetaTypeToggle.Checked += (_, __) => TryAutoApplySettings();
-            MetaTypeToggle.Unchecked += (_, __) => TryAutoApplySettings();
-            MetaSizeToggle.Checked += (_, __) => TryAutoApplySettings();
-            MetaSizeToggle.Unchecked += (_, __) => TryAutoApplySettings();
-            MetaCreatedToggle.Checked += (_, __) => TryAutoApplySettings();
-            MetaCreatedToggle.Unchecked += (_, __) => TryAutoApplySettings();
-            MetaModifiedToggle.Checked += (_, __) => TryAutoApplySettings();
-            MetaModifiedToggle.Unchecked += (_, __) => TryAutoApplySettings();
-            MetaDimensionsToggle.Checked += (_, __) => TryAutoApplySettings();
-            MetaDimensionsToggle.Unchecked += (_, __) => TryAutoApplySettings();
+            EmptyRecycleBinToggle.Checked += (_, __) => TryAutoApplySettings();
+            EmptyRecycleBinToggle.Unchecked += (_, __) => TryAutoApplySettings();
 
             FolderActionSelect.SelectionChanged += (_, __) => TryAutoApplySettings();
             OpenClickBehaviorSelect.SelectionChanged += (_, __) => TryAutoApplySettings();
@@ -140,7 +127,12 @@ namespace DesktopPlus
             DefaultFolderRow.Visibility = Visibility.Collapsed;
             PanelActionsSection.Visibility = Visibility.Collapsed;
             ResetPresetToStandardButton.Visibility = Visibility.Collapsed;
-            FitContentButton.Visibility = Visibility.Collapsed;
+            if (FitWidthButton.Parent is Grid fitButtonsGrid)
+            {
+                fitButtonsGrid.Visibility = Visibility.Collapsed;
+            }
+            FitWidthButton.Visibility = Visibility.Collapsed;
+            FitHeightButton.Visibility = Visibility.Collapsed;
         }
 
         private void LoadPresetsForLayout(LayoutDefinition layout)
@@ -188,7 +180,7 @@ namespace DesktopPlus
                 return;
             }
 
-            NameInput.Text = (_panel.Tabs.Count > 1 && _panel.ActiveTab != null)
+            NameInput.Text = (_panel.ActiveTab != null)
                 ? _panel.ActiveTab.TabName
                 : _panel.PanelTitle.Text;
             FolderPathLabel.Text = string.IsNullOrWhiteSpace(_panel.defaultFolderPath)
@@ -199,17 +191,13 @@ namespace DesktopPlus
             ParentNavigationToggle.IsChecked = _panel.showParentNavigationItem;
             FileExtensionsToggle.IsChecked = _panel.showFileExtensions;
             SettingsButtonToggle.IsChecked = _panel.showSettingsButton;
+            EmptyRecycleBinToggle.IsChecked = _panel.showEmptyRecycleBinButton;
             FolderActionSelect.SelectedIndex = _panel.openFoldersExternally ? 1 : 0;
             SetOpenClickBehaviorSelection(_panel.openItemsOnSingleClick);
             SetMovementModeSelection(_panel.movementMode);
             SetSearchVisibilitySelection(_panel.searchVisibilityMode);
             SetViewModeSelection(_panel.viewMode);
-            MetaTypeToggle.IsChecked = _panel.showMetadataType;
-            MetaSizeToggle.IsChecked = _panel.showMetadataSize;
-            MetaCreatedToggle.IsChecked = _panel.showMetadataCreated;
-            MetaModifiedToggle.IsChecked = _panel.showMetadataModified;
-            MetaDimensionsToggle.IsChecked = _panel.showMetadataDimensions;
-            ApplyMetadataOrderToUi(_panel.metadataOrder);
+            _detailColumnsState = _panel.CreateDetailColumnSelectionState();
             UpdateMetadataOptionsVisibility();
         }
 
@@ -225,17 +213,26 @@ namespace DesktopPlus
             ParentNavigationToggle.IsChecked = _layout.PanelDefaultShowParentNavigationItem;
             FileExtensionsToggle.IsChecked = _layout.PanelDefaultShowFileExtensions;
             SettingsButtonToggle.IsChecked = _layout.PanelDefaultShowSettingsButton;
+            EmptyRecycleBinToggle.IsChecked = _layout.PanelDefaultShowEmptyRecycleBinButton;
             FolderActionSelect.SelectedIndex = _layout.PanelDefaultOpenFoldersExternally ? 1 : 0;
             SetOpenClickBehaviorSelection(_layout.PanelDefaultOpenItemsOnSingleClick);
             SetMovementModeSelection(_layout.PanelDefaultMovementMode);
             SetSearchVisibilitySelection(_layout.PanelDefaultSearchVisibilityMode);
             SetViewModeSelection(_layout.PanelDefaultViewMode);
-            MetaTypeToggle.IsChecked = _layout.PanelDefaultShowMetadataType;
-            MetaSizeToggle.IsChecked = _layout.PanelDefaultShowMetadataSize;
-            MetaCreatedToggle.IsChecked = _layout.PanelDefaultShowMetadataCreated;
-            MetaModifiedToggle.IsChecked = _layout.PanelDefaultShowMetadataModified;
-            MetaDimensionsToggle.IsChecked = _layout.PanelDefaultShowMetadataDimensions;
-            ApplyMetadataOrderToUi(_layout.PanelDefaultMetadataOrder);
+            _detailColumnsState = new DetailColumnSelectionState
+            {
+                ShowType = _layout.PanelDefaultShowMetadataType,
+                ShowSize = _layout.PanelDefaultShowMetadataSize,
+                ShowCreated = _layout.PanelDefaultShowMetadataCreated,
+                ShowModified = _layout.PanelDefaultShowMetadataModified,
+                ShowDimensions = _layout.PanelDefaultShowMetadataDimensions,
+                ShowAuthors = _layout.PanelDefaultShowMetadataAuthors,
+                ShowCategories = _layout.PanelDefaultShowMetadataCategories,
+                ShowTags = _layout.PanelDefaultShowMetadataTags,
+                ShowTitle = _layout.PanelDefaultShowMetadataTitle,
+                MetadataOrder = DesktopPanel.NormalizeMetadataOrder(_layout.PanelDefaultMetadataOrder),
+                MetadataWidths = DesktopPanel.NormalizeMetadataWidths(_layout.PanelDefaultMetadataWidths)
+            };
             UpdateMetadataOptionsVisibility();
         }
 
@@ -364,7 +361,10 @@ namespace DesktopPlus
 
         private void UpdateResetPresetToStandardButtonState()
         {
-            if (ResetPresetToStandardButton == null) return;
+            if (ResetPresetToStandardButton == null)
+            {
+                return;
+            }
 
             if (_panel == null || string.IsNullOrWhiteSpace(_layoutStandardPresetName))
             {
@@ -381,15 +381,14 @@ namespace DesktopPlus
                 !string.Equals(selectedPresetName, _layoutStandardPresetName, StringComparison.OrdinalIgnoreCase);
         }
 
-        private void FitContent_Click(object sender, RoutedEventArgs e)
+        private void FitWidth_Click(object sender, RoutedEventArgs e)
         {
-            if (_panel == null)
-            {
-                return;
-            }
+            _panel?.FitWidthToContent();
+        }
 
-            _panel.FitToContent();
-            MainWindow.NotifyPanelsChanged();
+        private void FitHeight_Click(object sender, RoutedEventArgs e)
+        {
+            _panel?.FitHeightToContent();
         }
 
         private void ApplyCurrentSettings(bool closeAfterApply, bool applyName = true)
@@ -414,7 +413,7 @@ namespace DesktopPlus
                 return;
             }
 
-            if (System.Windows.Application.Current?.MainWindow is MainWindow mainWindow)
+            if (Application.Current?.MainWindow is MainWindow mainWindow)
             {
                 string movementMode = (MovementModeSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "titlebar";
                 string searchVisibilityMode = (SearchVisibilitySelect.SelectedItem as ComboBoxItem)?.Tag?.ToString()
@@ -437,12 +436,17 @@ namespace DesktopPlus
                     movementMode: movementMode,
                     searchVisibilityMode: searchVisibilityMode,
                     viewMode: viewMode,
-                    showMetadataType: MetaTypeToggle.IsChecked != false,
-                    showMetadataSize: MetaSizeToggle.IsChecked != false,
-                    showMetadataCreated: MetaCreatedToggle.IsChecked == true,
-                    showMetadataModified: MetaModifiedToggle.IsChecked != false,
-                    showMetadataDimensions: MetaDimensionsToggle.IsChecked != false,
-                    metadataOrder: GetMetadataOrderFromUi(),
+                    showMetadataType: _detailColumnsState.ShowType,
+                    showMetadataSize: _detailColumnsState.ShowSize,
+                    showMetadataCreated: _detailColumnsState.ShowCreated,
+                    showMetadataModified: _detailColumnsState.ShowModified,
+                    showMetadataDimensions: _detailColumnsState.ShowDimensions,
+                    showMetadataAuthors: _detailColumnsState.ShowAuthors,
+                    showMetadataCategories: _detailColumnsState.ShowCategories,
+                    showMetadataTags: _detailColumnsState.ShowTags,
+                    showMetadataTitle: _detailColumnsState.ShowTitle,
+                    metadataOrder: _detailColumnsState.MetadataOrder,
+                    metadataWidths: _detailColumnsState.MetadataWidths,
                     defaultPresetName: (PresetSelect.SelectedItem as AppearancePreset)?.Name
                         ?? PresetSelect.SelectedValue as string
                         ?? _layout.DefaultPanelPresetName);
@@ -467,7 +471,7 @@ namespace DesktopPlus
 
             if (applyName)
             {
-                if (_panel.Tabs.Count > 1 && _panel.ActiveTab != null)
+                if (_panel.ActiveTab != null)
                 {
                     _panel.RenameTab(_panel.ActiveTabIndex, NameInput.Text);
                 }
@@ -477,6 +481,7 @@ namespace DesktopPlus
                     _panel.Title = NameInput.Text;
                 }
             }
+
             _panel.SetExpandOnHover(HoverToggle.IsChecked == true);
             bool hiddenChanged = _panel.showHiddenItems != (HiddenToggle.IsChecked == true);
             bool parentNavigationChanged = _panel.showParentNavigationItem != (ParentNavigationToggle.IsChecked != false);
@@ -485,13 +490,14 @@ namespace DesktopPlus
             _panel.showParentNavigationItem = ParentNavigationToggle.IsChecked != false;
             _panel.showFileExtensions = FileExtensionsToggle.IsChecked != false;
             _panel.showSettingsButton = SettingsButtonToggle.IsChecked != false;
+            _panel.showEmptyRecycleBinButton = EmptyRecycleBinToggle.IsChecked != false;
             _panel.ApplySettingsButtonVisibility();
+            _panel.UpdateEmptyRecycleBinButtonVisibility();
             _panel.openFoldersExternally = FolderActionSelect.SelectedIndex == 1;
-            _panel.openItemsOnSingleClick =
-                string.Equals(
-                    (OpenClickBehaviorSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString(),
-                    "single",
-                    StringComparison.OrdinalIgnoreCase);
+            _panel.openItemsOnSingleClick = string.Equals(
+                (OpenClickBehaviorSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString(),
+                "single",
+                StringComparison.OrdinalIgnoreCase);
 
             if (MovementModeSelect.SelectedItem is ComboBoxItem modeItem)
             {
@@ -507,12 +513,17 @@ namespace DesktopPlus
             {
                 _panel.ApplyViewSettings(
                     viewModeItem.Tag?.ToString(),
-                    MetaTypeToggle.IsChecked != false,
-                    MetaSizeToggle.IsChecked != false,
-                    MetaCreatedToggle.IsChecked == true,
-                    MetaModifiedToggle.IsChecked != false,
-                    MetaDimensionsToggle.IsChecked != false,
-                    metadataOrderOverride: GetMetadataOrderFromUi(),
+                    _detailColumnsState.ShowType,
+                    _detailColumnsState.ShowSize,
+                    _detailColumnsState.ShowCreated,
+                    _detailColumnsState.ShowModified,
+                    _detailColumnsState.ShowDimensions,
+                    _detailColumnsState.ShowAuthors,
+                    _detailColumnsState.ShowCategories,
+                    _detailColumnsState.ShowTags,
+                    _detailColumnsState.ShowTitle,
+                    metadataOrderOverride: _detailColumnsState.MetadataOrder,
+                    metadataWidthsOverride: _detailColumnsState.MetadataWidths,
                     persistSettings: false);
             }
 
@@ -547,9 +558,7 @@ namespace DesktopPlus
                 return;
             }
 
-            // Keep name input in sync with the currently active tab before applying settings.
-            // This prevents renaming a different tab when the settings window text is stale.
-            if (_panel.Tabs.Count > 1 && _panel.ActiveTab != null)
+            if (_panel.ActiveTab != null)
             {
                 SetNameInputWithoutAutoApply(_panel.ActiveTab.TabName);
             }
@@ -583,6 +592,7 @@ namespace DesktopPlus
             newPanel.showParentNavigationItem = _panel.showParentNavigationItem;
             newPanel.showFileExtensions = _panel.showFileExtensions;
             newPanel.showSettingsButton = _panel.showSettingsButton;
+            newPanel.showEmptyRecycleBinButton = _panel.showEmptyRecycleBinButton;
             newPanel.ApplySettingsButtonVisibility();
             newPanel.openFoldersExternally = _panel.openFoldersExternally;
             newPanel.openItemsOnSingleClick = _panel.openItemsOnSingleClick;
@@ -595,7 +605,12 @@ namespace DesktopPlus
                 _panel.showMetadataCreated,
                 _panel.showMetadataModified,
                 _panel.showMetadataDimensions,
+                _panel.showMetadataAuthors,
+                _panel.showMetadataCategories,
+                _panel.showMetadataTags,
+                _panel.showMetadataTitle,
                 metadataOrderOverride: _panel.metadataOrder,
+                metadataWidthsOverride: _panel.metadataWidths,
                 persistSettings: false);
 
             newPanel.Width = _panel.Width;
@@ -670,7 +685,10 @@ namespace DesktopPlus
 
         private void UpdateMetadataOptionsVisibility()
         {
-            if (MetadataLabel == null || MetadataDragHintText == null || MetadataItemsHost == null || ViewModeSelect == null)
+            if (MetadataLabel == null ||
+                MetadataColumnsHintText == null ||
+                ChooseColumnsButton == null ||
+                ViewModeSelect == null)
             {
                 return;
             }
@@ -681,282 +699,40 @@ namespace DesktopPlus
                 selectedMode = DesktopPanel.NormalizeViewMode(selectedItem.Tag?.ToString());
             }
 
-            bool showMetadata = !string.Equals(selectedMode, DesktopPanel.ViewModeIcons, StringComparison.OrdinalIgnoreCase);
+            bool showMetadata = string.Equals(selectedMode, DesktopPanel.ViewModeDetails, StringComparison.OrdinalIgnoreCase);
             Visibility visibility = showMetadata ? Visibility.Visible : Visibility.Collapsed;
             MetadataLabel.Visibility = visibility;
-            MetadataDragHintText.Visibility = visibility;
-            MetadataItemsHost.Visibility = visibility;
+            MetadataColumnsHintText.Visibility = visibility;
+            ChooseColumnsButton.Visibility = visibility;
         }
 
-        private void ApplyMetadataOrderToUi(IEnumerable<string>? metadataOrder)
+        private void ChooseColumnsButton_Click(object sender, RoutedEventArgs e)
         {
-            if (MetadataItemsHost == null)
+            var dialog = new DetailColumnsWindow(new DetailColumnSelectionState
             {
-                return;
-            }
-
-            var itemMap = new Dictionary<string, Border>(StringComparer.OrdinalIgnoreCase)
+                ShowType = _detailColumnsState.ShowType,
+                ShowSize = _detailColumnsState.ShowSize,
+                ShowCreated = _detailColumnsState.ShowCreated,
+                ShowModified = _detailColumnsState.ShowModified,
+                ShowDimensions = _detailColumnsState.ShowDimensions,
+                ShowAuthors = _detailColumnsState.ShowAuthors,
+                ShowCategories = _detailColumnsState.ShowCategories,
+                ShowTags = _detailColumnsState.ShowTags,
+                ShowTitle = _detailColumnsState.ShowTitle,
+                MetadataOrder = DesktopPanel.NormalizeMetadataOrder(_detailColumnsState.MetadataOrder),
+                MetadataWidths = DesktopPanel.NormalizeMetadataWidths(_detailColumnsState.MetadataWidths)
+            })
             {
-                [DesktopPanel.MetadataType] = MetaTypeItem,
-                [DesktopPanel.MetadataSize] = MetaSizeItem,
-                [DesktopPanel.MetadataCreated] = MetaCreatedItem,
-                [DesktopPanel.MetadataModified] = MetaModifiedItem,
-                [DesktopPanel.MetadataDimensions] = MetaDimensionsItem
+                Owner = this
             };
 
-            var normalized = DesktopPanel.NormalizeMetadataOrder(metadataOrder);
-            MetadataItemsHost.Children.Clear();
-            foreach (string key in normalized)
-            {
-                if (itemMap.TryGetValue(key, out Border? item))
-                {
-                    MetadataItemsHost.Children.Add(item);
-                }
-            }
-        }
-
-        private List<string> GetMetadataOrderFromUi()
-        {
-            if (MetadataItemsHost == null)
-            {
-                return DesktopPanel.NormalizeMetadataOrder(null);
-            }
-
-            var order = MetadataItemsHost.Children
-                .OfType<Border>()
-                .Select(item => item.Tag?.ToString() ?? string.Empty)
-                .Where(tag => !string.IsNullOrWhiteSpace(tag))
-                .ToList();
-
-            return DesktopPanel.NormalizeMetadataOrder(order);
-        }
-
-        private Border? FindMetadataItemContainer(DependencyObject? source)
-        {
-            while (source != null)
-            {
-                if (source is Border border &&
-                    MetadataItemsHost != null &&
-                    MetadataItemsHost.Children.Contains(border))
-                {
-                    return border;
-                }
-
-                source = VisualTreeHelper.GetParent(source);
-            }
-
-            return null;
-        }
-
-        private void MetadataItem_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            _metadataDragSourceItem = FindMetadataItemContainer(e.OriginalSource as DependencyObject);
-            if (_metadataDragSourceItem != null && MetadataItemsHost != null)
-            {
-                _metadataDragStartPoint = e.GetPosition(MetadataItemsHost);
-            }
-        }
-
-        private void MetadataItem_PreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
-        {
-            if (_metadataDragging)
-            {
-                MetadataDrag_MouseMove(e);
-                return;
-            }
-
-            if (_metadataDragSourceItem == null ||
-                MetadataItemsHost == null ||
-                e.LeftButton != MouseButtonState.Pressed)
+            if (dialog.ShowDialog() != true || dialog.ResultState == null)
             {
                 return;
             }
 
-            System.Windows.Point current = e.GetPosition(MetadataItemsHost);
-            if (Math.Abs(current.X - _metadataDragStartPoint.X) < SystemParameters.MinimumHorizontalDragDistance &&
-                Math.Abs(current.Y - _metadataDragStartPoint.Y) < SystemParameters.MinimumVerticalDragDistance)
-            {
-                return;
-            }
-
-            StartMetadataDrag();
-        }
-
-        private void StartMetadataDrag()
-        {
-            if (_metadataDragSourceItem == null || MetadataItemsHost == null) return;
-
-            _metadataDragging = true;
-            _metadataDragOriginalIndex = MetadataItemsHost.Children.IndexOf(_metadataDragSourceItem);
-            _metadataCurrentIndex = _metadataDragOriginalIndex;
-
-            // Calculate the Y position of the dragged item relative to the host
-            var transform = _metadataDragSourceItem.TransformToAncestor(MetadataItemsHost);
-            var itemPos = transform.Transform(new System.Windows.Point(0, 0));
-            _metadataDragItemStartY = itemPos.Y;
-
-            // Ensure all items have a TranslateTransform
-            foreach (Border child in MetadataItemsHost.Children.OfType<Border>())
-            {
-                if (child.RenderTransform is not TranslateTransform)
-                {
-                    child.RenderTransform = new TranslateTransform();
-                }
-            }
-
-            // Elevate dragged item
-            System.Windows.Controls.Panel.SetZIndex(_metadataDragSourceItem, 10);
-            _metadataDragSourceItem.Opacity = 0.9;
-
-            _metadataDragSourceItem.CaptureMouse();
-            _metadataDragSourceItem.PreviewMouseLeftButtonUp += MetadataDrag_MouseUp;
-            _metadataDragSourceItem.LostMouseCapture += MetadataDrag_LostCapture;
-        }
-
-        private void MetadataDrag_MouseMove(System.Windows.Input.MouseEventArgs e)
-        {
-            if (!_metadataDragging || _metadataDragSourceItem == null || MetadataItemsHost == null) return;
-
-            System.Windows.Point current = e.GetPosition(MetadataItemsHost);
-            double deltaY = current.Y - _metadataDragStartPoint.Y;
-
-            // Move the dragged item with the cursor
-            var dragTransform = (TranslateTransform)_metadataDragSourceItem.RenderTransform;
-            dragTransform.Y = deltaY;
-
-            // Determine new index based on cursor position
-            double draggedCenterY = _metadataDragItemStartY + deltaY + (_metadataDragSourceItem.ActualHeight / 2);
-            int newIndex = CalculateTargetIndex(draggedCenterY);
-
-            if (newIndex != _metadataCurrentIndex)
-            {
-                AnimateItemsToMakeRoom(newIndex);
-                _metadataCurrentIndex = newIndex;
-            }
-        }
-
-        private int CalculateTargetIndex(double centerY)
-        {
-            if (MetadataItemsHost == null) return _metadataCurrentIndex;
-
-            var children = MetadataItemsHost.Children.OfType<Border>().ToList();
-            double runningY = 0;
-
-            for (int i = 0; i < children.Count; i++)
-            {
-                double itemHeight = children[i].ActualHeight + children[i].Margin.Top + children[i].Margin.Bottom;
-                double itemCenterY = runningY + itemHeight / 2;
-                if (centerY < itemCenterY)
-                {
-                    return i;
-                }
-                runningY += itemHeight;
-            }
-
-            return children.Count - 1;
-        }
-
-        private void AnimateItemsToMakeRoom(int targetIndex)
-        {
-            if (MetadataItemsHost == null || _metadataDragSourceItem == null) return;
-
-            var children = MetadataItemsHost.Children.OfType<Border>().ToList();
-            double itemHeight = _metadataDragSourceItem.ActualHeight + _metadataDragSourceItem.Margin.Top + _metadataDragSourceItem.Margin.Bottom;
-            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-            var duration = TimeSpan.FromMilliseconds(200);
-
-            for (int i = 0; i < children.Count; i++)
-            {
-                Border child = children[i];
-                if (ReferenceEquals(child, _metadataDragSourceItem)) continue;
-
-                var tt = (TranslateTransform)child.RenderTransform;
-                double targetY = 0;
-
-                // If this item needs to shift to make room
-                if (i >= targetIndex && i < _metadataDragOriginalIndex)
-                {
-                    // Items between target and original need to shift down
-                    targetY = itemHeight;
-                }
-                else if (i <= targetIndex && i > _metadataDragOriginalIndex)
-                {
-                    // Items between original and target need to shift up
-                    targetY = -itemHeight;
-                }
-
-                var anim = new DoubleAnimation(targetY, duration)
-                {
-                    EasingFunction = ease,
-                    FillBehavior = FillBehavior.HoldEnd
-                };
-                tt.BeginAnimation(TranslateTransform.YProperty, anim);
-            }
-        }
-
-        private void MetadataDrag_MouseUp(object sender, MouseButtonEventArgs e)
-        {
-            FinishMetadataDrag();
-        }
-
-        private void MetadataDrag_LostCapture(object sender, System.Windows.Input.MouseEventArgs e)
-        {
-            if (_metadataDragging)
-            {
-                FinishMetadataDrag();
-            }
-        }
-
-        private void FinishMetadataDrag()
-        {
-            if (!_metadataDragging || _metadataDragSourceItem == null || MetadataItemsHost == null) return;
-            _metadataDragging = false;
-
-            Border draggedItem = _metadataDragSourceItem;
-            int originalIndex = _metadataDragOriginalIndex;
-            int finalIndex = _metadataCurrentIndex;
-
-            draggedItem.PreviewMouseLeftButtonUp -= MetadataDrag_MouseUp;
-            draggedItem.LostMouseCapture -= MetadataDrag_LostCapture;
-            draggedItem.ReleaseMouseCapture();
-
-            // Animate dragged item to its final slot position
-            double itemHeight = draggedItem.ActualHeight + draggedItem.Margin.Top + draggedItem.Margin.Bottom;
-            double targetY = (finalIndex - originalIndex) * itemHeight;
-
-            var dragTransform = (TranslateTransform)draggedItem.RenderTransform;
-            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-            var snapAnim = new DoubleAnimation(targetY, TimeSpan.FromMilliseconds(180))
-            {
-                EasingFunction = ease,
-                FillBehavior = FillBehavior.HoldEnd
-            };
-
-            snapAnim.Completed += (s, e) =>
-            {
-                // Clear all transforms and reorder children
-                foreach (Border child in MetadataItemsHost.Children.OfType<Border>())
-                {
-                    var tt = (TranslateTransform)child.RenderTransform;
-                    tt.BeginAnimation(TranslateTransform.YProperty, null);
-                    tt.Y = 0;
-                    System.Windows.Controls.Panel.SetZIndex(child, 0);
-                    child.Opacity = 1;
-                }
-
-                // Actually reorder
-                if (originalIndex != finalIndex)
-                {
-                    MetadataItemsHost.Children.RemoveAt(originalIndex);
-                    int insertAt = finalIndex;
-                    if (originalIndex < finalIndex) insertAt--;
-                    MetadataItemsHost.Children.Insert(insertAt, draggedItem);
-                    TryAutoApplySettings();
-                }
-            };
-
-            dragTransform.BeginAnimation(TranslateTransform.YProperty, snapAnim);
-            _metadataDragSourceItem = null;
+            _detailColumnsState = dialog.ResultState;
+            TryAutoApplySettings();
         }
     }
 }

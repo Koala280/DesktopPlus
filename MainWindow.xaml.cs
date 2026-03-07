@@ -37,6 +37,7 @@ namespace DesktopPlus
         private const string CloseBehaviorMinimize = "Minimize";
         private const string CloseBehaviorExit = "Exit";
         private const string PreviewPanelIdPrefix = "preview:";
+        internal const string RecycleBinPanelId = "special:recyclebin";
         private const string StartupRegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
         private const string StartupApprovedRegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
         private const string StartupRegistryValue = "DesktopPlus";
@@ -103,6 +104,13 @@ namespace DesktopPlus
 
         private static string EnsurePanelId(WindowData data)
         {
+            if (ResolvePanelKind(data) == PanelKind.RecycleBin &&
+                string.IsNullOrWhiteSpace(data.PanelId))
+            {
+                data.PanelId = RecycleBinPanelId;
+                return data.PanelId;
+            }
+
             // Legacy folder-based keys break when two panels share the same folder.
             if (string.IsNullOrWhiteSpace(data.PanelId) ||
                 data.PanelId.StartsWith("folder:", StringComparison.OrdinalIgnoreCase))
@@ -215,6 +223,7 @@ namespace DesktopPlus
             data.SearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(data.SearchVisibilityMode);
             data.ViewMode = DesktopPanel.NormalizeViewMode(data.ViewMode);
             data.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(data.MetadataOrder);
+            data.MetadataWidths = DesktopPanel.NormalizeMetadataWidths(data.MetadataWidths);
             if (!data.IsCollapsed)
             {
                 if (data.ExpandedHeight <= 0 || data.ExpandedHeight < data.Height)
@@ -235,11 +244,38 @@ namespace DesktopPlus
 
             if (data.Tabs != null)
             {
-                foreach (var tab in data.Tabs)
+                for (int i = 0; i < data.Tabs.Count; i++)
                 {
+                    var tab = data.Tabs[i];
+                    if (tab == null)
+                    {
+                        tab = new PanelTabData();
+                        data.Tabs[i] = tab;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(tab.TabId))
+                    {
+                        tab.TabId = Guid.NewGuid().ToString("N");
+                    }
+
+                    if (string.IsNullOrWhiteSpace(tab.PanelId))
+                    {
+                        tab.PanelId = i == 0 && !string.IsNullOrWhiteSpace(data.PanelId)
+                            ? data.PanelId
+                            : $"paneltab:{tab.TabId}";
+                    }
+
                     tab.PinnedItems ??= new List<string>();
                     tab.ViewMode = DesktopPanel.NormalizeViewMode(tab.ViewMode);
                     tab.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(tab.MetadataOrder);
+                    tab.MetadataWidths = DesktopPanel.NormalizeMetadataWidths(tab.MetadataWidths);
+                }
+
+                if (data.Tabs.Count > 0 &&
+                    string.IsNullOrWhiteSpace(data.Tabs[0].PanelId) &&
+                    !string.IsNullOrWhiteSpace(data.PanelId))
+                {
+                    data.Tabs[0].PanelId = data.PanelId;
                 }
 
                 if (data.Tabs.Count > 0)
@@ -301,6 +337,7 @@ namespace DesktopPlus
                 ShowParentNavigationItem = panel.showParentNavigationItem,
                 ShowFileExtensions = panel.showFileExtensions,
                 ShowSettingsButton = panel.showSettingsButton,
+                ShowEmptyRecycleBinButton = panel.showEmptyRecycleBinButton,
                 ExpandOnHover = panel.expandOnHover,
                 OpenFoldersExternally = panel.openFoldersExternally,
                 OpenItemsOnSingleClick = panel.openItemsOnSingleClick,
@@ -310,7 +347,12 @@ namespace DesktopPlus
                 ShowMetadataCreated = panel.showMetadataCreated,
                 ShowMetadataModified = panel.showMetadataModified,
                 ShowMetadataDimensions = panel.showMetadataDimensions,
+                ShowMetadataAuthors = panel.showMetadataAuthors,
+                ShowMetadataCategories = panel.showMetadataCategories,
+                ShowMetadataTags = panel.showMetadataTags,
+                ShowMetadataTitle = panel.showMetadataTitle,
                 MetadataOrder = DesktopPanel.NormalizeMetadataOrder(panel.metadataOrder),
+                MetadataWidths = DesktopPanel.NormalizeMetadataWidths(panel.metadataWidths),
                 MovementMode = panel.movementMode,
                 SearchVisibilityMode = panel.searchVisibilityMode,
                 PinnedItems = pinnedItems
@@ -320,8 +362,10 @@ namespace DesktopPlus
             {
                 wd.Tabs = panel.Tabs.Select(t => new PanelTabData
                 {
+                    PanelId = t.PanelId,
                     TabId = t.TabId,
                     TabName = t.TabName,
+                    IsHidden = t.IsHidden,
                     PanelType = t.PanelType,
                     FolderPath = t.FolderPath,
                     DefaultFolderPath = t.DefaultFolderPath,
@@ -336,7 +380,12 @@ namespace DesktopPlus
                     ShowMetadataCreated = t.ShowMetadataCreated,
                     ShowMetadataModified = t.ShowMetadataModified,
                     ShowMetadataDimensions = t.ShowMetadataDimensions,
+                    ShowMetadataAuthors = t.ShowMetadataAuthors,
+                    ShowMetadataCategories = t.ShowMetadataCategories,
+                    ShowMetadataTags = t.ShowMetadataTags,
+                    ShowMetadataTitle = t.ShowMetadataTitle,
                     MetadataOrder = DesktopPanel.NormalizeMetadataOrder(t.MetadataOrder),
+                    MetadataWidths = DesktopPanel.NormalizeMetadataWidths(t.MetadataWidths),
                     PinnedItems = t.PinnedItems?.ToList() ?? new List<string>()
                 }).ToList();
                 wd.ActiveTabIndex = panel.ActiveTabIndex;
@@ -362,6 +411,11 @@ namespace DesktopPlus
             InitNotifyIcon();
 
             RestoreSavedPanels(onlyWhenNoPanelsOpen: true);
+            if (ApplyAutoSortLanguageMigration(CurrentLanguageCode, CurrentLanguageCode))
+            {
+                RefreshDesktopAutoSortRuleViews();
+                SaveSettings();
+            }
 
             if (_autoCheckUpdates)
             {
@@ -1183,6 +1237,7 @@ namespace DesktopPlus
                 ShowParentNavigationItem = source.ShowParentNavigationItem,
                 ShowFileExtensions = source.ShowFileExtensions,
                 ShowSettingsButton = source.ShowSettingsButton,
+                ShowEmptyRecycleBinButton = source.ShowEmptyRecycleBinButton,
                 ExpandOnHover = source.ExpandOnHover,
                 OpenFoldersExternally = source.OpenFoldersExternally,
                 OpenItemsOnSingleClick = source.OpenItemsOnSingleClick,
@@ -1192,7 +1247,12 @@ namespace DesktopPlus
                 ShowMetadataCreated = source.ShowMetadataCreated,
                 ShowMetadataModified = source.ShowMetadataModified,
                 ShowMetadataDimensions = source.ShowMetadataDimensions,
+                ShowMetadataAuthors = source.ShowMetadataAuthors,
+                ShowMetadataCategories = source.ShowMetadataCategories,
+                ShowMetadataTags = source.ShowMetadataTags,
+                ShowMetadataTitle = source.ShowMetadataTitle,
                 MetadataOrder = DesktopPanel.NormalizeMetadataOrder(source.MetadataOrder),
+                MetadataWidths = DesktopPanel.NormalizeMetadataWidths(source.MetadataWidths),
                 MovementMode = source.MovementMode ?? "titlebar",
                 SearchVisibilityMode = source.SearchVisibilityMode ?? DesktopPanel.SearchVisibilityAlways,
                 PinnedItems = source.PinnedItems?.ToList() ?? new List<string>(),
@@ -1224,6 +1284,7 @@ namespace DesktopPlus
             target.ShowParentNavigationItem = source.ShowParentNavigationItem;
             target.ShowFileExtensions = source.ShowFileExtensions;
             target.ShowSettingsButton = source.ShowSettingsButton;
+            target.ShowEmptyRecycleBinButton = source.ShowEmptyRecycleBinButton;
             target.ExpandOnHover = source.ExpandOnHover;
             target.OpenFoldersExternally = source.OpenFoldersExternally;
             target.OpenItemsOnSingleClick = source.OpenItemsOnSingleClick;
@@ -1233,7 +1294,12 @@ namespace DesktopPlus
             target.ShowMetadataCreated = source.ShowMetadataCreated;
             target.ShowMetadataModified = source.ShowMetadataModified;
             target.ShowMetadataDimensions = source.ShowMetadataDimensions;
+            target.ShowMetadataAuthors = source.ShowMetadataAuthors;
+            target.ShowMetadataCategories = source.ShowMetadataCategories;
+            target.ShowMetadataTags = source.ShowMetadataTags;
+            target.ShowMetadataTitle = source.ShowMetadataTitle;
             target.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(source.MetadataOrder);
+            target.MetadataWidths = DesktopPanel.NormalizeMetadataWidths(source.MetadataWidths);
             target.MovementMode = source.MovementMode ?? "titlebar";
             target.SearchVisibilityMode = source.SearchVisibilityMode ?? DesktopPanel.SearchVisibilityAlways;
             target.PinnedItems = source.PinnedItems?.ToList() ?? new List<string>();
@@ -1245,8 +1311,10 @@ namespace DesktopPlus
         {
             return new PanelTabData
             {
+                PanelId = source.PanelId ?? "",
                 TabId = source.TabId ?? "",
                 TabName = source.TabName ?? "",
+                IsHidden = source.IsHidden,
                 PanelType = source.PanelType ?? "",
                 FolderPath = source.FolderPath ?? "",
                 DefaultFolderPath = source.DefaultFolderPath ?? "",
@@ -1261,7 +1329,12 @@ namespace DesktopPlus
                 ShowMetadataCreated = source.ShowMetadataCreated,
                 ShowMetadataModified = source.ShowMetadataModified,
                 ShowMetadataDimensions = source.ShowMetadataDimensions,
+                ShowMetadataAuthors = source.ShowMetadataAuthors,
+                ShowMetadataCategories = source.ShowMetadataCategories,
+                ShowMetadataTags = source.ShowMetadataTags,
+                ShowMetadataTitle = source.ShowMetadataTitle,
                 MetadataOrder = DesktopPanel.NormalizeMetadataOrder(source.MetadataOrder),
+                MetadataWidths = DesktopPanel.NormalizeMetadataWidths(source.MetadataWidths),
                 PinnedItems = source.PinnedItems?.ToList() ?? new List<string>()
             };
         }

@@ -9,6 +9,43 @@
     <SolidColorBrush x:Key="PanelButtonBg" Color="#2A303A"/>
     <SolidColorBrush x:Key="PanelButtonBorder" Color="#39414D"/>
 
+    <Style x:Key="InlineRenameTextBox" TargetType="TextBox">
+        <Setter Property="Foreground" Value="{StaticResource PanelText}"/>
+        <Setter Property="CaretBrush" Value="{StaticResource PanelText}"/>
+        <Setter Property="Background" Value="#CC262C37"/>
+        <Setter Property="BorderBrush" Value="#60607890"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="4,1"/>
+        <Setter Property="MinHeight" Value="20"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Border x:Name="Bd"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="4"
+                            SnapsToDevicePixels="True">
+                        <ScrollViewer x:Name="PART_ContentHost"
+                                      Margin="{TemplateBinding Padding}"
+                                      VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                      Focusable="False"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="#887AA9FF"/>
+                            <Setter TargetName="Bd" Property="Background" Value="#E02A3140"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Bd" Property="Opacity" Value="0.65"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="HeaderIconButton" TargetType="Button">
         <Setter Property="Width" Value="34"/>
         <Setter Property="Height" Value="34"/>
@@ -48,6 +85,41 @@
     <Style x:Key="HeaderSmallButton" TargetType="Button" BasedOn="{StaticResource HeaderIconButton}">
         <Setter Property="Width" Value="30"/>
         <Setter Property="Height" Value="30"/>
+    </Style>
+
+    <Style x:Key="HeaderDangerIconButton" TargetType="Button" BasedOn="{StaticResource HeaderSmallButton}">
+        <Setter Property="Background" Value="#221A1416"/>
+        <Setter Property="Foreground" Value="#F08A92"/>
+        <Setter Property="BorderBrush" Value="#4FA74C58"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bd"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="9">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="#3521181C"/>
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="#88CA6672"/>
+                            <Setter Property="Foreground" Value="#FFC1C7"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="#46292126"/>
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="#A8D87783"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Bd" Property="Opacity" Value="0.52"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <Style x:Key="PanelSettingsGhostButton" TargetType="Button">
@@ -112,6 +184,111 @@
         </Setter>
     </Style>
 
+    <Style x:Key="PanelContextMenuStyle" TargetType="ContextMenu">
+        <Setter Property="Background" Value="{StaticResource PanelSurfaceRaised}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource PanelBorder}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Foreground" Value="{StaticResource PanelText}"/>
+        <Setter Property="Padding" Value="6"/>
+        <Setter Property="HasDropShadow" Value="False"/>
+        <Setter Property="SnapsToDevicePixels" Value="True"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="10"
+                            Padding="{TemplateBinding Padding}">
+                        <StackPanel IsItemsHost="True"
+                                    KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="PanelContextMenuSeparatorStyle" TargetType="Separator">
+        <Setter Property="Margin" Value="8,6"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Separator">
+                    <Border Height="1"
+                            Background="{StaticResource PanelBorder}"
+                            Opacity="0.95"/>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="PanelContextMenuItemStyle" TargetType="MenuItem">
+        <Setter Property="Foreground" Value="{StaticResource PanelText}"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderBrush" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="10,7,12,7"/>
+        <Setter Property="Margin" Value="2,1"/>
+        <Setter Property="FontSize" Value="12.5"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border x:Name="ItemBorder"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="8"
+                            SnapsToDevicePixels="True">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="20"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="CheckBadge"
+                                    Grid.Column="0"
+                                    Width="16"
+                                    Height="16"
+                                    CornerRadius="5"
+                                    Background="#1E7CB8FF"
+                                    BorderBrush="#587CB8FF"
+                                    BorderThickness="1"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Opacity="0">
+                                <TextBlock Text="&#xE73E;"
+                                           FontFamily="Segoe MDL2 Assets"
+                                           FontSize="10"
+                                           Foreground="White"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"/>
+                            </Border>
+                            <ContentPresenter Grid.Column="1"
+                                              ContentSource="Header"
+                                              Margin="{TemplateBinding Padding}"
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True"/>
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="ItemBorder" Property="Background" Value="#2A3446"/>
+                            <Setter TargetName="ItemBorder" Property="BorderBrush" Value="#4C6D8F"/>
+                        </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsCheckable" Value="True"/>
+                                <Condition Property="IsChecked" Value="True"/>
+                            </MultiTrigger.Conditions>
+                            <Setter TargetName="CheckBadge" Property="Opacity" Value="1"/>
+                        </MultiTrigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="ItemBorder" Property="Opacity" Value="0.46"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="ThinScrollThumb" TargetType="Thumb">
         <Setter Property="Template">
             <Setter.Value>
@@ -137,7 +314,7 @@
         <Setter Property="Width" Value="6"/>
         <Setter Property="MinWidth" Value="6"/>
         <Setter Property="Background" Value="Transparent"/>
-        <Setter Property="Margin" Value="0,2,0,2"/>
+        <Setter Property="Margin" Value="0,1,0,1"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ScrollBar">
@@ -181,6 +358,9 @@
                                    Orientation="Vertical"
                                    Style="{StaticResource ThinScrollBar}"
                                    HorizontalAlignment="Right"
+                                   VerticalAlignment="Stretch"
+                                   Margin="0,2,2,2"
+                                   Panel.ZIndex="1"
                                    Maximum="{TemplateBinding ScrollableHeight}"
                                    Value="{TemplateBinding VerticalOffset}"
                                    ViewportSize="{TemplateBinding ViewportHeight}"
@@ -188,7 +368,10 @@
                         <ScrollBar x:Name="PART_HorizontalScrollBar"
                                    Orientation="Horizontal"
                                    Style="{StaticResource ThinScrollBar}"
+                                   HorizontalAlignment="Stretch"
                                    VerticalAlignment="Bottom"
+                                   Margin="4,0,4,2"
+                                   Panel.ZIndex="1"
                                    Maximum="{TemplateBinding ScrollableWidth}"
                                    Value="{TemplateBinding HorizontalOffset}"
                                    ViewportSize="{TemplateBinding ViewportWidth}"

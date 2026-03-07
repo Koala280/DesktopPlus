@@ -32,6 +32,51 @@ namespace DesktopPlus
         private static DispatcherTimer? _saveDebounceTimer;
         private static readonly object _saveTimerLock = new object();
 
+        private static void ResetSavedFolderPathsToDefaults(IEnumerable<WindowData>? windows)
+        {
+            if (windows == null)
+            {
+                return;
+            }
+
+            foreach (WindowData? window in windows)
+            {
+                if (window == null)
+                {
+                    continue;
+                }
+
+                NormalizeWindowData(window);
+
+                if (ResolvePanelKind(window) == PanelKind.Folder &&
+                    !string.IsNullOrWhiteSpace(window.DefaultFolderPath) &&
+                    Directory.Exists(window.DefaultFolderPath))
+                {
+                    window.FolderPath = window.DefaultFolderPath;
+                }
+
+                if (window.Tabs == null || window.Tabs.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (PanelTabData? tab in window.Tabs)
+                {
+                    if (tab == null)
+                    {
+                        continue;
+                    }
+
+                    if (ResolvePanelKind(tab) == PanelKind.Folder &&
+                        !string.IsNullOrWhiteSpace(tab.DefaultFolderPath) &&
+                        Directory.Exists(tab.DefaultFolderPath))
+                    {
+                        tab.FolderPath = tab.DefaultFolderPath;
+                    }
+                }
+            }
+        }
+
         private void LoadSettings()
         {
             _hideMainWindowOnStartup = false;
@@ -60,7 +105,9 @@ namespace DesktopPlus
                 {
                     NormalizeWindowData(window);
                 }
+                ResetSavedFolderPathsToDefaults(savedWindows);
                 savedWindows = CreateWindowDataMap(savedWindows, rewriteDuplicates: true).Values.ToList();
+                PruneRedundantSavedWindows();
                 Appearance = state.Appearance ?? new AppearanceSettings();
                 Layouts = state.Layouts ?? new List<LayoutDefinition>();
                 _languageCode = string.IsNullOrWhiteSpace(state.Language) ? DefaultLanguageCode : state.Language;
@@ -188,6 +235,12 @@ namespace DesktopPlus
                 try
                 {
                     NormalizeWindowData(winData);
+                    if (winData.Tabs != null && winData.Tabs.Count > 0 && winData.Tabs.All(tab => tab.IsHidden))
+                    {
+                        winData.IsHidden = true;
+                        continue;
+                    }
+
                     PanelKind kind = ResolvePanelKind(winData);
                     if (kind == PanelKind.None)
                     {
@@ -298,6 +351,7 @@ namespace DesktopPlus
                     .OrderBy(x => string.IsNullOrWhiteSpace(x.PanelTitle) ? x.FolderPath : x.PanelTitle)
                     .ThenBy(x => x.FolderPath)
                     .ToList();
+                PruneRedundantSavedWindows(openPanels);
 
                 var mainWindow = System.Windows.Application.Current?.MainWindow as MainWindow;
                 string language = mainWindow?._languageCode ?? CurrentLanguageCode;

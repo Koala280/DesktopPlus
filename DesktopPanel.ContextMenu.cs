@@ -211,6 +211,18 @@ namespace DesktopPlus
             bool toggleModifier = IsToggleModifierPressed();
             bool rangeModifier = IsRangeModifierPressed();
 
+            if (IsParentNavigationItem(clickedItem))
+            {
+                if (!toggleModifier && !rangeModifier)
+                {
+                    listBox.SelectedItems.Clear();
+                }
+
+                listBox.Focus();
+                e.Handled = true;
+                return;
+            }
+
             if (!clickedItem.IsSelected)
             {
                 if (!toggleModifier && !rangeModifier)
@@ -720,10 +732,6 @@ namespace DesktopPlus
         {
             if (PanelType == PanelKind.Folder)
             {
-                if (!string.IsNullOrWhiteSpace(currentFolderPath) && Directory.Exists(currentFolderPath))
-                {
-                    LoadFolder(currentFolderPath, saveSettings: false);
-                }
                 return;
             }
 

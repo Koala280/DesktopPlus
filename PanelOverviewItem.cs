@@ -12,9 +12,14 @@ namespace DesktopPlus
         public bool ToggleIsShow { get; set; }
         public string ToggleLabel { get; set; } = "";
         public DesktopPanel? Panel { get; set; }
+        public int HostTabIndex { get; set; } = -1;
+        public bool RepresentsTab { get; set; }
+        public string OwnerPanelKey { get; set; } = "";
+        public string TabId { get; set; } = "";
         public string FolderPath { get; set; } = "";
         public string PanelKey { get; set; } = "";
         public PanelKind PanelType { get; set; } = PanelKind.None;
         public string PresetName { get; set; } = "";
+        public string OverviewSignature { get; set; } = "";
     }
 }

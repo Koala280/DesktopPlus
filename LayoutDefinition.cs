@@ -14,6 +14,7 @@ namespace DesktopPlus
         public bool PanelDefaultOpenFoldersExternally { get; set; }
         public bool PanelDefaultOpenItemsOnSingleClick { get; set; }
         public bool PanelDefaultShowSettingsButton { get; set; } = true;
+        public bool PanelDefaultShowEmptyRecycleBinButton { get; set; } = true;
         public string PanelDefaultMovementMode { get; set; } = "titlebar";
         public string PanelDefaultSearchVisibilityMode { get; set; } = "always";
         public string PanelDefaultViewMode { get; set; } = "icons";
@@ -22,14 +23,23 @@ namespace DesktopPlus
         public bool PanelDefaultShowMetadataCreated { get; set; }
         public bool PanelDefaultShowMetadataModified { get; set; } = true;
         public bool PanelDefaultShowMetadataDimensions { get; set; }
+        public bool PanelDefaultShowMetadataAuthors { get; set; }
+        public bool PanelDefaultShowMetadataCategories { get; set; }
+        public bool PanelDefaultShowMetadataTags { get; set; }
+        public bool PanelDefaultShowMetadataTitle { get; set; }
         public List<string> PanelDefaultMetadataOrder { get; set; } = new List<string>
         {
             "type",
             "size",
             "created",
             "modified",
-            "dimensions"
+            "dimensions",
+            "authors",
+            "categories",
+            "tags",
+            "title"
         };
+        public Dictionary<string, double> PanelDefaultMetadataWidths { get; set; } = DesktopPanel.NormalizeMetadataWidths(null);
         public AppearanceSettings Appearance { get; set; } = new AppearanceSettings();
         public List<WindowData> Panels { get; set; } = new List<WindowData>();
     }

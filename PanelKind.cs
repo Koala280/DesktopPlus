@@ -4,6 +4,7 @@ namespace DesktopPlus
     {
         None,
         Folder,
-        List
+        List,
+        RecycleBin
     }
 }

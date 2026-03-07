@@ -17,24 +17,28 @@ namespace DesktopPlus
         private readonly List<PanelTabData> _tabs = new List<PanelTabData>();
         private int _activeTabIndex = 0;
 
+        private static string CreateLogicalTabPanelId()
+        {
+            return $"panel:{Guid.NewGuid():N}";
+        }
+
         // Tab drag state
         private const string TabDragFormat = "DesktopPlus_TabDrag";
         private const double TabDragThreshold = 8.0;
+        private const double TabDragDetachYThreshold = 40.0;
         private bool _isTabDragPending;
         private Point _tabDragStartPoint;
         private int _tabDragIndex = -1;
-        private Window? _tabDragGhost;
+        private const double TabDragPreviewAnimationMs = 190.0;
         private int _animateNewTabIndex = -1;
+        private bool _isTabReorderDragging;
+        private Border? _tabReorderSource;
+        private int _tabReorderSourceIndex = -1;
 
         // Static shared payload so all panels can access the drag data
         // (WPF DragDrop can lose custom non-serializable data across windows)
         private static TabDragPayload? _activeTabDragPayload;
-
-        private static bool IsTabDetachModifierPressed()
-        {
-            var modifiers = System.Windows.Input.Keyboard.Modifiers;
-            return modifiers.HasFlag(System.Windows.Input.ModifierKeys.Control);
-        }
+        private static Window? _activeTabDragAdorner;
 
         public IReadOnlyList<PanelTabData> Tabs => _tabs;
         public int ActiveTabIndex => _activeTabIndex;
@@ -43,10 +47,165 @@ namespace DesktopPlus
                 ? _tabs[_activeTabIndex]
                 : null;
 
+        private static void EnsureTabIdentity(PanelTabData tab, string? fallbackPanelId = null)
+        {
+            if (tab == null)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(tab.TabId))
+            {
+                tab.TabId = Guid.NewGuid().ToString("N");
+            }
+
+            if (string.IsNullOrWhiteSpace(tab.PanelId))
+            {
+                tab.PanelId = !string.IsNullOrWhiteSpace(fallbackPanelId)
+                    ? fallbackPanelId
+                    : $"paneltab:{tab.TabId}";
+            }
+
+            tab.PinnedItems ??= new List<string>();
+            tab.ViewMode = NormalizeViewMode(tab.ViewMode);
+            tab.MetadataOrder = NormalizeMetadataOrder(tab.MetadataOrder);
+            tab.MetadataWidths = NormalizeMetadataWidths(tab.MetadataWidths);
+        }
+
+        public bool IsTabHidden(int index)
+        {
+            return index < 0 || index >= _tabs.Count || _tabs[index].IsHidden;
+        }
+
+        public int GetVisibleTabCount()
+        {
+            return _tabs.Count(tab => !tab.IsHidden);
+        }
+
+        public bool HasVisibleTabs()
+        {
+            return GetVisibleTabCount() > 0;
+        }
+
+        private List<int> GetVisibleTabIndices()
+        {
+            var indices = new List<int>();
+            for (int i = 0; i < _tabs.Count; i++)
+            {
+                if (!_tabs[i].IsHidden)
+                {
+                    indices.Add(i);
+                }
+            }
+
+            return indices;
+        }
+
+        private int FindFirstVisibleTabIndex()
+        {
+            for (int i = 0; i < _tabs.Count; i++)
+            {
+                if (!_tabs[i].IsHidden)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private int FindNextVisibleTabIndex(int preferredIndex)
+        {
+            if (_tabs.Count == 0)
+            {
+                return -1;
+            }
+
+            if (preferredIndex >= 0 && preferredIndex < _tabs.Count && !_tabs[preferredIndex].IsHidden)
+            {
+                return preferredIndex;
+            }
+
+            for (int i = preferredIndex + 1; i < _tabs.Count; i++)
+            {
+                if (!_tabs[i].IsHidden)
+                {
+                    return i;
+                }
+            }
+
+            for (int i = preferredIndex - 1; i >= 0; i--)
+            {
+                if (!_tabs[i].IsHidden)
+                {
+                    return i;
+                }
+            }
+
+            return FindFirstVisibleTabIndex();
+        }
+
+        private bool EnsureActiveTabVisible()
+        {
+            int visibleIndex = FindNextVisibleTabIndex(_activeTabIndex);
+            if (visibleIndex < 0)
+            {
+                return false;
+            }
+
+            bool changed = _activeTabIndex != visibleIndex;
+            _activeTabIndex = visibleIndex;
+            return changed;
+        }
+
+        private void RefreshTabPresentation(bool reloadActiveState = false, bool persist = true)
+        {
+            bool activeTabChanged = EnsureActiveTabVisible();
+            if (!HasVisibleTabs())
+            {
+                RebuildTabBar();
+
+                if (IsVisible)
+                {
+                    Hide();
+                }
+
+                if (persist)
+                {
+                    MainWindow.SaveSettings();
+                }
+                return;
+            }
+
+            if (reloadActiveState || activeTabChanged)
+            {
+                LoadTabState(_tabs[_activeTabIndex]);
+            }
+
+            SyncSingleTabHeaderTitle();
+            RebuildTabBar();
+            if (persist)
+            {
+                MainWindow.SaveSettings();
+            }
+        }
+
+        public bool HasRecycleBinTab()
+        {
+            return _tabs.Any(tab =>
+                Enum.TryParse<PanelKind>(tab.PanelType, true, out var kind) &&
+                kind == PanelKind.RecycleBin);
+        }
+
         public void SaveActiveTabState()
         {
             if (ActiveTab == null) return;
             var tab = ActiveTab;
+            EnsureTabIdentity(tab, _tabs.Count == 1 ? (string.IsNullOrWhiteSpace(PanelId) ? CreateLogicalTabPanelId() : PanelId) : null);
+            if (string.IsNullOrWhiteSpace(tab.PanelId) && _tabs.Count == 1)
+            {
+                tab.PanelId = string.IsNullOrWhiteSpace(PanelId) ? CreateLogicalTabPanelId() : PanelId;
+            }
             tab.PanelType = PanelType.ToString();
             tab.FolderPath = currentFolderPath ?? "";
             tab.DefaultFolderPath = defaultFolderPath ?? "";
@@ -61,12 +220,24 @@ namespace DesktopPlus
             tab.ShowMetadataCreated = showMetadataCreated;
             tab.ShowMetadataModified = showMetadataModified;
             tab.ShowMetadataDimensions = showMetadataDimensions;
+            tab.ShowMetadataAuthors = showMetadataAuthors;
+            tab.ShowMetadataCategories = showMetadataCategories;
+            tab.ShowMetadataTags = showMetadataTags;
+            tab.ShowMetadataTitle = showMetadataTitle;
             tab.MetadataOrder = NormalizeMetadataOrder(metadataOrder);
+            tab.MetadataWidths = NormalizeMetadataWidths(metadataWidths);
             tab.PinnedItems = PinnedItems.ToList();
         }
 
         private void LoadTabState(PanelTabData tab)
         {
+            EnsureTabIdentity(tab, _tabs.Count == 1 ? PanelId : null);
+
+            if (GetVisibleTabCount() <= 1 && !string.IsNullOrWhiteSpace(tab.PanelId))
+            {
+                PanelId = tab.PanelId;
+            }
+
             showHiddenItems = tab.ShowHidden;
             showParentNavigationItem = tab.ShowParentNavigationItem;
             showFileExtensions = tab.ShowFileExtensions;
@@ -78,7 +249,12 @@ namespace DesktopPlus
             showMetadataCreated = tab.ShowMetadataCreated;
             showMetadataModified = tab.ShowMetadataModified;
             showMetadataDimensions = tab.ShowMetadataDimensions;
+            showMetadataAuthors = tab.ShowMetadataAuthors;
+            showMetadataCategories = tab.ShowMetadataCategories;
+            showMetadataTags = tab.ShowMetadataTags;
+            showMetadataTitle = tab.ShowMetadataTitle;
             metadataOrder = NormalizeMetadataOrder(tab.MetadataOrder);
+            metadataWidths = NormalizeMetadataWidths(tab.MetadataWidths);
             defaultFolderPath = tab.DefaultFolderPath ?? "";
 
             if (Enum.TryParse<PanelKind>(tab.PanelType, true, out var kind))
@@ -86,6 +262,10 @@ namespace DesktopPlus
                 if (kind == PanelKind.Folder && !string.IsNullOrWhiteSpace(tab.FolderPath))
                 {
                     LoadFolder(tab.FolderPath, saveSettings: false);
+                }
+                else if (kind == PanelKind.RecycleBin)
+                {
+                    LoadRecycleBin(saveSettings: false);
                 }
                 else if (kind == PanelKind.List && tab.PinnedItems?.Count > 0)
                 {
@@ -104,7 +284,7 @@ namespace DesktopPlus
 
         public void SwitchToTab(int index)
         {
-            if (index < 0 || index >= _tabs.Count || index == _activeTabIndex) return;
+            if (index < 0 || index >= _tabs.Count || index == _activeTabIndex || _tabs[index].IsHidden) return;
             SaveActiveTabState();
             _activeTabIndex = index;
             LoadTabState(_tabs[index]);
@@ -192,8 +372,10 @@ namespace DesktopPlus
 
             var tab = new PanelTabData
             {
+                PanelId = CreateLogicalTabPanelId(),
                 TabId = Guid.NewGuid().ToString("N"),
                 TabName = tabName,
+                IsHidden = false,
                 PanelType = !string.IsNullOrWhiteSpace(folderPath) ? PanelKind.Folder.ToString() : PanelKind.None.ToString(),
                 FolderPath = folderPath ?? "",
                 DefaultFolderPath = folderPath ?? "",
@@ -208,7 +390,12 @@ namespace DesktopPlus
                 ShowMetadataCreated = showMetadataCreated,
                 ShowMetadataModified = showMetadataModified,
                 ShowMetadataDimensions = showMetadataDimensions,
+                ShowMetadataAuthors = showMetadataAuthors,
+                ShowMetadataCategories = showMetadataCategories,
+                ShowMetadataTags = showMetadataTags,
+                ShowMetadataTitle = showMetadataTitle,
                 MetadataOrder = NormalizeMetadataOrder(metadataOrder),
+                MetadataWidths = NormalizeMetadataWidths(metadataWidths),
             };
 
             _tabs.Add(tab);
@@ -231,6 +418,8 @@ namespace DesktopPlus
         public void InsertTab(PanelTabData tab, int insertAt = -1, bool switchTo = true)
         {
             SaveActiveTabState();
+            EnsureTabIdentity(tab);
+            tab.IsHidden = false;
             if (insertAt < 0 || insertAt > _tabs.Count) insertAt = _tabs.Count;
             _tabs.Insert(insertAt, tab);
 
@@ -243,6 +432,7 @@ namespace DesktopPlus
             _animateNewTabIndex = insertAt;
             RebuildTabBar();
             MainWindow.SaveSettings();
+            MainWindow.NotifyPanelsChanged();
         }
 
         /// <summary>
@@ -251,8 +441,13 @@ namespace DesktopPlus
         /// </summary>
         public PanelTabData? DetachTab(int index)
         {
-            if (_tabs.Count <= 1) return null;
             if (index < 0 || index >= _tabs.Count) return null;
+            if (_tabs.Count <= 1) return null;
+            if (Enum.TryParse<PanelKind>(_tabs[index].PanelType, true, out var kind) &&
+                kind == PanelKind.RecycleBin)
+            {
+                return null;
+            }
 
             // Make sure the tab data is current if it's the active one
             if (index == _activeTabIndex)
@@ -264,65 +459,157 @@ namespace DesktopPlus
             bool wasActive = index == _activeTabIndex;
             _tabs.RemoveAt(index);
 
+            if (GetVisibleTabCount() == 1)
+            {
+                int singleVisibleIndex = FindFirstVisibleTabIndex();
+                if (singleVisibleIndex >= 0 && !string.IsNullOrWhiteSpace(_tabs[singleVisibleIndex].PanelId))
+                {
+                    PanelId = _tabs[singleVisibleIndex].PanelId;
+                }
+            }
+
             if (_activeTabIndex >= _tabs.Count)
                 _activeTabIndex = _tabs.Count - 1;
             else if (index < _activeTabIndex)
                 _activeTabIndex--;
 
-            if (wasActive)
-            {
-                LoadTabState(_tabs[_activeTabIndex]);
-            }
-
-            SyncSingleTabHeaderTitle();
-            RebuildTabBar();
-            MainWindow.SaveSettings();
+            bool reloadActiveState = wasActive ||
+                _activeTabIndex < 0 ||
+                _activeTabIndex >= _tabs.Count ||
+                _tabs[_activeTabIndex].IsHidden;
+            RefreshTabPresentation(reloadActiveState);
+            MainWindow.NotifyPanelsChanged();
             return tab;
         }
 
         public void RemoveTab(int index)
         {
-            if (_tabs.Count <= 1) return;
             if (index < 0 || index >= _tabs.Count) return;
+            if (_tabs.Count <= 1) return;
 
             bool wasActive = index == _activeTabIndex;
             _tabs.RemoveAt(index);
+
+            if (GetVisibleTabCount() == 1)
+            {
+                int singleVisibleIndex = FindFirstVisibleTabIndex();
+                if (singleVisibleIndex >= 0 && !string.IsNullOrWhiteSpace(_tabs[singleVisibleIndex].PanelId))
+                {
+                    PanelId = _tabs[singleVisibleIndex].PanelId;
+                }
+            }
 
             if (_activeTabIndex >= _tabs.Count)
                 _activeTabIndex = _tabs.Count - 1;
             else if (index < _activeTabIndex)
                 _activeTabIndex--;
 
-            if (wasActive)
-            {
-                LoadTabState(_tabs[_activeTabIndex]);
-            }
-
-            SyncSingleTabHeaderTitle();
-            RebuildTabBar();
-            MainWindow.SaveSettings();
+            bool reloadActiveState = wasActive ||
+                _activeTabIndex < 0 ||
+                _activeTabIndex >= _tabs.Count ||
+                _tabs[_activeTabIndex].IsHidden;
+            RefreshTabPresentation(reloadActiveState);
+            MainWindow.NotifyPanelsChanged();
         }
 
         public void RenameTab(int index, string newName)
         {
             if (index < 0 || index >= _tabs.Count) return;
             _tabs[index].TabName = newName;
+            SyncSingleTabHeaderTitle();
             RebuildTabBar();
             MainWindow.SaveSettings();
+            MainWindow.NotifyPanelsChanged();
+        }
+
+        public bool SetTabHidden(int index, bool isHidden, bool activateTabWhenShown = false)
+        {
+            if (index < 0 || index >= _tabs.Count)
+            {
+                return false;
+            }
+
+            var tab = _tabs[index];
+            EnsureTabIdentity(tab, index == 0 ? PanelId : null);
+            if (tab.IsHidden == isHidden)
+            {
+                if (!isHidden && activateTabWhenShown)
+                {
+                    SwitchToTab(index);
+                }
+                return false;
+            }
+
+            bool wasActive = index == _activeTabIndex;
+            int visibleBeforeChange = GetVisibleTabCount();
+            if (wasActive)
+            {
+                SaveActiveTabState();
+            }
+
+            tab.IsHidden = isHidden;
+
+            if (!isHidden)
+            {
+                bool shouldActivate = activateTabWhenShown || visibleBeforeChange == 0 || IsTabHidden(_activeTabIndex);
+                if (shouldActivate)
+                {
+                    _activeTabIndex = index;
+                }
+
+                RefreshTabPresentation(reloadActiveState: shouldActivate);
+                if (!IsVisible)
+                {
+                    Show();
+                    WindowState = WindowState.Normal;
+                }
+                MainWindow.NotifyPanelsChanged();
+                return true;
+            }
+
+            if (!HasVisibleTabs())
+            {
+                RebuildTabBar();
+                Hide();
+                MainWindow.SaveSettings();
+                MainWindow.NotifyPanelsChanged();
+                return true;
+            }
+
+            if (wasActive)
+            {
+                RefreshTabPresentation(reloadActiveState: true);
+            }
+            else
+            {
+                SyncSingleTabHeaderTitle();
+                RebuildTabBar();
+                MainWindow.SaveSettings();
+            }
+
+            MainWindow.NotifyPanelsChanged();
+            return true;
         }
 
         public void InitializeTabsFromData(List<PanelTabData> tabs, int activeIndex)
         {
             _tabs.Clear();
-            foreach (var tab in tabs)
+            for (int i = 0; i < tabs.Count; i++)
             {
-                tab.PinnedItems ??= new List<string>();
-                tab.ViewMode = NormalizeViewMode(tab.ViewMode);
-                tab.MetadataOrder = NormalizeMetadataOrder(tab.MetadataOrder);
+                var tab = tabs[i];
+                EnsureTabIdentity(tab, i == 0 ? PanelId : null);
             }
             _tabs.AddRange(tabs);
+            if (GetVisibleTabCount() == 1)
+            {
+                int visibleIndex = FindFirstVisibleTabIndex();
+                if (visibleIndex >= 0 && !string.IsNullOrWhiteSpace(_tabs[visibleIndex].PanelId))
+                {
+                    PanelId = _tabs[visibleIndex].PanelId;
+                }
+            }
             _activeTabIndex = Math.Max(0, Math.Min(activeIndex, _tabs.Count - 1));
-            RebuildTabBar();
+            RefreshTabPresentation(reloadActiveState: true, persist: false);
         }
 
         public void InitializeSingleTabFromCurrentState()
@@ -330,8 +617,10 @@ namespace DesktopPlus
             if (_tabs.Count > 0) return;
             _tabs.Add(new PanelTabData
             {
+                PanelId = string.IsNullOrWhiteSpace(PanelId) ? CreateLogicalTabPanelId() : PanelId,
                 TabId = Guid.NewGuid().ToString("N"),
                 TabName = PanelTitle?.Text ?? MainWindow.GetString("Loc.PanelDefaultTitle"),
+                IsHidden = false,
                 PanelType = PanelType.ToString(),
                 FolderPath = currentFolderPath ?? "",
                 DefaultFolderPath = defaultFolderPath ?? "",
@@ -346,11 +635,16 @@ namespace DesktopPlus
                 ShowMetadataCreated = showMetadataCreated,
                 ShowMetadataModified = showMetadataModified,
                 ShowMetadataDimensions = showMetadataDimensions,
+                ShowMetadataAuthors = showMetadataAuthors,
+                ShowMetadataCategories = showMetadataCategories,
+                ShowMetadataTags = showMetadataTags,
+                ShowMetadataTitle = showMetadataTitle,
                 MetadataOrder = NormalizeMetadataOrder(metadataOrder),
+                MetadataWidths = NormalizeMetadataWidths(metadataWidths),
                 PinnedItems = PinnedItems.ToList()
             });
             _activeTabIndex = 0;
-            RebuildTabBar();
+            RefreshTabPresentation(reloadActiveState: false, persist: false);
         }
 
         private void RebuildTabBar(bool? collapsedOverride = null)
@@ -359,12 +653,19 @@ namespace DesktopPlus
 
             TabBarPanel.Children.Clear();
             bool isCollapsedVisual = collapsedOverride ?? !isContentVisible;
+            int visibleTabCount = GetVisibleTabCount();
 
-            if (_tabs.Count <= 1)
+            if (visibleTabCount <= 1)
             {
                 TabBarContainer.Visibility = Visibility.Collapsed;
                 if (PanelTitle != null)
+                {
                     PanelTitle.Visibility = Visibility.Visible;
+                    if (visibleTabCount == 1)
+                    {
+                        SyncSingleTabHeaderTitle();
+                    }
+                }
                 UpdateHeaderBottomBorderForCurrentState(collapsed: isCollapsedVisual);
                 return;
             }
@@ -381,6 +682,11 @@ namespace DesktopPlus
 
             for (int i = 0; i < _tabs.Count; i++)
             {
+                if (_tabs[i].IsHidden)
+                {
+                    continue;
+                }
+
                 var tabItem = CreateTabBarItem(_tabs[i], i, showActiveSelection && i == _activeTabIndex);
                 TabBarPanel.Children.Add(tabItem);
 
@@ -507,7 +813,8 @@ namespace DesktopPlus
                 Child = tabGrid,
                 Cursor = System.Windows.Input.Cursors.Hand,
                 Tag = index,
-                SnapsToDevicePixels = true
+                SnapsToDevicePixels = true,
+                RenderTransform = new TranslateTransform()
             };
 
             border.Loaded += (_, __) =>
@@ -543,24 +850,56 @@ namespace DesktopPlus
 
             ApplyVisualState(isActive);
 
-            // Mouse down: start potential drag or tab switch
+            // Mouse down: start potential drag or tab switch without rebuilding the tab strip yet.
             border.MouseLeftButtonDown += (_, e) =>
             {
+                if (e.ChangedButton != System.Windows.Input.MouseButton.Left)
+                {
+                    return;
+                }
+
                 _isTabDragPending = true;
                 _tabDragStartPoint = e.GetPosition(null);
                 _tabDragIndex = switchIndex;
-                SwitchToTab(switchIndex);
+                border.CaptureMouse();
                 e.Handled = true;
             };
 
             border.MouseLeftButtonUp += (_, e) =>
             {
+                bool shouldActivateTab = _isTabDragPending && _tabDragIndex == switchIndex;
                 _isTabDragPending = false;
                 _tabDragIndex = -1;
+
+                if (_isTabReorderDragging && ReferenceEquals(_tabReorderSource, border))
+                {
+                    FinalizeTabReorderDrag();
+                    e.Handled = true;
+                    return;
+                }
+
+                if (border.IsMouseCaptured)
+                {
+                    border.ReleaseMouseCapture();
+                }
+
+                if (shouldActivateTab)
+                {
+                    SwitchToTab(switchIndex);
+                }
+
+                e.Handled = true;
             };
 
             border.MouseMove += (_, e) =>
             {
+                if (_isTabReorderDragging && ReferenceEquals(_tabReorderSource, border))
+                {
+                    UpdateTabReorderDrag(e);
+                    e.Handled = true;
+                    return;
+                }
+
                 if (!_isTabDragPending || _tabDragIndex != switchIndex) return;
                 if (e.LeftButton != System.Windows.Input.MouseButtonState.Pressed)
                 {
@@ -573,16 +912,22 @@ namespace DesktopPlus
                 if (Math.Abs(diff.X) > TabDragThreshold || Math.Abs(diff.Y) > TabDragThreshold)
                 {
                     _isTabDragPending = false;
-                    if (movementMode == "titlebar" && !IsTabDetachModifierPressed())
-                    {
-                        // In titlebar mode, dragging tabs should move the panel.
-                        // Hold Ctrl to force tab detach/reorder drag.
-                        BeginManualWindowDrag(this);
-                    }
-                    else
-                    {
-                        StartTabDrag(switchIndex);
-                    }
+                    BeginTabReorderDrag(switchIndex, border);
+                }
+            };
+
+            border.LostMouseCapture += (_, _) =>
+            {
+                if (_isTabReorderDragging && ReferenceEquals(_tabReorderSource, border))
+                {
+                    FinalizeTabReorderDrag();
+                    return;
+                }
+
+                if (_tabDragIndex == switchIndex)
+                {
+                    _isTabDragPending = false;
+                    _tabDragIndex = -1;
                 }
             };
 
@@ -841,19 +1186,155 @@ namespace DesktopPlus
             tabItem.BeginAnimation(UIElement.OpacityProperty, fadeAnim);
         }
 
-        // ---- Tab Drag & Drop: detach/merge tabs ----
+        // ---- Tab reorder via mouse capture (same-panel) ----
 
-        private void StartTabDrag(int tabIndex)
+        private void BeginTabReorderDrag(int tabIndex, Border sourceBorder)
         {
             if (tabIndex < 0 || tabIndex >= _tabs.Count) return;
-            if (_tabs.Count <= 1) return; // can't detach the only tab
+            if (GetVisibleTabCount() <= 1) return;
+            if (Enum.TryParse<PanelKind>(_tabs[tabIndex].PanelType, true, out var kind) &&
+                kind == PanelKind.RecycleBin)
+            {
+                return;
+            }
+
+            _isTabReorderDragging = true;
+            _tabReorderSource = sourceBorder;
+            _tabReorderSourceIndex = tabIndex;
+            _tabDragIndex = -1;
+            _isTabDragPending = false;
+
+            sourceBorder.Opacity = 0.72;
+            System.Windows.Controls.Panel.SetZIndex(sourceBorder, 3);
+
+            if (!sourceBorder.IsMouseCaptured)
+            {
+                sourceBorder.CaptureMouse();
+            }
+        }
+
+        private void UpdateTabReorderDrag(System.Windows.Input.MouseEventArgs e)
+        {
+            if (!_isTabReorderDragging || _tabReorderSource == null || TabBarPanel == null) return;
+
+            Point posInTabBar = e.GetPosition(TabBarPanel);
+
+            // If mouse moves far enough vertically, escalate to cross-panel DragDrop
+            if (Math.Abs(posInTabBar.Y) > TabDragDetachYThreshold ||
+                Math.Abs(posInTabBar.Y - TabBarPanel.ActualHeight) > TabDragDetachYThreshold)
+            {
+                int sourceIndex = _tabReorderSourceIndex;
+                var sourceBorder = _tabReorderSource;
+
+                // Clean up reorder state first
+                ClearTabDragPreview();
+                _tabReorderSource.Opacity = 1;
+                System.Windows.Controls.Panel.SetZIndex(_tabReorderSource, 0);
+                _isTabReorderDragging = false;
+                _tabReorderSource = null;
+                _tabReorderSourceIndex = -1;
+
+                if (sourceBorder.IsMouseCaptured)
+                {
+                    sourceBorder.ReleaseMouseCapture();
+                }
+
+                // Escalate to WPF DragDrop for cross-panel
+                StartTabDrag(sourceIndex, sourceBorder);
+                return;
+            }
+
+            // Calculate insert index using accumulated widths (not TranslatePoint)
+            // to avoid animation-affected positions causing laggy/incorrect swaps
+            var tabBorders = GetTabBarTabBorders();
+            if (tabBorders.Count == 0) return;
+
+            int insertIndex = _tabReorderSourceIndex;
+            double mouseX = posInTabBar.X;
+
+            double runningX = 0;
+            for (int i = 0; i < tabBorders.Count; i++)
+            {
+                double tabWidth = tabBorders[i].ActualWidth;
+                double tabEnd = runningX + tabWidth;
+
+                if (mouseX < tabEnd || i == tabBorders.Count - 1)
+                {
+                    if (tabBorders[i].Tag is int rawIndex)
+                    {
+                        if (rawIndex > _tabReorderSourceIndex)
+                        {
+                            insertIndex = Math.Min(_tabs.Count, rawIndex + 1);
+                        }
+                        else if (rawIndex < _tabReorderSourceIndex)
+                        {
+                            insertIndex = rawIndex;
+                        }
+                        else
+                        {
+                            insertIndex = _tabReorderSourceIndex;
+                        }
+                    }
+                    break;
+                }
+
+                runningX = tabEnd;
+            }
+
+            var payload = new TabDragPayload
+            {
+                SourcePanelId = PanelId,
+                TabIndex = _tabReorderSourceIndex,
+                DraggedWidth = _tabReorderSource.ActualWidth > 0 ? _tabReorderSource.ActualWidth : 124,
+            };
+            ApplyTabDragPreview(insertIndex, payload);
+        }
+
+        private void FinalizeTabReorderDrag()
+        {
+            if (!_isTabReorderDragging || _tabReorderSource == null) return;
+
+            int sourceIndex = _tabReorderSourceIndex;
+            int dropIndex = _tabInsertIndex >= 0 ? _tabInsertIndex : sourceIndex;
+            var sourceBorder = _tabReorderSource;
+
+            // Clear state BEFORE ReleaseMouseCapture to prevent re-entrancy
+            // (ReleaseMouseCapture fires LostMouseCapture synchronously which
+            // would call FinalizeTabReorderDrag again, causing double ReorderTab)
+            _isTabReorderDragging = false;
+            _tabReorderSource = null;
+            _tabReorderSourceIndex = -1;
+
+            // Restore visual state
+            sourceBorder.Opacity = 1;
+            System.Windows.Controls.Panel.SetZIndex(sourceBorder, 0);
+            if (sourceBorder.IsMouseCaptured)
+            {
+                sourceBorder.ReleaseMouseCapture();
+            }
+
+            ClearTabDragPreview();
+
+            if (dropIndex != sourceIndex && dropIndex >= 0)
+            {
+                ReorderTab(sourceIndex, dropIndex);
+            }
+        }
+
+        // ---- Tab Drag & Drop: detach/merge tabs (cross-panel via WPF DragDrop) ----
+
+        private void StartTabDrag(int tabIndex, Border sourceBorder)
+        {
+            if (tabIndex < 0 || tabIndex >= _tabs.Count) return;
+            if (GetVisibleTabCount() <= 1) return; // can't detach the only visible tab
+            if (Enum.TryParse<PanelKind>(_tabs[tabIndex].PanelType, true, out var kind) &&
+                kind == PanelKind.RecycleBin)
+            {
+                return;
+            }
 
             SaveActiveTabState();
             var tabData = _tabs[tabIndex];
-
-            // Create a ghost window that follows the cursor
-            _tabDragGhost = CreateTabDragGhost(tabData.TabName);
-            _tabDragGhost.Show();
 
             // Package tab data for drag — store in static field so all panels can access it
             var payload = new TabDragPayload
@@ -861,6 +1342,7 @@ namespace DesktopPlus
                 SourcePanelId = PanelId,
                 TabIndex = tabIndex,
                 TabData = tabData,
+                DraggedWidth = GetTabDragWidth(tabIndex),
             };
             _activeTabDragPayload = payload;
 
@@ -868,17 +1350,36 @@ namespace DesktopPlus
             // Use a simple string marker so GetDataPresent works across windows
             dataObj.SetData(TabDragFormat, "tab");
 
+            // Show floating drag adorner with tab name
+            var adorner = CreateTabDragAdorner(tabData.TabName ?? "");
+            adorner.Show();
+            _activeTabDragAdorner = adorner;
+
+            // Override cursor during drag via GiveFeedback
+            void OnGiveFeedback(object s, System.Windows.GiveFeedbackEventArgs gfArgs)
+            {
+                gfArgs.UseDefaultCursors = false;
+                System.Windows.Input.Mouse.SetCursor(System.Windows.Input.Cursors.Hand);
+                gfArgs.Handled = true;
+
+                // Update adorner position
+                var screenPos = GetMouseScreenPosition();
+                adorner.Left = screenPos.X + 12;
+                adorner.Top = screenPos.Y + 16;
+            }
+
+            sourceBorder.GiveFeedback += OnGiveFeedback;
+
             // Start WPF DragDrop — this blocks until drop completes
-            var result = System.Windows.DragDrop.DoDragDrop(this, dataObj, System.Windows.DragDropEffects.Move);
+            var result = System.Windows.DragDrop.DoDragDrop(sourceBorder, dataObj, System.Windows.DragDropEffects.Move);
+
+            sourceBorder.GiveFeedback -= OnGiveFeedback;
+            adorner.Close();
+            _activeTabDragAdorner = null;
 
             // Clean up
             _activeTabDragPayload = null;
-            if (_tabDragGhost != null)
-            {
-                _tabDragGhost.Close();
-                _tabDragGhost = null;
-            }
-
+            ClearTabDragPreviewAcrossPanels();
             if (result == System.Windows.DragDropEffects.None)
             {
                 // Dropped outside any panel — detach to a new panel
@@ -888,64 +1389,61 @@ namespace DesktopPlus
             // (either reordered within this panel or detached+inserted into another panel)
         }
 
-        private Window CreateTabDragGhost(string tabName)
+        private static Point GetMouseScreenPosition()
         {
-            var ghost = new Window
+            GetCursorPos(out var pt);
+            return new Point(pt.X, pt.Y);
+        }
+
+        private static Window CreateTabDragAdorner(string tabName)
+        {
+            var label = new TextBlock
             {
+                Text = tabName,
+                Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(230, 235, 245)),
+                FontSize = 12,
+                FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+                FontWeight = FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 160,
+            };
+
+            var pill = new Border
+            {
+                Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(230, 42, 48, 60)),
+                BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(160, 80, 90, 110)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(12, 6, 12, 6),
+                Child = label,
+                Effect = new System.Windows.Media.Effects.DropShadowEffect
+                {
+                    BlurRadius = 12,
+                    ShadowDepth = 2,
+                    Opacity = 0.45,
+                    Color = System.Windows.Media.Colors.Black
+                }
+            };
+
+            var adornerWindow = new Window
+            {
+                Content = pill,
+                SizeToContent = SizeToContent.WidthAndHeight,
                 WindowStyle = WindowStyle.None,
                 AllowsTransparency = true,
                 Background = System.Windows.Media.Brushes.Transparent,
                 Topmost = true,
                 ShowInTaskbar = false,
                 IsHitTestVisible = false,
-                SizeToContent = SizeToContent.WidthAndHeight,
-                ShowActivated = false,
+                ResizeMode = ResizeMode.NoResize,
             };
 
-            var border = new Border
-            {
-                Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xDD, 0x1A, 0x20, 0x2A)),
-                BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x6F, 0x8E, 0xFF)),
-                BorderThickness = new Thickness(1.5),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(12, 6, 12, 6),
-                Child = new TextBlock
-                {
-                    Text = tabName,
-                    Foreground = System.Windows.Media.Brushes.White,
-                    FontSize = 13,
-                    FontWeight = FontWeights.SemiBold,
-                },
-            };
+            var screenPos = GetMouseScreenPosition();
+            adornerWindow.Left = screenPos.X + 12;
+            adornerWindow.Top = screenPos.Y + 16;
 
-            ghost.Content = border;
-
-            // Follow mouse position using timer
-            var timer = new System.Windows.Threading.DispatcherTimer
-            {
-                Interval = TimeSpan.FromMilliseconds(16)
-            };
-            timer.Tick += (_, __) =>
-            {
-                if (!ghost.IsVisible) { timer.Stop(); return; }
-                var screenPos = GetMouseScreenPosition();
-                ghost.Left = screenPos.X + 12;
-                ghost.Top = screenPos.Y + 12;
-            };
-            timer.Start();
-
-            // Position initially
-            var initialPos = GetMouseScreenPosition();
-            ghost.Left = initialPos.X + 12;
-            ghost.Top = initialPos.Y + 12;
-
-            return ghost;
-        }
-
-        private static Point GetMouseScreenPosition()
-        {
-            GetCursorPos(out var pt);
-            return new Point(pt.X, pt.Y);
+            return adornerWindow;
         }
 
         private void DetachTabToNewPanel(int tabIndex)
@@ -962,6 +1460,7 @@ namespace DesktopPlus
                 {
                     newPanel.Show();
                     MainWindow.SaveSettings();
+                    MainWindow.NotifyPanelsChanged();
                 }
             }
         }
@@ -990,12 +1489,24 @@ namespace DesktopPlus
 
         private void SyncSingleTabHeaderTitle()
         {
-            if (_tabs.Count != 1)
+            int visibleTabCount = GetVisibleTabCount();
+            if (visibleTabCount == 0)
             {
                 return;
             }
 
-            string singleTabName = _tabs[0].TabName?.Trim() ?? "";
+            if (visibleTabCount != 1)
+            {
+                return;
+            }
+
+            int visibleIndex = FindFirstVisibleTabIndex();
+            if (visibleIndex < 0)
+            {
+                return;
+            }
+
+            string singleTabName = _tabs[visibleIndex].TabName?.Trim() ?? "";
             if (string.IsNullOrWhiteSpace(singleTabName))
             {
                 singleTabName = MainWindow.GetString("Loc.PanelDefaultTitle");
@@ -1010,6 +1521,11 @@ namespace DesktopPlus
 
         private void AddTabButton_Click(object sender, RoutedEventArgs e)
         {
+            if (HasRecycleBinTab())
+            {
+                return;
+            }
+
             var dlg = new WinForms.FolderBrowserDialog();
             var result = dlg.ShowDialog();
             if (result == WinForms.DialogResult.OK && !string.IsNullOrWhiteSpace(dlg.SelectedPath))
@@ -1025,9 +1541,47 @@ namespace DesktopPlus
 
         private bool IsHeaderTabDropCandidate(System.Windows.DragEventArgs e)
         {
-            if (e.Data.GetDataPresent(TabDragFormat)) return true;
-            if (!e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop)) return false;
+            if (TryDataObjectHasFormat(e.Data, TabDragFormat)) return true;
+            if (!TryDataObjectHasFormat(e.Data, System.Windows.DataFormats.FileDrop)) return false;
             return ExtractFileDropPaths(e.Data).Any(p => Directory.Exists(p));
+        }
+
+        private int GetRawInsertIndexFromVisualPosition(int visualPosition)
+        {
+            var visibleIndices = GetVisibleTabIndices();
+            if (visibleIndices.Count == 0)
+            {
+                return _tabs.Count;
+            }
+
+            if (visualPosition <= 0)
+            {
+                return visibleIndices[0];
+            }
+
+            if (visualPosition >= visibleIndices.Count)
+            {
+                return _tabs.Count;
+            }
+
+            return visibleIndices[visualPosition];
+        }
+
+        private int GetVisualPositionFromRawInsertIndex(int rawInsertIndex)
+        {
+            var visibleIndices = GetVisibleTabIndices();
+            int visualPosition = 0;
+            foreach (int visibleIndex in visibleIndices)
+            {
+                if (visibleIndex >= rawInsertIndex)
+                {
+                    return visualPosition;
+                }
+
+                visualPosition++;
+            }
+
+            return visualPosition;
         }
 
         /// <summary>
@@ -1039,27 +1593,245 @@ namespace DesktopPlus
             if (TabBarPanel == null || _tabs.Count == 0)
                 return _tabs.Count;
 
+            var tabBorders = GetTabBarTabBorders();
+            if (tabBorders.Count == 0)
+            {
+                return _tabs.Count;
+            }
+
             var mousePos = e.GetPosition(TabBarPanel);
             double mouseX = mousePos.X;
-            int tabIndex = 0;
 
-            for (int i = 0; i < TabBarPanel.Children.Count; i++)
+            double runningX = 0;
+            for (int i = 0; i < tabBorders.Count; i++)
             {
-                var child = TabBarPanel.Children[i];
-                // Skip the insert indicator
-                if (child == _tabInsertIndicator) continue;
-
-                if (child is Border tabBorder)
+                double tabWidth = tabBorders[i].ActualWidth;
+                double tabCenter = runningX + tabWidth / 2;
+                if (mouseX < tabCenter && tabBorders[i].Tag is int rawIndex)
                 {
-                    var tabPos = tabBorder.TranslatePoint(new Point(0, 0), TabBarPanel);
-                    double tabCenter = tabPos.X + tabBorder.ActualWidth / 2;
-                    if (mouseX < tabCenter)
-                        return tabIndex;
-                    tabIndex++;
+                    return rawIndex;
                 }
+                runningX += tabWidth;
             }
 
             return _tabs.Count;
+        }
+
+        private int GetLiveTabInsertIndex(System.Windows.DragEventArgs e, TabDragPayload? payload)
+        {
+            if (TabBarPanel == null || _tabs.Count == 0)
+            {
+                return _tabs.Count;
+            }
+
+            var tabBorders = GetTabBarTabBorders();
+            if (tabBorders.Count == 0)
+            {
+                return _tabs.Count;
+            }
+
+            var mousePos = e.GetPosition(TabBarPanel);
+            double mouseX = mousePos.X;
+
+            double runningX = 0;
+            for (int i = 0; i < tabBorders.Count; i++)
+            {
+                double tabWidth = tabBorders[i].ActualWidth;
+                double tabMid = runningX + (tabWidth * 0.5);
+                if (mouseX < tabMid && tabBorders[i].Tag is int rawIndex)
+                {
+                    return rawIndex;
+                }
+                runningX += tabWidth;
+            }
+
+            return _tabs.Count;
+        }
+
+        private double GetTabDragWidth(int tabIndex)
+        {
+            Border? border = GetTabBarTabBorders()
+                .FirstOrDefault(candidate => candidate.Tag is int index && index == tabIndex);
+            if (border != null && border.ActualWidth > 0)
+            {
+                return border.ActualWidth;
+            }
+
+            return 124;
+        }
+
+        private List<Border> GetTabBarTabBorders()
+        {
+            return TabBarPanel?.Children
+                .OfType<Border>()
+                .Where(border => border.Tag is int)
+                .OrderBy(border => (int)border.Tag)
+                .ToList() ?? new List<Border>();
+        }
+
+        private void ApplyTabDragPreview(int insertIndex, TabDragPayload? payload)
+        {
+            if (TabBarPanel == null)
+            {
+                return;
+            }
+
+            if (insertIndex == _tabInsertIndex)
+                return;
+
+            HideInsertIndicator();
+            TabDropPreview.Visibility = Visibility.Collapsed;
+            _tabInsertIndex = insertIndex;
+
+            var tabBorders = GetTabBarTabBorders();
+            if (tabBorders.Count == 0)
+            {
+                return;
+            }
+
+            bool samePanel = payload != null &&
+                string.Equals(payload.SourcePanelId, PanelId, StringComparison.OrdinalIgnoreCase);
+            int sourceIndex = samePanel && payload != null ? payload.TabIndex : -1;
+            double draggedWidth = payload?.DraggedWidth ?? 124;
+
+            Border? sourceBorder = null;
+            if (samePanel)
+            {
+                sourceBorder = tabBorders.FirstOrDefault(border => border.Tag is int idx && idx == sourceIndex);
+                if (sourceBorder != null && sourceBorder.ActualWidth > 0)
+                {
+                    draggedWidth = sourceBorder.ActualWidth;
+                }
+            }
+
+            foreach (Border border in tabBorders)
+            {
+                ApplyTabBarItemOffset(border, 0);
+                border.Opacity = 1;
+                System.Windows.Controls.Panel.SetZIndex(border, 0);
+            }
+
+            if (samePanel && sourceBorder != null)
+            {
+                sourceBorder.Opacity = 0.72;
+                System.Windows.Controls.Panel.SetZIndex(sourceBorder, 3);
+
+                if (insertIndex > sourceIndex + 1)
+                {
+                    double sourceOffset = 0;
+                    foreach (Border impacted in tabBorders
+                        .Where(border => border.Tag is int idx && idx > sourceIndex && idx < insertIndex))
+                    {
+                        sourceOffset += impacted.ActualWidth;
+                        ApplyTabBarItemOffset(impacted, -draggedWidth);
+                    }
+
+                    ApplyTabBarItemOffset(sourceBorder, sourceOffset);
+                    return;
+                }
+
+                if (insertIndex < sourceIndex)
+                {
+                    double sourceOffset = 0;
+                    foreach (Border impacted in tabBorders
+                        .Where(border => border.Tag is int idx && idx >= insertIndex && idx < sourceIndex))
+                    {
+                        sourceOffset += impacted.ActualWidth;
+                        ApplyTabBarItemOffset(impacted, draggedWidth);
+                    }
+
+                    ApplyTabBarItemOffset(sourceBorder, -sourceOffset);
+                    return;
+                }
+
+                ApplyTabBarItemOffset(sourceBorder, 0);
+                return;
+            }
+
+            foreach (Border impacted in tabBorders
+                .Where(border => border.Tag is int idx && idx >= insertIndex))
+            {
+                ApplyTabBarItemOffset(impacted, draggedWidth);
+            }
+        }
+
+        private void ClearTabDragPreview()
+        {
+            foreach (Border border in GetTabBarTabBorders())
+            {
+                ApplyTabBarItemOffset(border, 0);
+                border.Opacity = 1;
+                System.Windows.Controls.Panel.SetZIndex(border, 0);
+            }
+
+            _tabInsertIndex = -1;
+        }
+
+        private static void ClearTabDragPreviewAcrossPanels()
+        {
+            foreach (DesktopPanel panel in System.Windows.Application.Current?.Windows.OfType<DesktopPanel>() ?? Enumerable.Empty<DesktopPanel>())
+            {
+                panel.ClearTabDragPreview();
+                panel.HideInsertIndicator();
+                if (panel.TabDropPreview != null)
+                {
+                    panel.TabDropPreview.Visibility = Visibility.Collapsed;
+                }
+            }
+        }
+
+        private static void ApplyTabBarItemOffset(Border border, double targetOffset)
+        {
+            TranslateTransform? transform = GetTabBarItemTransform(border);
+            if (transform == null)
+            {
+                return;
+            }
+
+            transform.BeginAnimation(
+                TranslateTransform.XProperty,
+                new DoubleAnimation(targetOffset, TimeSpan.FromMilliseconds(TabDragPreviewAnimationMs))
+                {
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut },
+                    FillBehavior = FillBehavior.HoldEnd
+                },
+                HandoffBehavior.SnapshotAndReplace);
+        }
+
+        private static TranslateTransform? GetTabBarItemTransform(Border border)
+        {
+            if (border.RenderTransform is TranslateTransform translate)
+            {
+                return translate;
+            }
+
+            if (border.RenderTransform is TransformGroup existingGroup)
+            {
+                TranslateTransform? existing = existingGroup.Children.OfType<TranslateTransform>().FirstOrDefault();
+                if (existing != null)
+                {
+                    return existing;
+                }
+
+                var appended = new TranslateTransform();
+                existingGroup.Children.Add(appended);
+                return appended;
+            }
+
+            var created = new TranslateTransform();
+            if (border.RenderTransform != null && border.RenderTransform != Transform.Identity)
+            {
+                var group = new TransformGroup();
+                group.Children.Add(border.RenderTransform.CloneCurrentValue());
+                group.Children.Add(created);
+                border.RenderTransform = group;
+            }
+            else
+            {
+                border.RenderTransform = created;
+            }
+
+            return created;
         }
 
         /// <summary>
@@ -1088,9 +1860,7 @@ namespace DesktopPlus
             if (TabBarPanel.Children.Contains(_tabInsertIndicator))
                 TabBarPanel.Children.Remove(_tabInsertIndicator);
 
-            // Calculate the visual insert position in the StackPanel
-            // Tab items are at indices 0.._tabs.Count-1 in TabBarPanel
-            int visualIndex = Math.Min(insertIndex, TabBarPanel.Children.Count);
+            int visualIndex = Math.Min(GetVisualPositionFromRawInsertIndex(insertIndex), TabBarPanel.Children.Count);
             TabBarPanel.Children.Insert(visualIndex, _tabInsertIndicator);
             _tabInsertIndex = insertIndex;
         }
@@ -1109,12 +1879,12 @@ namespace DesktopPlus
         {
             if (!IsHeaderTabDropCandidate(e)) return;
 
-            if (e.Data.GetDataPresent(TabDragFormat))
+            if (TryDataObjectHasFormat(e.Data, TabDragFormat))
             {
-                if (_tabs.Count > 1)
+                var payload = _activeTabDragPayload;
+                if (GetVisibleTabCount() > 1)
                 {
-                    int insertIdx = GetTabInsertIndex(e);
-                    ShowInsertIndicator(insertIdx);
+                    ApplyTabDragPreview(GetLiveTabInsertIndex(e, payload), payload);
                 }
                 else
                 {
@@ -1133,6 +1903,7 @@ namespace DesktopPlus
 
         private void TabBar_DragLeave(object sender, System.Windows.DragEventArgs e)
         {
+            ClearTabDragPreview();
             HideInsertIndicator();
             TabDropPreview.Visibility = Visibility.Collapsed;
             e.Handled = true;
@@ -1142,28 +1913,13 @@ namespace DesktopPlus
         {
             if (!IsHeaderTabDropCandidate(e)) return;
 
-            if (e.Data.GetDataPresent(TabDragFormat))
+            if (TryDataObjectHasFormat(e.Data, TabDragFormat))
             {
                 var payload = _activeTabDragPayload;
 
-                if (_tabs.Count > 1)
+                if (GetVisibleTabCount() > 1)
                 {
-                    int insertIdx = GetTabInsertIndex(e);
-
-                    // For same-panel reorder, skip indicator right next to the dragged tab
-                    if (payload != null &&
-                        string.Equals(payload.SourcePanelId, PanelId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        if (insertIdx == payload.TabIndex || insertIdx == payload.TabIndex + 1)
-                        {
-                            HideInsertIndicator();
-                            e.Effects = System.Windows.DragDropEffects.Move;
-                            e.Handled = true;
-                            return;
-                        }
-                    }
-
-                    ShowInsertIndicator(insertIdx);
+                    ApplyTabDragPreview(GetLiveTabInsertIndex(e, payload), payload);
                 }
                 else
                 {
@@ -1182,12 +1938,15 @@ namespace DesktopPlus
 
         private void TabBar_Drop(object sender, System.Windows.DragEventArgs e)
         {
-            int dropIndex = _tabInsertIndex >= 0 ? _tabInsertIndex : GetTabInsertIndex(e);
+            int dropIndex = _tabInsertIndex >= 0
+                ? _tabInsertIndex
+                : GetLiveTabInsertIndex(e, _activeTabDragPayload);
+            ClearTabDragPreview();
             HideInsertIndicator();
             TabDropPreview.Visibility = Visibility.Collapsed;
 
             // Handle tab drop
-            if (e.Data.GetDataPresent(TabDragFormat))
+            if (TryDataObjectHasFormat(e.Data, TabDragFormat))
             {
                 var payload = _activeTabDragPayload;
                 if (payload != null)
@@ -1224,7 +1983,7 @@ namespace DesktopPlus
             }
 
             // Handle folder drop as new tab
-            if (!e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
+            if (!TryDataObjectHasFormat(e.Data, System.Windows.DataFormats.FileDrop))
             {
                 e.Handled = true;
                 return;
@@ -1238,8 +1997,10 @@ namespace DesktopPlus
                     SaveActiveTabState();
                     var tab = new PanelTabData
                     {
+                        PanelId = CreateLogicalTabPanelId(),
                         TabId = Guid.NewGuid().ToString("N"),
                         TabName = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) ?? MainWindow.GetString("Loc.TabNewTab"),
+                        IsHidden = false,
                         PanelType = PanelKind.Folder.ToString(),
                         FolderPath = path,
                         DefaultFolderPath = path,
@@ -1290,5 +2051,6 @@ namespace DesktopPlus
         public string SourcePanelId { get; set; } = "";
         public int TabIndex { get; set; }
         public PanelTabData TabData { get; set; } = new PanelTabData();
+        public double DraggedWidth { get; set; }
     }
 }

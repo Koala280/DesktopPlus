@@ -24,6 +24,10 @@
         <SolidColorBrush x:Key="Muted" Color="#A7B0C0"/>
         <SolidColorBrush x:Key="TextPrimary" Color="#F2F5FA"/>
         <SolidColorBrush x:Key="TabAccent" Color="#E2C36B"/>
+        <SolidColorBrush x:Key="RecycleBinButtonBackground" Color="#2D271F"/>
+        <SolidColorBrush x:Key="RecycleBinButtonBorder" Color="#80653A"/>
+        <SolidColorBrush x:Key="RecycleBinButtonHoverBorder" Color="#D6A65A"/>
+        <SolidColorBrush x:Key="RecycleBinButtonForeground" Color="#F3E2BD"/>
         <LinearGradientBrush x:Key="AppBackgroundBrush" StartPoint="0,0" EndPoint="0,1">
             <GradientStop Color="#1E232B" Offset="0"/>
             <GradientStop Color="#171A20" Offset="1"/>
@@ -433,6 +437,51 @@
         <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
             <Setter Property="Background" Value="{StaticResource Primary}"/>
             <Setter Property="BorderBrush" Value="{StaticResource PrimaryDarker}"/>
+        </Style>
+
+        <Style x:Key="RecycleBinButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource RecycleBinButtonForeground}"/>
+            <Setter Property="Background" Value="{StaticResource RecycleBinButtonBackground}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource RecycleBinButtonBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource RecycleBinButtonHoverBorder}"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#352D22"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="RenderTransform">
+                                    <Setter.Value>
+                                        <ScaleTransform ScaleX="0.98" ScaleY="0.98"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <Style x:Key="CompactGhostButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
@@ -1075,6 +1124,14 @@
                                             HorizontalAlignment="Left"
                                             Click="CheckUpdatesButton_Click"/>
 
+                                    <Button x:Name="RestoreBackupButton"
+                                            Content="{DynamicResource Loc.GeneralRestoreBackupButton}"
+                                            Style="{StaticResource GhostButton}"
+                                            Padding="10,6"
+                                            Margin="0,8,0,0"
+                                            HorizontalAlignment="Left"
+                                            Click="RestoreBackupButton_Click"/>
+
                                     <TextBlock x:Name="CurrentVersionText"
                                                Foreground="{StaticResource Muted}"
                                                FontSize="11"
@@ -1122,6 +1179,10 @@
                                                     Padding="10,6"
                                                     Margin="6,0,0,0"
                                                     Click="HideAllPanels_Click"/>
+                                            <Button Content="{DynamicResource Loc.PanelsRecycleBin}"
+                                                    Style="{StaticResource RecycleBinButton}"
+                                                    Margin="6,0,0,0"
+                                                    Click="OpenRecycleBinPanel_Click"/>
                                             <Button Content="{DynamicResource Loc.PanelsNew}"
                                                     Style="{StaticResource PrimaryButton}"
                                                     Padding="12,6"
@@ -1420,7 +1481,7 @@
                                                     Padding="12,6"
                                                     Margin="0,0,6,0"
                                                     Click="DeletePreset_Click"/>
-                                            <Button Content="{DynamicResource Loc.ThemesResetDefaults}"
+                                            <Button Content="{DynamicResource Loc.ThemesResetDefaultsFull}"
                                                     Style="{StaticResource GhostButton}"
                                                     Padding="12,6"
                                                     Margin="0,0,0,0"
@@ -1449,25 +1510,25 @@
                                                 BorderThickness="1"
                                                 Margin="0,0,0,10">
                                             <StackPanel>
-                                                <TextBlock Text="Bereich"
+                                                <TextBlock Text="{DynamicResource Loc.ThemesSection}"
                                                            FontSize="12"
                                                            Foreground="{StaticResource Muted}"/>
                                                 <UniformGrid Columns="3"
                                                              Margin="0,8,0,0">
                                                     <Button x:Name="ThemeSectionHeaderButton"
-                                                            Content="Header"
+                                                            Content="{DynamicResource Loc.ThemesSectionHeader}"
                                                             Tag="header"
                                                             Style="{StaticResource PrimaryButton}"
                                                             Margin="0,0,6,0"
                                                             Click="ThemeSectionButton_Click"/>
                                                     <Button x:Name="ThemeSectionBodyButton"
-                                                            Content="Body"
+                                                            Content="{DynamicResource Loc.ThemesSectionBody}"
                                                             Tag="body"
                                                             Style="{StaticResource GhostButton}"
                                                             Margin="0,0,6,0"
                                                             Click="ThemeSectionButton_Click"/>
                                                     <Button x:Name="ThemeSectionTabsButton"
-                                                            Content="Tabs"
+                                                            Content="{DynamicResource Loc.ThemesSectionTabs}"
                                                             Tag="tabs"
                                                             Style="{StaticResource GhostButton}"
                                                             Click="ThemeSectionButton_Click"/>
@@ -2490,6 +2551,12 @@
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
                                         </Grid.RowDefinitions>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="150"/>
@@ -2508,32 +2575,50 @@
                                         <TextBlock Grid.Row="3" Grid.Column="0" Text="Ctrl + V" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
                                         <TextBlock Grid.Row="3" Grid.Column="1" Text="{DynamicResource Loc.ShortcutPasteSelection}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
 
-                                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Ctrl + Mouse Wheel" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
-                                        <TextBlock Grid.Row="4" Grid.Column="1" Text="{DynamicResource Loc.ShortcutPanelZoom}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+                                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Ctrl + A" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="4" Grid.Column="1" Text="{DynamicResource Loc.ShortcutSelectAll}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
 
-                                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Ctrl/Alt + Click" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
-                                        <TextBlock Grid.Row="5" Grid.Column="1" Text="{DynamicResource Loc.ShortcutAdditiveSelection}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+                                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Ctrl + F" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="5" Grid.Column="1" Text="{DynamicResource Loc.ShortcutFocusSearch}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
 
-                                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Shift + Click" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
-                                        <TextBlock Grid.Row="6" Grid.Column="1" Text="{DynamicResource Loc.ShortcutRangeSelection}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+                                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Enter" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="6" Grid.Column="1" Text="{DynamicResource Loc.ShortcutOpenSelection}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
 
-                                        <TextBlock Grid.Row="7" Grid.Column="0" Text="Shift + Right Click" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
-                                        <TextBlock Grid.Row="7" Grid.Column="1" Text="{DynamicResource Loc.ShortcutClassicContextMenu}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+                                        <TextBlock Grid.Row="7" Grid.Column="0" Text="F2" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="7" Grid.Column="1" Text="{DynamicResource Loc.ShortcutRenameSelection}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
 
-                                        <TextBlock Grid.Row="8" Grid.Column="0" Text="Ctrl + Drag" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
-                                        <TextBlock Grid.Row="8" Grid.Column="1" Text="{DynamicResource Loc.ShortcutDragCopy}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+                                        <TextBlock Grid.Row="8" Grid.Column="0" Text="F5" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="8" Grid.Column="1" Text="{DynamicResource Loc.ShortcutRefreshPanel}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
 
-                                        <TextBlock Grid.Row="9" Grid.Column="0" Text="Shift + Drag" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
-                                        <TextBlock Grid.Row="9" Grid.Column="1" Text="{DynamicResource Loc.ShortcutDragMove}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+                                        <TextBlock Grid.Row="9" Grid.Column="0" Text="Backspace / Alt + Up" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="9" Grid.Column="1" Text="{DynamicResource Loc.ShortcutParentFolder}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
 
-                                        <TextBlock Grid.Row="10" Grid.Column="0" Text="Ctrl + Shift + Drag" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
-                                        <TextBlock Grid.Row="10" Grid.Column="1" Text="{DynamicResource Loc.ShortcutDragLink}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+                                        <TextBlock Grid.Row="10" Grid.Column="0" Text="Ctrl + Mouse Wheel" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="10" Grid.Column="1" Text="{DynamicResource Loc.ShortcutPanelZoom}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
 
-                                        <TextBlock Grid.Row="11" Grid.Column="0" Text="Esc" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
-                                        <TextBlock Grid.Row="11" Grid.Column="1" Text="{DynamicResource Loc.ShortcutTrayClose}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+                                        <TextBlock Grid.Row="11" Grid.Column="0" Text="Ctrl/Alt + Click" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="11" Grid.Column="1" Text="{DynamicResource Loc.ShortcutAdditiveSelection}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
 
-                                        <TextBlock Grid.Row="12" Grid.Column="0" Text="Double Click Resize Grip" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
-                                        <TextBlock Grid.Row="12" Grid.Column="1" Text="{DynamicResource Loc.ShortcutFitContent}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+                                        <TextBlock Grid.Row="12" Grid.Column="0" Text="Shift + Click" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="12" Grid.Column="1" Text="{DynamicResource Loc.ShortcutRangeSelection}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="13" Grid.Column="0" Text="Shift + Right Click" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="13" Grid.Column="1" Text="{DynamicResource Loc.ShortcutClassicContextMenu}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="14" Grid.Column="0" Text="Ctrl + Drag" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="14" Grid.Column="1" Text="{DynamicResource Loc.ShortcutDragCopy}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="15" Grid.Column="0" Text="Shift + Drag" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="15" Grid.Column="1" Text="{DynamicResource Loc.ShortcutDragMove}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="16" Grid.Column="0" Text="Ctrl + Shift + Drag" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="16" Grid.Column="1" Text="{DynamicResource Loc.ShortcutDragLink}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="17" Grid.Column="0" Text="Esc" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="17" Grid.Column="1" Text="{DynamicResource Loc.ShortcutTrayClose}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
+
+                                        <TextBlock Grid.Row="18" Grid.Column="0" Text="Double Click Resize Grip" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
+                                        <TextBlock Grid.Row="18" Grid.Column="1" Text="{DynamicResource Loc.ShortcutFitContent}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
                                     </Grid>
                                 </StackPanel>
                             </Border>

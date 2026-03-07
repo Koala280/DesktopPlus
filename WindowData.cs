@@ -24,6 +24,7 @@ namespace DesktopPlus
         public bool ShowHidden { get; set; }
         public bool ShowParentNavigationItem { get; set; } = true;
         public bool ShowSettingsButton { get; set; } = true;
+        public bool ShowEmptyRecycleBinButton { get; set; } = true;
         public bool ExpandOnHover { get; set; } = false;
         public bool OpenFoldersExternally { get; set; }
         public bool OpenItemsOnSingleClick { get; set; }
@@ -34,14 +35,23 @@ namespace DesktopPlus
         public bool ShowMetadataCreated { get; set; }
         public bool ShowMetadataModified { get; set; } = true;
         public bool ShowMetadataDimensions { get; set; } = false;
+        public bool ShowMetadataAuthors { get; set; }
+        public bool ShowMetadataCategories { get; set; }
+        public bool ShowMetadataTags { get; set; }
+        public bool ShowMetadataTitle { get; set; }
         public List<string> MetadataOrder { get; set; } = new List<string>
         {
             "type",
             "size",
             "created",
             "modified",
-            "dimensions"
+            "dimensions",
+            "authors",
+            "categories",
+            "tags",
+            "title"
         };
+        public Dictionary<string, double> MetadataWidths { get; set; } = DesktopPanel.NormalizeMetadataWidths(null);
         public string MovementMode { get; set; } = "titlebar";
         public string SearchVisibilityMode { get; set; } = "always";
         public List<string> PinnedItems { get; set; } = new List<string>();

@@ -41,7 +41,12 @@ namespace DesktopPlus
         public bool showMetadataCreated = false;
         public bool showMetadataModified = true;
         public bool showMetadataDimensions = false;
-        public List<string> metadataOrder = new List<string> { "type", "size", "created", "modified", "dimensions" };
+        public bool showMetadataAuthors = false;
+        public bool showMetadataCategories = false;
+        public bool showMetadataTags = false;
+        public bool showMetadataTitle = false;
+        public List<string> metadataOrder = new List<string> { "name", "type", "size", "created", "modified", "dimensions", "authors", "categories", "tags", "title" };
+        public Dictionary<string, double> metadataWidths = NormalizeMetadataWidths(null);
         private bool _hoverTemporarilySuspendedByDoubleClick = false;
         private bool _hoverExpanded = false;
         private bool _hasHoverRestoreState = false;
@@ -57,6 +62,7 @@ namespace DesktopPlus
         private bool _isTemporarilyForeground;
         private bool _isDragMoveActive = false;
         private bool _isManualResizeActive = false;
+        private bool _wrapPanelWidthUpdateQueued = false;
         private UIElement? _dragHandle;
         private Point _dragStartMouseScreen;
         private Point _dragStartWindowPosition;
@@ -71,10 +77,14 @@ namespace DesktopPlus
         private CancellationTokenSource? _searchCts;
         private bool _deferSortUntilSearchComplete;
         private CancellationTokenSource? _folderLoadCts;
+        private CancellationTokenSource? _recycleBinLoadCts;
         private bool _useLightweightItemVisuals;
         private FileSystemWatcher? _folderContentWatcher;
         private FileSystemWatcher? _folderParentWatcher;
         private CancellationTokenSource? _folderWatcherRefreshCts;
+        private readonly object _pendingFolderWatcherChangesLock = new object();
+        private readonly List<FolderWatcherChange> _pendingFolderWatcherChanges = new List<FolderWatcherChange>();
+        private bool _folderWatcherRequiresFullRefresh;
         private double _pendingWheelZoomTarget = double.NaN;
         private System.Windows.Threading.DispatcherTimer? _wheelZoomApplyTimer;
         private bool _suppressSearchTextChanged = false;
@@ -91,18 +101,41 @@ namespace DesktopPlus
         public const string ViewModeIcons = "icons";
         public const string ViewModeDetails = "details";
         public const string ViewModePhotos = "photos";
+        public const string MetadataName = "name";
         public const string MetadataType = "type";
         public const string MetadataSize = "size";
         public const string MetadataCreated = "created";
         public const string MetadataModified = "modified";
         public const string MetadataDimensions = "dimensions";
+        public const string MetadataAuthors = "authors";
+        public const string MetadataCategories = "categories";
+        public const string MetadataTags = "tags";
+        public const string MetadataTitle = "title";
         private static readonly string[] DefaultMetadataOrder =
         {
+            MetadataName,
             MetadataType,
             MetadataSize,
             MetadataCreated,
             MetadataModified,
-            MetadataDimensions
+            MetadataDimensions,
+            MetadataAuthors,
+            MetadataCategories,
+            MetadataTags,
+            MetadataTitle
+        };
+        private static readonly string[] DetailColumnWidthKeys =
+        {
+            MetadataName,
+            MetadataType,
+            MetadataSize,
+            MetadataCreated,
+            MetadataModified,
+            MetadataDimensions,
+            MetadataAuthors,
+            MetadataCategories,
+            MetadataTags,
+            MetadataTitle
         };
         private const double HeaderSearchWidth = 154;
         private const double HeaderSearchSpacerWidth = 8;
@@ -191,10 +224,23 @@ namespace DesktopPlus
                 _folderLoadCts?.Cancel();
                 _folderLoadCts?.Dispose();
                 _folderLoadCts = null;
+                CancelPendingFolderSearchIndex();
+                _recycleBinLoadCts?.Cancel();
+                _recycleBinLoadCts?.Dispose();
+                _recycleBinLoadCts = null;
                 StopFolderWatchers();
+                StopRecycleBinWatchers();
+                _recycleBinRefreshCts?.Cancel();
+                _recycleBinRefreshCts?.Dispose();
+                _recycleBinRefreshCts = null;
                 _folderWatcherRefreshCts?.Cancel();
                 _folderWatcherRefreshCts?.Dispose();
                 _folderWatcherRefreshCts = null;
+                lock (_pendingFolderWatcherChangesLock)
+                {
+                    _pendingFolderWatcherChanges.Clear();
+                    _folderWatcherRequiresFullRefresh = false;
+                }
                 _pendingWheelZoomTarget = double.NaN;
                 if (_wheelZoomApplyTimer != null)
                 {
@@ -560,7 +606,7 @@ namespace DesktopPlus
                 return;
             }
 
-            bool hasMultipleTabs = _tabs.Count > 1;
+            bool hasMultipleTabs = GetVisibleTabCount() > 1;
             if (hasMultipleTabs)
             {
                 // Multi-tab headers blend into content without a divider.
@@ -998,11 +1044,6 @@ namespace DesktopPlus
         private void DesktopPanel_Activated(object? sender, EventArgs e)
         {
             SendPanelToBack();
-            if (SearchBox != null && SearchBox.IsKeyboardFocusWithin)
-            {
-                FocusManager.SetFocusedElement(this, this);
-                Keyboard.Focus(this);
-            }
         }
 
         private void DesktopPanel_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -1011,8 +1052,29 @@ namespace DesktopPlus
             if (_isCollapseAnimationRunning) return;
 
             ApplySearchVisibility(animate: false);
+            QueueWrapPanelWidthUpdate();
             SyncAnchoringFromCurrentBounds();
             MainWindow.SaveSettings();
+        }
+
+        private void QueueWrapPanelWidthUpdate()
+        {
+            if (_wrapPanelWidthUpdateQueued || !IsLoaded)
+            {
+                return;
+            }
+
+            _wrapPanelWidthUpdateQueued = true;
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _wrapPanelWidthUpdateQueued = false;
+                if (!IsLoaded)
+                {
+                    return;
+                }
+
+                UpdateWrapPanelWidth();
+            }), System.Windows.Threading.DispatcherPriority.Render);
         }
 
         private void ManualResizeGrip_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -1020,10 +1082,14 @@ namespace DesktopPlus
             if (e.ChangedButton != MouseButton.Left || e.LeftButton != MouseButtonState.Pressed) return;
             if (_isCollapseAnimationRunning || _isDragMoveActive) return;
 
-            // Double-click on the resize grip triggers the same behavior as "Fit to content".
+            // Double-click on the resize grip first fits width.
+            // If width is already optimal, the next double-click can fit height.
             if (e.ClickCount >= 2)
             {
-                FitToContent();
+                if (!FitWidthToContent())
+                {
+                    FitHeightToContent();
+                }
                 e.Handled = true;
                 return;
             }
@@ -1104,7 +1170,7 @@ namespace DesktopPlus
 
             Width = targetWidth;
             Height = Math.Min(targetHeight, maxHeightToBottom);
-            UpdateWrapPanelWidth();
+            QueueWrapPanelWidthUpdate();
         }
 
         private void ResizeHandle_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -1227,7 +1293,7 @@ namespace DesktopPlus
                     this.Top = targetTop;
                     this.Height = targetHeight;
                     SetContentLayerVisibility(true);
-                    Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Render);
+                    QueueWrapPanelWidthUpdate();
                     isContentVisible = true;
                     _isBottomAnchored = anchorToBottom;
                     _isExpandedShiftedByBounds = shiftedUpByBounds;
@@ -1386,11 +1452,18 @@ namespace DesktopPlus
         /// </summary>
         private void UpdateMergeTarget(Point mouseScreenDip)
         {
+            if (HasRecycleBinTab())
+            {
+                ClearMergeTarget();
+                return;
+            }
+
             DesktopPanel? newTarget = null;
 
             foreach (var other in System.Windows.Application.Current.Windows.OfType<DesktopPanel>())
             {
                 if (other == this || !other.IsVisible) continue;
+                if (other.HasRecycleBinTab()) continue;
 
                 // Check if mouse is within the other panel's header bounds
                 double headerHeight = 46;
@@ -1636,7 +1709,7 @@ namespace DesktopPlus
                     ContentFrame.Opacity = 0;
                 }
                 if (ContentContainer != null) ContentContainer.Visibility = Visibility.Visible;
-                Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Render);
+                QueueWrapPanelWidthUpdate();
                 AnimateContentIn();
 
                 Action onComplete = () =>
@@ -1759,6 +1832,7 @@ namespace DesktopPlus
         {
             var normalized = new List<string>(DefaultMetadataOrder.Length);
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            bool containsExplicitName = false;
 
             if (order != null)
             {
@@ -1770,8 +1844,19 @@ namespace DesktopPlus
                         continue;
                     }
 
+                    if (string.Equals(key, MetadataName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        containsExplicitName = true;
+                    }
+
                     normalized.Add(key);
                 }
+            }
+
+            if (!containsExplicitName)
+            {
+                normalized.Insert(0, MetadataName);
+                seen.Add(MetadataName);
             }
 
             foreach (var key in DefaultMetadataOrder)
@@ -1785,11 +1870,50 @@ namespace DesktopPlus
             return normalized;
         }
 
+        public static Dictionary<string, double> NormalizeMetadataWidths(IDictionary<string, double>? widths)
+        {
+            var normalized = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+
+            if (widths != null)
+            {
+                foreach (var pair in widths)
+                {
+                    string key = NormalizeMetadataWidthKey(pair.Key);
+                    if (string.IsNullOrWhiteSpace(key))
+                    {
+                        continue;
+                    }
+
+                    if (double.IsNaN(pair.Value) || double.IsInfinity(pair.Value) || pair.Value <= 0)
+                    {
+                        continue;
+                    }
+
+                    normalized[key] = pair.Value;
+                }
+            }
+
+            foreach (string key in DetailColumnWidthKeys)
+            {
+                if (!normalized.ContainsKey(key))
+                {
+                    normalized[key] = GetDefaultMetadataWidth(key);
+                }
+            }
+
+            return normalized;
+        }
+
         private static string NormalizeMetadataKey(string? key)
         {
             if (string.IsNullOrWhiteSpace(key))
             {
                 return string.Empty;
+            }
+
+            if (string.Equals(key, MetadataName, StringComparison.OrdinalIgnoreCase))
+            {
+                return MetadataName;
             }
 
             if (string.Equals(key, MetadataType, StringComparison.OrdinalIgnoreCase))
@@ -1817,7 +1941,93 @@ namespace DesktopPlus
                 return MetadataDimensions;
             }
 
+            if (string.Equals(key, MetadataAuthors, StringComparison.OrdinalIgnoreCase))
+            {
+                return MetadataAuthors;
+            }
+
+            if (string.Equals(key, MetadataCategories, StringComparison.OrdinalIgnoreCase))
+            {
+                return MetadataCategories;
+            }
+
+            if (string.Equals(key, MetadataTags, StringComparison.OrdinalIgnoreCase))
+            {
+                return MetadataTags;
+            }
+
+            if (string.Equals(key, MetadataTitle, StringComparison.OrdinalIgnoreCase))
+            {
+                return MetadataTitle;
+            }
+
             return string.Empty;
+        }
+
+        private static string NormalizeMetadataWidthKey(string? key)
+        {
+            if (string.Equals(key, MetadataName, StringComparison.OrdinalIgnoreCase))
+            {
+                return MetadataName;
+            }
+
+            return NormalizeMetadataKey(key);
+        }
+
+        public static double GetDefaultMetadataWidth(string metadataKey)
+        {
+            string key = NormalizeMetadataWidthKey(metadataKey);
+            if (string.Equals(key, MetadataName, StringComparison.OrdinalIgnoreCase))
+            {
+                return 240;
+            }
+
+            if (string.Equals(key, MetadataType, StringComparison.OrdinalIgnoreCase))
+            {
+                return 130;
+            }
+
+            if (string.Equals(key, MetadataSize, StringComparison.OrdinalIgnoreCase))
+            {
+                return 92;
+            }
+
+            if (string.Equals(key, MetadataCreated, StringComparison.OrdinalIgnoreCase))
+            {
+                return 148;
+            }
+
+            if (string.Equals(key, MetadataModified, StringComparison.OrdinalIgnoreCase))
+            {
+                return 148;
+            }
+
+            if (string.Equals(key, MetadataDimensions, StringComparison.OrdinalIgnoreCase))
+            {
+                return 112;
+            }
+
+            if (string.Equals(key, MetadataAuthors, StringComparison.OrdinalIgnoreCase))
+            {
+                return 156;
+            }
+
+            if (string.Equals(key, MetadataCategories, StringComparison.OrdinalIgnoreCase))
+            {
+                return 148;
+            }
+
+            if (string.Equals(key, MetadataTags, StringComparison.OrdinalIgnoreCase))
+            {
+                return 156;
+            }
+
+            if (string.Equals(key, MetadataTitle, StringComparison.OrdinalIgnoreCase))
+            {
+                return 172;
+            }
+
+            return 128;
         }
 
         public void SetSearchVisibilityMode(string? mode)
@@ -2123,6 +2333,17 @@ namespace DesktopPlus
         private void CloseWindow_Click(object sender, RoutedEventArgs e)
         {
             this.Close();
+        }
+
+        private async void EmptyRecycleBinButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (PanelType == PanelKind.Folder)
+            {
+                await ClearCurrentFolderAsync();
+                return;
+            }
+
+            EmptyRecycleBin();
         }
     }
 }

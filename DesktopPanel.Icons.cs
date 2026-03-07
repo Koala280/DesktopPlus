@@ -19,6 +19,7 @@ using HorizontalAlignment = System.Windows.HorizontalAlignment;
 using MediaColor = System.Windows.Media.Color;
 using Orientation = System.Windows.Controls.Orientation;
 using Panel = System.Windows.Controls.Panel;
+using Point = System.Windows.Point;
 
 namespace DesktopPlus
 {
@@ -81,7 +82,7 @@ namespace DesktopPlus
         private const int PhotoDimensionsCacheLimit = 4096;
         private const int PhotoPreviewCacheLimit = 160;
         private const int MaxNativePhotoDecodePixels = 16384;
-        private const int MaxPhotoPreviewDecodePixels = 2048;
+        private const int MaxPhotoPreviewDecodePixels = 4096;
         private const long PhotoPreviewCacheBudgetBytes = 128L * 1024L * 1024L;
         private static long PhotoPreviewCacheTotalBytes;
         private static readonly Dictionary<string, ImageSource> ExplorerIconCache =
@@ -95,6 +96,13 @@ namespace DesktopPlus
         private const double PhotoCardHorizontalPadding = 0;
         private const double PhotoCardHorizontalMargin = 0;
         private const double PhotoWrapSafetyDip = 0.35;
+        private static readonly Brush PhotoTileHoverOverlayBrush = CreateFrozenBrush(Color.FromArgb(0x12, 0xFF, 0xFF, 0xFF));
+        private static readonly Brush PhotoTileHoverBorderBrush = CreateFrozenBrush(Color.FromArgb(0x72, 0xC8, 0xE2, 0xFF));
+        private static readonly Brush PhotoTileSelectedOverlayBrush = CreateFrozenBrush(Color.FromArgb(0x16, 0x74, 0xB6, 0xF4));
+        private static readonly Brush PhotoTileSelectedBorderBrush = CreateFrozenBrush(Color.FromArgb(0xAA, 0x8E, 0xCD, 0xFF));
+        private static readonly Brush PhotoTileSelectedHoverOverlayBrush = CreateFrozenBrush(Color.FromArgb(0x20, 0x80, 0xC0, 0xFF));
+        private static readonly Brush PhotoTileSelectedHoverBorderBrush = CreateFrozenBrush(Color.FromArgb(0xCC, 0xB5, 0xDE, 0xFF));
+        private static readonly Style PhotoTileOverlayStyle = CreatePhotoTileOverlayStyle();
 
         private sealed class PhotoTileLayoutInfo
         {
@@ -107,6 +115,37 @@ namespace DesktopPlus
             public string? PhotoPath { get; init; }
         }
 
+        private sealed class PhotoLayoutEntry
+        {
+            public ListBoxItem Container { get; init; } = null!;
+            public FrameworkElement Root { get; init; } = null!;
+            public PhotoTileLayoutInfo Layout { get; init; } = null!;
+            public double Aspect { get; init; }
+        }
+
+        private sealed class PhotoMosaicColumn
+        {
+            public List<PhotoLayoutEntry> Entries { get; } = new List<PhotoLayoutEntry>();
+        }
+
+        private sealed class PhotoMosaicRow
+        {
+            public List<PhotoMosaicColumn> Columns { get; } = new List<PhotoMosaicColumn>();
+            public double Height { get; init; }
+        }
+
+        private sealed class PhotoMosaicCandidate
+        {
+            public List<PhotoMosaicColumn> Columns { get; } = new List<PhotoMosaicColumn>();
+            public HashSet<PhotoLayoutEntry> SelectedEntries { get; } = new HashSet<PhotoLayoutEntry>();
+            public double Height { get; init; }
+            public double Score { get; init; }
+        }
+
+        private readonly ItemsPanelTemplate _standardItemsPanelTemplate = CreateWrapItemsPanelTemplate();
+        private readonly ItemsPanelTemplate _photoItemsPanelTemplate = CreatePhotoCanvasItemsPanelTemplate();
+        private bool _isPhotoItemsPanelActive;
+
         private enum DetailsSortColumn
         {
             Name,
@@ -114,11 +153,129 @@ namespace DesktopPlus
             Size,
             Created,
             Modified,
-            Dimensions
+            Dimensions,
+            Authors,
+            Categories,
+            Tags,
+            Title
         }
 
         private DetailsSortColumn _detailsSortColumn = DetailsSortColumn.Name;
         private bool _detailsSortAscending = true;
+        private bool _detailsSortActive;
+        private readonly List<string> _detailsDefaultOrderPaths = new List<string>();
+        private Border? _detailsHeaderDragSource;
+        private string? _detailsHeaderDragKey;
+        private Point _detailsHeaderDragStartPoint;
+        private bool _detailsHeaderDragging;
+        private Border? _detailsHeaderDropTarget;
+        private bool _detailsHeaderDropInsertAfter;
+        private string? _detailsHeaderContextColumnKey;
+        private bool _detailsHeaderResizing;
+        private string? _detailsHeaderResizeLeftKey;
+        private string? _detailsHeaderResizeRightKey;
+        private Point _detailsHeaderResizeStartPoint;
+        private double _detailsHeaderResizeStartLeftWidth;
+        private double _detailsHeaderResizeStartRightWidth;
+        private const double DetailsHeaderDragThreshold = 5.0;
+        private const double DetailsHeaderResizeHitWidth = 8.0;
+        private const string DetailsHeaderDropIndicatorTag = "DesktopPlus.DetailsHeaderDropIndicator";
+
+        private static ItemsPanelTemplate CreateWrapItemsPanelTemplate()
+        {
+            var factory = new FrameworkElementFactory(typeof(WrapPanel));
+            factory.SetValue(WrapPanel.OrientationProperty, Orientation.Horizontal);
+            factory.SetValue(FrameworkElement.MarginProperty, new Thickness(4));
+            factory.SetValue(Panel.IsItemsHostProperty, true);
+            return new ItemsPanelTemplate(factory);
+        }
+
+        private static ItemsPanelTemplate CreatePhotoCanvasItemsPanelTemplate()
+        {
+            var factory = new FrameworkElementFactory(typeof(System.Windows.Controls.Canvas));
+            factory.SetValue(FrameworkElement.MarginProperty, new Thickness(0));
+            factory.SetValue(Panel.IsItemsHostProperty, true);
+            return new ItemsPanelTemplate(factory);
+        }
+
+        private static Brush CreateFrozenBrush(Color color)
+        {
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+            return brush;
+        }
+
+        private static Style CreatePhotoTileOverlayStyle()
+        {
+            var style = new Style(typeof(Border));
+            style.Setters.Add(new Setter(UIElement.IsHitTestVisibleProperty, false));
+            style.Setters.Add(new Setter(Border.BackgroundProperty, Brushes.Transparent));
+            style.Setters.Add(new Setter(Border.BorderBrushProperty, Brushes.Transparent));
+            style.Setters.Add(new Setter(Border.BorderThicknessProperty, new Thickness(0)));
+            style.Setters.Add(new Setter(UIElement.SnapsToDevicePixelsProperty, true));
+
+            var hoverTrigger = new DataTrigger
+            {
+                Binding = new System.Windows.Data.Binding("IsMouseOver")
+                {
+                    RelativeSource = new System.Windows.Data.RelativeSource(
+                        System.Windows.Data.RelativeSourceMode.FindAncestor,
+                        typeof(ListBoxItem),
+                        1)
+                },
+                Value = true
+            };
+            hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty, PhotoTileHoverOverlayBrush));
+            hoverTrigger.Setters.Add(new Setter(Border.BorderBrushProperty, PhotoTileHoverBorderBrush));
+            hoverTrigger.Setters.Add(new Setter(Border.BorderThicknessProperty, new Thickness(1)));
+            style.Triggers.Add(hoverTrigger);
+
+            var selectedTrigger = new DataTrigger
+            {
+                Binding = new System.Windows.Data.Binding("IsSelected")
+                {
+                    RelativeSource = new System.Windows.Data.RelativeSource(
+                        System.Windows.Data.RelativeSourceMode.FindAncestor,
+                        typeof(ListBoxItem),
+                        1)
+                },
+                Value = true
+            };
+            selectedTrigger.Setters.Add(new Setter(Border.BackgroundProperty, PhotoTileSelectedOverlayBrush));
+            selectedTrigger.Setters.Add(new Setter(Border.BorderBrushProperty, PhotoTileSelectedBorderBrush));
+            selectedTrigger.Setters.Add(new Setter(Border.BorderThicknessProperty, new Thickness(1)));
+            style.Triggers.Add(selectedTrigger);
+
+            var selectedHoverTrigger = new MultiDataTrigger();
+            selectedHoverTrigger.Conditions.Add(new Condition
+            {
+                Binding = new System.Windows.Data.Binding("IsSelected")
+                {
+                    RelativeSource = new System.Windows.Data.RelativeSource(
+                        System.Windows.Data.RelativeSourceMode.FindAncestor,
+                        typeof(ListBoxItem),
+                        1)
+                },
+                Value = true
+            });
+            selectedHoverTrigger.Conditions.Add(new Condition
+            {
+                Binding = new System.Windows.Data.Binding("IsMouseOver")
+                {
+                    RelativeSource = new System.Windows.Data.RelativeSource(
+                        System.Windows.Data.RelativeSourceMode.FindAncestor,
+                        typeof(ListBoxItem),
+                        1)
+                },
+                Value = true
+            });
+            selectedHoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty, PhotoTileSelectedHoverOverlayBrush));
+            selectedHoverTrigger.Setters.Add(new Setter(Border.BorderBrushProperty, PhotoTileSelectedHoverBorderBrush));
+            selectedHoverTrigger.Setters.Add(new Setter(Border.BorderThicknessProperty, new Thickness(1)));
+            style.Triggers.Add(selectedHoverTrigger);
+
+            return style;
+        }
 
         private static bool IsPathSpecificIconExtension(string extension)
         {
@@ -464,7 +621,8 @@ namespace DesktopPlus
             var item = new ListBoxItem
             {
                 Content = CreateListBoxItem(displayName, path, isBackButton, appearance),
-                Tag = path
+                Tag = path,
+                Focusable = !isBackButton
             };
 
             ApplyListItemContainerSpacing(item);
@@ -489,6 +647,39 @@ namespace DesktopPlus
             item.ClearValue(System.Windows.Controls.Control.BorderThicknessProperty);
             item.ClearValue(System.Windows.Controls.Control.PaddingProperty);
             item.ClearValue(FrameworkElement.MarginProperty);
+        }
+
+        private void EnsureItemsHostPanel(bool isPhotoMode)
+        {
+            if (FileList == null || _isPhotoItemsPanelActive == isPhotoMode)
+            {
+                return;
+            }
+
+            FileList.ItemsPanel = isPhotoMode ? _photoItemsPanelTemplate : _standardItemsPanelTemplate;
+            _isPhotoItemsPanelActive = isPhotoMode;
+            FileList.InvalidateMeasure();
+            FileList.InvalidateArrange();
+            ContentContainer?.InvalidateMeasure();
+            ContentContainer?.InvalidateArrange();
+            SelectionHost?.InvalidateMeasure();
+            SelectionHost?.InvalidateArrange();
+
+            // Swapping between the photo canvas and the regular WrapPanel happens
+            // asynchronously in WPF. Queue one more layout pass so the new host exists
+            // before width/placement math runs; otherwise stale photo measurements can
+            // survive until some unrelated later refresh.
+            if (IsLoaded)
+            {
+                QueueWrapPanelWidthUpdate();
+            }
+        }
+
+        private System.Windows.Controls.Canvas? GetPhotoItemsCanvas()
+        {
+            return FileList == null
+                ? null
+                : FindVisualChild<System.Windows.Controls.Canvas>(FileList);
         }
 
         private FrameworkElement CreateIconListBoxItem(string displayName, string path, bool isBackButton, AppearanceSettings? appearance = null)
@@ -643,17 +834,17 @@ namespace DesktopPlus
             return metadataKey;
         }
 
-        private string GetMetadataColumnHeaderText(string metadataKey)
+        private bool IsMetadataColumnSorted(string metadataKey)
         {
-            string label = GetMetadataColumnLabelText(metadataKey);
+            return _detailsSortActive &&
+                   _detailsSortColumn == MapMetadataToSortColumn(metadataKey);
+        }
 
-            DetailsSortColumn headerColumn = MapMetadataToSortColumn(metadataKey);
-            if (_detailsSortColumn == headerColumn)
-            {
-                label += _detailsSortAscending ? " [^]" : " [v]";
-            }
-
-            return label;
+        private static Geometry GetMetadataSortChevronGeometry(bool ascending)
+        {
+            return Geometry.Parse(ascending
+                ? "M0,5 L4,0 L8,5 Z"
+                : "M0,0 L4,5 L8,0 Z");
         }
 
         private string GetMetadataValueText(string metadataKey, string path, bool isFolder)
@@ -723,20 +914,45 @@ namespace DesktopPlus
 
         private void MetadataHeader_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
-            if (sender is not TextBlock header || header.Tag is not string metadataKey)
+            if (sender is not FrameworkElement header || header.Tag is not string metadataKey)
             {
                 return;
             }
 
             DetailsSortColumn clickedColumn = MapMetadataToSortColumn(metadataKey);
-            if (_detailsSortColumn == clickedColumn)
+            if (!_detailsSortActive)
             {
-                _detailsSortAscending = !_detailsSortAscending;
+                _detailsSortActive = true;
+                _detailsSortColumn = clickedColumn;
+                _detailsSortAscending = true;
             }
-            else
+            else if (_detailsSortColumn != clickedColumn)
             {
                 _detailsSortColumn = clickedColumn;
                 _detailsSortAscending = true;
+            }
+            else if (_detailsSortAscending)
+            {
+                _detailsSortAscending = false;
+            }
+            else
+            {
+                _detailsSortActive = false;
+                _detailsSortColumn = DetailsSortColumn.Name;
+                _detailsSortAscending = true;
+                RestoreDefaultDetailsOrderInPlace();
+
+                bool hadActiveSearchRequest = _searchCts != null &&
+                    PanelType == PanelKind.Folder &&
+                    !string.IsNullOrWhiteSpace(SearchBox?.Text);
+                if (hadActiveSearchRequest)
+                {
+                    _deferSortUntilSearchComplete = false;
+                }
+
+                RebuildListItemVisuals(sortItems: false);
+                e.Handled = true;
+                return;
             }
 
             bool hasActiveSearchRequest = _searchCts != null &&
@@ -754,6 +970,62 @@ namespace DesktopPlus
             SortCurrentFolderItemsInPlace();
             RebuildListItemVisuals(sortItems: false);
             e.Handled = true;
+        }
+
+        private FrameworkElement CreateMetadataHeaderElement(
+            string metadataKey,
+            double fontSize,
+            Brush labelBrush,
+            Brush accentBrush)
+        {
+            bool isSorted = IsMetadataColumnSorted(metadataKey);
+
+            var container = new Border
+            {
+                Background = Brushes.Transparent,
+                Margin = new Thickness(8, 0, 0, 0),
+                Padding = new Thickness(0, 2, 0, 2),
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Cursor = System.Windows.Input.Cursors.Hand,
+                Tag = metadataKey
+            };
+
+            var headerRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            headerRow.Children.Add(new TextBlock
+            {
+                Text = GetMetadataColumnLabelText(metadataKey),
+                Foreground = isSorted ? accentBrush : labelBrush,
+                FontSize = fontSize,
+                FontWeight = isSorted ? FontWeights.SemiBold : FontWeights.Medium,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+
+            if (isSorted)
+            {
+                headerRow.Children.Add(new System.Windows.Shapes.Path
+                {
+                    Data = GetMetadataSortChevronGeometry(_detailsSortAscending),
+                    Width = 7,
+                    Height = 4,
+                    Margin = new Thickness(6, 1, 0, 0),
+                    Stretch = Stretch.Fill,
+                    Fill = accentBrush,
+                    SnapsToDevicePixels = true,
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+            }
+
+            container.Child = headerRow;
+            container.PreviewMouseLeftButtonDown += MetadataHeader_PreviewMouseLeftButtonDown;
+            container.MouseLeftButtonUp += MetadataHeader_MouseLeftButtonUp;
+            return container;
         }
 
         private void RefreshParentNavigationItemVisual()
@@ -774,11 +1046,14 @@ namespace DesktopPlus
             string displayName = BuildParentNavigationDisplayName(parentPath);
             backItem.Content = CreateListBoxItem(displayName, parentPath, isBackButton: true, _currentAppearance);
             ApplyListItemContainerSpacing(backItem);
+            backItem.Visibility = ShouldShowParentNavigationListItem()
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         }
 
         private void SortCurrentFolderItemsInPlace()
         {
-            if (FileList == null || PanelType != PanelKind.Folder)
+            if (FileList == null || PanelType != PanelKind.Folder || !_detailsSortActive)
             {
                 return;
             }
@@ -803,26 +1078,14 @@ namespace DesktopPlus
                 .ToList();
 
             sortable.Sort(CompareItemsForCurrentSort);
-
-            FileList.Items.Clear();
+            var desiredOrder = new List<ListBoxItem>();
             if (backItem != null)
             {
-                FileList.Items.Add(backItem);
+                desiredOrder.Add(backItem);
             }
 
-            foreach (var item in sortable)
-            {
-                FileList.Items.Add(item);
-            }
-
-            foreach (var item in FileList.Items.OfType<ListBoxItem>())
-            {
-                if (item.Tag is string path &&
-                    selectedPaths.Contains(path))
-                {
-                    item.IsSelected = true;
-                }
-            }
+            desiredOrder.AddRange(sortable);
+            ApplyFileListOrderInPlace(desiredOrder, selectedPaths);
         }
 
         private int CompareItemsForCurrentSort(ListBoxItem left, ListBoxItem right)
@@ -862,6 +1125,30 @@ namespace DesktopPlus
                     comparison = GetComparableDimensionValue(leftPath, leftIsFolder)
                         .CompareTo(GetComparableDimensionValue(rightPath, rightIsFolder));
                     break;
+                case DetailsSortColumn.Authors:
+                    comparison = string.Compare(
+                        GetComparableDetailsText(MetadataAuthors, leftPath, leftIsFolder),
+                        GetComparableDetailsText(MetadataAuthors, rightPath, rightIsFolder),
+                        StringComparison.CurrentCultureIgnoreCase);
+                    break;
+                case DetailsSortColumn.Categories:
+                    comparison = string.Compare(
+                        GetComparableDetailsText(MetadataCategories, leftPath, leftIsFolder),
+                        GetComparableDetailsText(MetadataCategories, rightPath, rightIsFolder),
+                        StringComparison.CurrentCultureIgnoreCase);
+                    break;
+                case DetailsSortColumn.Tags:
+                    comparison = string.Compare(
+                        GetComparableDetailsText(MetadataTags, leftPath, leftIsFolder),
+                        GetComparableDetailsText(MetadataTags, rightPath, rightIsFolder),
+                        StringComparison.CurrentCultureIgnoreCase);
+                    break;
+                case DetailsSortColumn.Title:
+                    comparison = string.Compare(
+                        GetComparableDetailsText(MetadataTitle, leftPath, leftIsFolder),
+                        GetComparableDetailsText(MetadataTitle, rightPath, rightIsFolder),
+                        StringComparison.CurrentCultureIgnoreCase);
+                    break;
                 case DetailsSortColumn.Name:
                 default:
                     comparison = string.Compare(
@@ -880,6 +1167,115 @@ namespace DesktopPlus
             }
 
             return _detailsSortAscending ? comparison : -comparison;
+        }
+
+        private void RestoreDefaultDetailsOrderInPlace()
+        {
+            if (FileList == null || PanelType != PanelKind.Folder || _detailsDefaultOrderPaths.Count == 0)
+            {
+                return;
+            }
+
+            var allItems = FileList.Items.OfType<ListBoxItem>().ToList();
+            if (allItems.Count <= 1)
+            {
+                return;
+            }
+
+            var selectedPaths = new HashSet<string>(
+                FileList.SelectedItems
+                    .OfType<ListBoxItem>()
+                    .Select(i => i.Tag as string)
+                    .Where(p => !string.IsNullOrWhiteSpace(p))
+                    .Cast<string>(),
+                StringComparer.OrdinalIgnoreCase);
+
+            var backItem = allItems.FirstOrDefault(IsParentNavigationItem);
+            var currentOrderLookup = allItems
+                .Where(i => !ReferenceEquals(i, backItem) && i.Tag is string)
+                .Select((item, index) => new { item, index })
+                .ToDictionary(entry => entry.item.Tag as string ?? string.Empty, entry => entry.index, StringComparer.OrdinalIgnoreCase);
+            var defaultOrderLookup = _detailsDefaultOrderPaths
+                .Select((path, index) => new { path, index })
+                .ToDictionary(entry => entry.path, entry => entry.index, StringComparer.OrdinalIgnoreCase);
+
+            var sortable = allItems
+                .Where(i => !ReferenceEquals(i, backItem))
+                .ToList();
+
+            sortable.Sort((left, right) =>
+            {
+                string leftPath = left.Tag as string ?? string.Empty;
+                string rightPath = right.Tag as string ?? string.Empty;
+
+                bool hasLeftDefaultOrder = defaultOrderLookup.TryGetValue(leftPath, out int leftDefaultOrder);
+                bool hasRightDefaultOrder = defaultOrderLookup.TryGetValue(rightPath, out int rightDefaultOrder);
+                if (hasLeftDefaultOrder || hasRightDefaultOrder)
+                {
+                    if (hasLeftDefaultOrder && hasRightDefaultOrder)
+                    {
+                        int defaultComparison = leftDefaultOrder.CompareTo(rightDefaultOrder);
+                        if (defaultComparison != 0)
+                        {
+                            return defaultComparison;
+                        }
+                    }
+                    else
+                    {
+                        return hasLeftDefaultOrder ? -1 : 1;
+                    }
+                }
+
+                currentOrderLookup.TryGetValue(leftPath, out int leftCurrentOrder);
+                currentOrderLookup.TryGetValue(rightPath, out int rightCurrentOrder);
+                return leftCurrentOrder.CompareTo(rightCurrentOrder);
+            });
+            var desiredOrder = new List<ListBoxItem>();
+            if (backItem != null)
+            {
+                desiredOrder.Add(backItem);
+            }
+
+            desiredOrder.AddRange(sortable);
+            ApplyFileListOrderInPlace(desiredOrder, selectedPaths);
+        }
+
+        private void ApplyFileListOrderInPlace(
+            IReadOnlyList<ListBoxItem> desiredOrder,
+            ISet<string> selectedPaths)
+        {
+            if (FileList == null || desiredOrder.Count == 0)
+            {
+                return;
+            }
+
+            for (int targetIndex = 0; targetIndex < desiredOrder.Count; targetIndex++)
+            {
+                ListBoxItem desiredItem = desiredOrder[targetIndex];
+                if (targetIndex < FileList.Items.Count &&
+                    ReferenceEquals(FileList.Items[targetIndex], desiredItem))
+                {
+                    continue;
+                }
+
+                int currentIndex = FileList.Items.IndexOf(desiredItem);
+                if (currentIndex < 0)
+                {
+                    continue;
+                }
+
+                FileList.Items.RemoveAt(currentIndex);
+                FileList.Items.Insert(targetIndex, desiredItem);
+            }
+
+            foreach (var item in FileList.Items.OfType<ListBoxItem>())
+            {
+                if (item.Tag is string path &&
+                    selectedPaths.Contains(path))
+                {
+                    item.IsSelected = true;
+                }
+            }
         }
 
         private static long GetComparableSize(string path, bool isFolder)
@@ -949,6 +1345,8 @@ namespace DesktopPlus
                 1.0,
                 MediaColor.FromRgb(167, 176, 192));
 
+            var actualWidths = GetActualDetailsColumnWidths(rowWidth);
+            var visibleColumns = GetVisibleDetailsColumns();
             var panel = new Grid
             {
                 Width = rowWidth,
@@ -956,67 +1354,42 @@ namespace DesktopPlus
                 Opacity = baseOpacity
             };
 
-            panel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(28, 32 * zoomFactor)) });
-            panel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-            var visibleMetadata = GetOrderedVisibleMetadataColumns();
-            int columnIndex = 2;
-            foreach (string metadataKey in visibleMetadata)
+            int columnIndex = 0;
+            foreach (string metadataKey in visibleColumns)
             {
-                panel.ColumnDefinitions.Add(new ColumnDefinition { Width = GetMetadataColumnWidth(metadataKey) });
+                double columnWidth = actualWidths.TryGetValue(metadataKey, out double resolvedWidth)
+                    ? resolvedWidth
+                    : GetStoredDetailsColumnWidth(metadataKey);
+                panel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(columnWidth) });
 
-                var metadataText = new TextBlock
+                FrameworkElement cellElement;
+                if (string.Equals(metadataKey, MetadataName, StringComparison.OrdinalIgnoreCase))
                 {
-                    Foreground = metadataBrush,
-                    FontSize = metaSize,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    Margin = new Thickness(8, 0, 0, 0)
-                };
-
-                if (isBackButton)
-                {
-                    metadataText.Text = GetMetadataColumnHeaderText(metadataKey);
-                    metadataText.FontWeight = FontWeights.SemiBold;
-                    metadataText.Cursor = System.Windows.Input.Cursors.Hand;
-                    metadataText.Tag = metadataKey;
-                    metadataText.PreviewMouseLeftButtonDown += MetadataHeader_PreviewMouseLeftButtonDown;
-                    metadataText.MouseLeftButtonUp += MetadataHeader_MouseLeftButtonUp;
+                    cellElement = CreateDetailsNameCell(
+                        displayName,
+                        path,
+                        isFolder,
+                        iconSize,
+                        textSize,
+                        nameBrush);
                 }
                 else
                 {
-                    metadataText.Text = GetMetadataValueText(metadataKey, path, isFolder);
+                    cellElement = new TextBlock
+                    {
+                        Text = GetDetailsColumnValueText(metadataKey, displayName, path, isFolder, isBackButton),
+                        Foreground = metadataBrush,
+                        FontSize = metaSize,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        Margin = new Thickness(8, 0, 0, 0)
+                    };
                 }
 
-                Grid.SetColumn(metadataText, columnIndex++);
-                panel.Children.Add(metadataText);
+                Grid.SetColumn(cellElement, columnIndex++);
+                panel.Children.Add(cellElement);
             }
 
-            System.Windows.Controls.Image icon = new System.Windows.Controls.Image
-            {
-                Source = LoadExplorerStyleIcon(path, isFolder, (int)Math.Max(48, iconSize * 2)),
-                Width = iconSize,
-                Height = iconSize,
-                Margin = new Thickness(0, 0, 6, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                SnapsToDevicePixels = true
-            };
-            RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
-
-            TextBlock nameText = CreateItemNameTextBlock(
-                displayName,
-                textSize,
-                nameBrush,
-                TextAlignment.Left,
-                new Thickness(2, 0, 0, 0));
-            nameText.VerticalAlignment = VerticalAlignment.Center;
-            nameText.TextWrapping = TextWrapping.NoWrap;
-            nameText.TextTrimming = TextTrimming.CharacterEllipsis;
-
-            Grid.SetColumn(icon, 0);
-            Grid.SetColumn(nameText, 1);
-            panel.Children.Add(icon);
-            panel.Children.Add(nameText);
             if (!isBackButton)
             {
                 AttachMetadataTooltip(panel, path, isFolder, metaSize);
@@ -1114,6 +1487,23 @@ namespace DesktopPlus
                 isPhotoFile ? BitmapScalingMode.Fant : BitmapScalingMode.HighQuality);
             thumbnailFrame.Child = icon;
 
+            var thumbnailHost = new Grid
+            {
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                ClipToBounds = true,
+                SnapsToDevicePixels = true
+            };
+            thumbnailHost.Children.Add(thumbnailFrame);
+            if (isPhotoFile)
+            {
+                thumbnailHost.Children.Add(new Border
+                {
+                    CornerRadius = new CornerRadius(0),
+                    Style = PhotoTileOverlayStyle
+                });
+            }
+
             TextBlock nameText = CreateItemNameTextBlock(
                 displayName,
                 textSize,
@@ -1139,7 +1529,7 @@ namespace DesktopPlus
                 Opacity = 0.9
             };
 
-            panel.Children.Add(thumbnailFrame);
+            panel.Children.Add(thumbnailHost);
             if (isPhotoFile)
             {
                 // Collage mode: hide text for photo files
@@ -1575,19 +1965,33 @@ namespace DesktopPlus
             bool metadataCreated,
             bool metadataModified,
             bool metadataDimensions,
+            bool metadataAuthors = false,
+            bool metadataCategories = false,
+            bool metadataTags = false,
+            bool metadataTitle = false,
             IEnumerable<string>? metadataOrderOverride = null,
+            IDictionary<string, double>? metadataWidthsOverride = null,
             bool persistSettings = true)
         {
             string normalized = NormalizeViewMode(requestedViewMode);
+            bool viewModeChanged = !string.Equals(viewMode, normalized, StringComparison.OrdinalIgnoreCase);
             var normalizedOrder = NormalizeMetadataOrder(metadataOrderOverride ?? metadataOrder);
+            var normalizedWidths = NormalizeMetadataWidths(metadataWidthsOverride ?? metadataWidths);
             bool changed =
-                !string.Equals(viewMode, normalized, StringComparison.OrdinalIgnoreCase) ||
+                viewModeChanged ||
                 showMetadataType != metadataType ||
                 showMetadataSize != metadataSize ||
                 showMetadataCreated != metadataCreated ||
                 showMetadataModified != metadataModified ||
                 showMetadataDimensions != metadataDimensions ||
-                !metadataOrder.SequenceEqual(normalizedOrder, StringComparer.OrdinalIgnoreCase);
+                showMetadataAuthors != metadataAuthors ||
+                showMetadataCategories != metadataCategories ||
+                showMetadataTags != metadataTags ||
+                showMetadataTitle != metadataTitle ||
+                !metadataOrder.SequenceEqual(normalizedOrder, StringComparer.OrdinalIgnoreCase) ||
+                !NormalizeMetadataWidths(metadataWidths)
+                    .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                    .SequenceEqual(normalizedWidths.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase));
 
             viewMode = normalized;
             showMetadataType = metadataType;
@@ -1595,20 +1999,120 @@ namespace DesktopPlus
             showMetadataCreated = metadataCreated;
             showMetadataModified = metadataModified;
             showMetadataDimensions = metadataDimensions;
+            showMetadataAuthors = metadataAuthors;
+            showMetadataCategories = metadataCategories;
+            showMetadataTags = metadataTags;
+            showMetadataTitle = metadataTitle;
             metadataOrder = normalizedOrder;
+            metadataWidths = normalizedWidths;
 
             if (!changed)
             {
                 return;
             }
 
-            RebuildListItemVisuals();
+            if (viewModeChanged)
+            {
+                RecreateFileListContainersForCurrentView();
+            }
+            else
+            {
+                RebuildListItemVisuals();
+            }
 
             if (persistSettings)
             {
                 MainWindow.SaveSettings();
                 MainWindow.NotifyPanelsChanged();
             }
+        }
+
+        private void RecreateFileListContainersForCurrentView()
+        {
+            if (FileList == null)
+            {
+                return;
+            }
+
+            var existingItems = FileList.Items
+                .OfType<ListBoxItem>()
+                .ToList();
+            if (existingItems.Count == 0)
+            {
+                RefreshDetailsHeader();
+                UpdateWrapPanelWidth();
+                UpdateDropZoneVisibility();
+                return;
+            }
+
+            var selectedPaths = new HashSet<string>(
+                FileList.SelectedItems
+                    .OfType<ListBoxItem>()
+                    .Select(item => item.Tag as string)
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Cast<string>(),
+                StringComparer.OrdinalIgnoreCase);
+            var injectedPaths = new HashSet<string>(
+                _searchInjectedItems
+                    .Select(item => item.Tag as string)
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Cast<string>(),
+                StringComparer.OrdinalIgnoreCase);
+
+            var rebuiltItems = new List<ListBoxItem>(existingItems.Count);
+            var rebuiltInjectedItems = new List<ListBoxItem>();
+
+            foreach (ListBoxItem item in existingItems)
+            {
+                if (item.Tag is not string path || string.IsNullOrWhiteSpace(path))
+                {
+                    continue;
+                }
+
+                bool isBackButton = IsParentNavigationPath(path);
+                string displayName = isBackButton
+                    ? BuildParentNavigationDisplayName(path)
+                    : GetDisplayNameForPath(path);
+                if (string.IsNullOrWhiteSpace(displayName))
+                {
+                    displayName = GetPathLeafName(path);
+                }
+
+                ListBoxItem rebuiltItem = CreateFileListBoxItem(
+                    displayName,
+                    path,
+                    isBackButton,
+                    _currentAppearance);
+                rebuiltItem.Visibility = isBackButton
+                    ? (ShouldShowParentNavigationListItem() ? Visibility.Visible : Visibility.Collapsed)
+                    : item.Visibility;
+                rebuiltItem.IsHitTestVisible = item.IsHitTestVisible;
+                rebuiltItem.Opacity = item.Opacity;
+
+                rebuiltItems.Add(rebuiltItem);
+                if (!isBackButton && selectedPaths.Contains(path))
+                {
+                    rebuiltItem.IsSelected = true;
+                }
+
+                if (injectedPaths.Contains(path))
+                {
+                    rebuiltInjectedItems.Add(rebuiltItem);
+                }
+            }
+
+            FileList.Items.Clear();
+            foreach (ListBoxItem rebuiltItem in rebuiltItems)
+            {
+                FileList.Items.Add(rebuiltItem);
+            }
+
+            _searchInjectedItems.Clear();
+            _searchInjectedItems.AddRange(rebuiltInjectedItems);
+
+            RefreshDetailsHeader();
+            UpdateWrapPanelWidth();
+            UpdateDropZoneVisibility();
         }
 
         private void RebuildListItemVisuals(bool sortItems = true)
@@ -1636,12 +2140,19 @@ namespace DesktopPlus
 
                 item.Content = CreateListBoxItem(displayName, path, isBackButton, _currentAppearance);
                 ApplyListItemContainerSpacing(item);
+                if (isBackButton)
+                {
+                    item.Visibility = ShouldShowParentNavigationListItem()
+                        ? Visibility.Visible
+                        : Visibility.Collapsed;
+                }
             }
 
             if (sortItems)
             {
                 SortCurrentFolderItemsInPlace();
             }
+            RefreshDetailsHeader();
             UpdateWrapPanelWidth();
             UpdateDropZoneVisibility();
         }
@@ -1682,12 +2193,30 @@ namespace DesktopPlus
 
         private void ContentContainer_SizeChanged(object sender, SizeChangedEventArgs e)
         {
-            UpdateWrapPanelWidth();
+            QueueWrapPanelWidthUpdate();
+        }
+
+        public bool FitWidthToContent()
+        {
+            return FitToContentInternal(adjustWidth: true, adjustHeight: false);
+        }
+
+        public bool FitHeightToContent()
+        {
+            return FitToContentInternal(adjustWidth: false, adjustHeight: true);
         }
 
         public void FitToContent()
         {
-            if (ContentContainer == null || FileList == null) return;
+            FitToContentInternal(adjustWidth: true, adjustHeight: true);
+        }
+
+        private bool FitToContentInternal(bool adjustWidth, bool adjustHeight)
+        {
+            if (ContentContainer == null || FileList == null || (!adjustWidth && !adjustHeight))
+            {
+                return false;
+            }
 
             if (!isContentVisible)
             {
@@ -1698,170 +2227,38 @@ namespace DesktopPlus
             SetContentScrollbarsFrozen(true);
             try
             {
-            UpdateWrapPanelWidth();
-            UpdateLayout();
-
-            var wrapPanel = FindVisualChild<WrapPanel>(FileList);
-            if (wrapPanel == null)
-            {
-                MainWindow.SaveSettings();
-                return;
-            }
-
-            Rect workArea = GetWorkAreaForPanel();
-            double startWidth = Width;
-            int baselineFirstRowCount = GetFirstRowItemCount(FileList, wrapPanel);
-            bool widthChanged = false;
-            bool heightChanged = false;
-            double minWindowWidth = Math.Max(220, MinWidth > 0 ? MinWidth : 0);
-            double maxWindowWidth = Math.Max(minWindowWidth, workArea.Right - Left);
-
-            // --- Width fitting ---
-            // Measure how much horizontal space items actually need.
-            // We use item count x item width for precision, avoiding sub-pixel drift.
-            double currentLayoutWidth = GetContentLayoutWidth();
-            if (currentLayoutWidth > 1)
-            {
-                double neededWrapWidth = GetVisibleItemRightEdge(FileList, wrapPanel);
-                double firstRowRightEdge = GetFirstRowRightEdge(FileList, wrapPanel);
-                double stableNeededWrapWidth = Math.Max(neededWrapWidth, firstRowRightEdge);
-
-                if (stableNeededWrapWidth > 0)
-                {
-                    // Use the actual right-most rendered item edge for width fitting.
-                    // This avoids overestimating with count * max-width and keeps
-                    // scrollbar overlay changes out of the fit calculation.
-                    double wrapHorizontalMargin = GetHorizontalMargin(wrapPanel);
-                    double layoutSafetyPixels = Math.Ceiling(2 * VisualTreeHelper.GetDpi(this).DpiScaleX);
-                    double neededContentWidth = Math.Ceiling(stableNeededWrapWidth + wrapHorizontalMargin + layoutSafetyPixels);
-                    double chrome = Width - currentLayoutWidth;
-                    double targetWidth = chrome + neededContentWidth;
-
-                    targetWidth = Math.Max(minWindowWidth, Math.Min(targetWidth, maxWindowWidth));
-
-                    if (Math.Abs(targetWidth - Width) > 0.5)
-                    {
-                        Width = targetWidth;
-                        widthChanged = true;
-                    }
-                }
-            }
-
-            if (widthChanged)
-            {
-                UpdateLayout();
                 UpdateWrapPanelWidth();
                 UpdateLayout();
 
-                // Guard against wrap-threshold drift (rounding/DPI):
-                // never reduce items in the first row when fitting width.
-                if (baselineFirstRowCount > 0 && Width < startWidth - 0.5)
+                bool isPhotoMode = string.Equals(
+                    NormalizeViewMode(viewMode),
+                    ViewModePhotos,
+                    StringComparison.OrdinalIgnoreCase);
+                var wrapPanel = !isPhotoMode ? FindVisualChild<WrapPanel>(FileList) : null;
+                var photoCanvas = isPhotoMode ? GetPhotoItemsCanvas() : null;
+                if ((!isPhotoMode && wrapPanel == null) ||
+                    (isPhotoMode && photoCanvas == null))
                 {
-                    int fittedFirstRowCount = GetFirstRowItemCount(FileList, wrapPanel);
-                    if (fittedFirstRowCount < baselineFirstRowCount)
-                    {
-                        double fallbackWidth = Math.Max(minWindowWidth, Math.Min(startWidth, maxWindowWidth));
-                        if (Math.Abs(fallbackWidth - Width) > 0.5)
-                        {
-                            Width = fallbackWidth;
-                            UpdateLayout();
-                            UpdateWrapPanelWidth();
-                            UpdateLayout();
-                        }
-                    }
+                    FinalizeFitToContentChange(changed: false);
+                    return false;
                 }
-            }
 
-            // --- Height fitting ---
-            // After width is settled, measure content height at the final width.
-            double finalWrapWidth = wrapPanel.Width > 0 ? wrapPanel.Width : GetContentLayoutWidth();
-            if (finalWrapWidth <= 1)
+                Rect workArea = GetWorkAreaForPanel();
+                bool widthChanged = adjustWidth && TryAdjustWidthToContent(isPhotoMode, wrapPanel, workArea);
+                bool heightChanged = adjustHeight && TryAdjustHeightToContent(isPhotoMode, wrapPanel, photoCanvas, workArea);
+                bool anyChanged = widthChanged || heightChanged;
+                FinalizeFitToContentChange(anyChanged);
+                return anyChanged;
+            }
+            finally
             {
-                if (widthChanged)
-                {
-                    SyncAnchoringFromCurrentBounds();
-                    Dispatcher.BeginInvoke(new Action(() =>
-                    {
-                        UpdateWrapPanelWidth();
-                        MainWindow.SaveSettings();
-                        MainWindow.NotifyPanelsChanged();
-                    }), System.Windows.Threading.DispatcherPriority.Render);
-                }
-                else
-                {
-                    MainWindow.SaveSettings();
-                }
-                return;
+                SetContentScrollbarsFrozen(false);
             }
+        }
 
-            wrapPanel.Measure(new System.Windows.Size(finalWrapWidth, double.PositiveInfinity));
-            double desiredWrapHeight = wrapPanel.DesiredSize.Height;
-
-            // Calculate chrome between window height and viewport height
-            double viewportHeight = ContentContainer.ViewportHeight > 0
-                ? ContentContainer.ViewportHeight
-                : ContentContainer.ActualHeight;
-
-            if (viewportHeight <= 1)
-            {
-                if (widthChanged)
-                {
-                    SyncAnchoringFromCurrentBounds();
-                    Dispatcher.BeginInvoke(new Action(() =>
-                    {
-                        UpdateWrapPanelWidth();
-                        MainWindow.SaveSettings();
-                        MainWindow.NotifyPanelsChanged();
-                    }), System.Windows.Threading.DispatcherPriority.Render);
-                }
-                else
-                {
-                    MainWindow.SaveSettings();
-                }
-                return;
-            }
-
-            double verticalChrome = Height - viewportHeight;
-            double targetHeight2 = verticalChrome + desiredWrapHeight + 6;
-            double collapsedHeight = GetCollapsedHeight();
-            double minWindowHeight = Math.Max(collapsedHeight, MinHeight > 0 ? MinHeight : 0);
-            double maxWindowHeightInWorkArea = Math.Max(minWindowHeight, workArea.Height);
-            targetHeight2 = Math.Max(minWindowHeight, Math.Min(targetHeight2, maxWindowHeightInWorkArea));
-
-            double targetTop = Top;
-            double maxHeightAtCurrentTop = Math.Max(minWindowHeight, workArea.Bottom - targetTop);
-
-            // Special case: panel is at (or near) the bottom edge and cannot grow downward.
-            // Shift upward so fit-to-content can still reach the target height.
-            if (targetHeight2 > maxHeightAtCurrentTop + 0.5)
-            {
-                double shiftedTop = workArea.Bottom - targetHeight2;
-                targetTop = ClampTopToWorkArea(workArea, targetHeight2, shiftedTop);
-
-                double maxHeightAtShiftedTop = Math.Max(minWindowHeight, workArea.Bottom - targetTop);
-                targetHeight2 = Math.Max(minWindowHeight, Math.Min(targetHeight2, maxHeightAtShiftedTop));
-            }
-            else
-            {
-                targetTop = ClampTopToWorkArea(workArea, targetHeight2, targetTop);
-            }
-
-            SnapWindowVerticalBounds(ref targetTop, ref targetHeight2);
-
-            if (Math.Abs(targetTop - Top) > 0.5)
-            {
-                Top = targetTop;
-                heightChanged = true;
-            }
-
-            if (Math.Abs(targetHeight2 - Height) > 0.5)
-            {
-                Height = targetHeight2;
-                expandedHeight = Math.Max(collapsedHeight, targetHeight2);
-                heightChanged = true;
-            }
-
-            if (!widthChanged && !heightChanged)
+        private void FinalizeFitToContentChange(bool changed)
+        {
+            if (!changed)
             {
                 MainWindow.SaveSettings();
                 return;
@@ -1876,11 +2273,198 @@ namespace DesktopPlus
                 MainWindow.SaveSettings();
                 MainWindow.NotifyPanelsChanged();
             }), System.Windows.Threading.DispatcherPriority.Render);
-            }
-            finally
+        }
+
+        private bool TryAdjustWidthToContent(bool isPhotoMode, WrapPanel? wrapPanel, Rect workArea)
+        {
+            if (isPhotoMode || FileList == null || wrapPanel == null)
             {
-                SetContentScrollbarsFrozen(false);
+                return false;
             }
+
+            double startWidth = ActualWidth > 0 ? ActualWidth : Width;
+            int baselineFirstRowCount = GetFirstRowItemCount(FileList, wrapPanel);
+            double minWindowWidth = Math.Max(220, MinWidth > 0 ? MinWidth : 0);
+            double maxWindowWidth = Math.Max(minWindowWidth, workArea.Right - Left);
+            double currentLayoutWidth = GetContentLayoutWidth();
+            if (currentLayoutWidth <= 1)
+            {
+                return false;
+            }
+
+            double neededWrapWidth = GetVisibleItemRightEdge(FileList, wrapPanel);
+            double firstRowRightEdge = GetFirstRowRightEdge(FileList, wrapPanel);
+            double stableNeededWrapWidth = Math.Max(neededWrapWidth, firstRowRightEdge);
+            if (stableNeededWrapWidth <= 0)
+            {
+                return false;
+            }
+
+            double wrapHorizontalMargin = GetHorizontalMargin(wrapPanel);
+            double layoutSafetyPixels = Math.Ceiling(2 * VisualTreeHelper.GetDpi(this).DpiScaleX);
+            double neededContentWidth = Math.Ceiling(stableNeededWrapWidth + wrapHorizontalMargin + layoutSafetyPixels);
+            double currentWindowWidth = ActualWidth > 0 ? ActualWidth : Width;
+            double chrome = currentWindowWidth - currentLayoutWidth;
+            double targetWidth = chrome + neededContentWidth;
+            targetWidth = Math.Max(minWindowWidth, Math.Min(targetWidth, maxWindowWidth));
+
+            if (Math.Abs(targetWidth - currentWindowWidth) <= 0.5)
+            {
+                return false;
+            }
+
+            ApplyWindowWidthAndRefreshLayout(targetWidth);
+
+            // Guard against wrap-threshold drift and late viewport updates:
+            // never reduce items in the first row when fitting width.
+            if (baselineFirstRowCount > 0 && Width < startWidth - 0.5)
+            {
+                int fittedFirstRowCount = GetFirstRowItemCount(FileList, wrapPanel);
+                if (fittedFirstRowCount < baselineFirstRowCount)
+                {
+                    double correctedWidth = FindSmallestWidthPreservingFirstRowCount(
+                        wrapPanel,
+                        baselineFirstRowCount,
+                        targetWidth,
+                        Math.Max(minWindowWidth, Math.Min(startWidth, maxWindowWidth)));
+                    if (Math.Abs(correctedWidth - Width) > 0.5)
+                    {
+                        ApplyWindowWidthAndRefreshLayout(correctedWidth);
+                    }
+                }
+            }
+
+            return Math.Abs(Width - startWidth) > 0.5;
+        }
+
+        private void ApplyWindowWidthAndRefreshLayout(double targetWidth)
+        {
+            Width = targetWidth;
+            QueueWrapPanelWidthUpdate();
+            Dispatcher.Invoke(new Action(() => { }), System.Windows.Threading.DispatcherPriority.Render);
+            UpdateLayout();
+        }
+
+        private double FindSmallestWidthPreservingFirstRowCount(
+            WrapPanel wrapPanel,
+            int baselineFirstRowCount,
+            double minCandidateWidth,
+            double maxCandidateWidth)
+        {
+            double low = Math.Min(minCandidateWidth, maxCandidateWidth);
+            double high = Math.Max(minCandidateWidth, maxCandidateWidth);
+            double best = high;
+
+            for (int iteration = 0; iteration < 9 && high - low > 0.5; iteration++)
+            {
+                double candidate = Math.Ceiling((low + high) / 2.0);
+                ApplyWindowWidthAndRefreshLayout(candidate);
+
+                int candidateFirstRowCount = GetFirstRowItemCount(FileList!, wrapPanel);
+                if (candidateFirstRowCount >= baselineFirstRowCount)
+                {
+                    best = candidate;
+                    high = candidate;
+                }
+                else
+                {
+                    low = candidate;
+                }
+            }
+
+            return best;
+        }
+
+        private bool TryAdjustHeightToContent(
+            bool isPhotoMode,
+            WrapPanel? wrapPanel,
+            System.Windows.Controls.Canvas? photoCanvas,
+            Rect workArea)
+        {
+            if (ContentContainer == null)
+            {
+                return false;
+            }
+
+            double finalHostWidth = isPhotoMode
+                ? (photoCanvas != null && photoCanvas.Width > 0 ? photoCanvas.Width : GetContentLayoutWidth())
+                : (wrapPanel != null && wrapPanel.Width > 0 ? wrapPanel.Width : GetContentLayoutWidth());
+            if (finalHostWidth <= 1)
+            {
+                return false;
+            }
+
+            double desiredContentHeight;
+            if (isPhotoMode)
+            {
+                if (photoCanvas == null)
+                {
+                    return false;
+                }
+
+                photoCanvas.Width = finalHostWidth;
+                photoCanvas.Measure(new System.Windows.Size(finalHostWidth, double.PositiveInfinity));
+                desiredContentHeight = photoCanvas.Height > 0
+                    ? photoCanvas.Height
+                    : photoCanvas.DesiredSize.Height;
+            }
+            else
+            {
+                if (wrapPanel == null)
+                {
+                    return false;
+                }
+
+                wrapPanel.Measure(new System.Windows.Size(finalHostWidth, double.PositiveInfinity));
+                desiredContentHeight = wrapPanel.DesiredSize.Height;
+            }
+
+            double viewportHeight = ContentContainer.ViewportHeight > 0
+                ? ContentContainer.ViewportHeight
+                : ContentContainer.ActualHeight;
+            if (viewportHeight <= 1)
+            {
+                return false;
+            }
+
+            double startTop = Top;
+            double startHeight = Height;
+            double verticalChrome = Height - viewportHeight;
+            double targetHeight = verticalChrome + desiredContentHeight + 6;
+            double collapsedHeight = GetCollapsedHeight();
+            double minWindowHeight = Math.Max(collapsedHeight, MinHeight > 0 ? MinHeight : 0);
+            double maxWindowHeightInWorkArea = Math.Max(minWindowHeight, workArea.Height);
+            targetHeight = Math.Max(minWindowHeight, Math.Min(targetHeight, maxWindowHeightInWorkArea));
+
+            double targetTop = Top;
+            double maxHeightAtCurrentTop = Math.Max(minWindowHeight, workArea.Bottom - targetTop);
+            if (targetHeight > maxHeightAtCurrentTop + 0.5)
+            {
+                double shiftedTop = workArea.Bottom - targetHeight;
+                targetTop = ClampTopToWorkArea(workArea, targetHeight, shiftedTop);
+
+                double maxHeightAtShiftedTop = Math.Max(minWindowHeight, workArea.Bottom - targetTop);
+                targetHeight = Math.Max(minWindowHeight, Math.Min(targetHeight, maxHeightAtShiftedTop));
+            }
+            else
+            {
+                targetTop = ClampTopToWorkArea(workArea, targetHeight, targetTop);
+            }
+
+            SnapWindowVerticalBounds(ref targetTop, ref targetHeight);
+
+            if (Math.Abs(targetTop - Top) > 0.5)
+            {
+                Top = targetTop;
+            }
+
+            if (Math.Abs(targetHeight - Height) > 0.5)
+            {
+                Height = targetHeight;
+                expandedHeight = Math.Max(collapsedHeight, targetHeight);
+            }
+
+            return Math.Abs(Top - startTop) > 0.5 || Math.Abs(Height - startHeight) > 0.5;
         }
 
         private void UpdateWrapPanelWidth()
@@ -1890,38 +2474,59 @@ namespace DesktopPlus
                 NormalizeViewMode(viewMode),
                 ViewModePhotos,
                 StringComparison.OrdinalIgnoreCase);
+            EnsureItemsHostPanel(isPhotoMode);
             ApplyPhotoModeItemCompaction(isPhotoMode);
             FileList.UseLayoutRounding = !isPhotoMode;
             ContentContainer.UseLayoutRounding = !isPhotoMode;
 
-            var wrapPanel = FindVisualChild<WrapPanel>(FileList);
-            if (wrapPanel != null)
+            if (isPhotoMode)
             {
-                var targetMargin = isPhotoMode ? new Thickness(0) : new Thickness(4);
-                if (!wrapPanel.Margin.Equals(targetMargin))
+                var photoCanvas = GetPhotoItemsCanvas();
+                if (photoCanvas == null)
                 {
-                    wrapPanel.Margin = targetMargin;
-                    wrapPanel.InvalidateMeasure();
-                    wrapPanel.InvalidateArrange();
+                    FileList.UpdateLayout();
+                    photoCanvas = GetPhotoItemsCanvas();
                 }
-                wrapPanel.UseLayoutRounding = !isPhotoMode;
-                wrapPanel.SnapsToDevicePixels = !isPhotoMode;
-
-                double baseWidth = GetContentLayoutWidth();
-                double availableWidth;
-                if (isPhotoMode)
+                if (photoCanvas != null)
                 {
-                    // In photo mode, use viewport width directly (excludes scrollbar).
                     double vw = ContentContainer.ViewportWidth;
-                    availableWidth = (!double.IsNaN(vw) && vw > 1) ? vw : baseWidth;
+                    double baseWidth = GetContentLayoutWidth();
+                    double availableWidth = (!double.IsNaN(vw) && vw > 1) ? vw : baseWidth;
+                    photoCanvas.Margin = new Thickness(0);
+                    photoCanvas.UseLayoutRounding = false;
+                    photoCanvas.SnapsToDevicePixels = false;
+                    if (availableWidth > 0 &&
+                        Math.Abs(photoCanvas.Width - availableWidth) > 0.5)
+                    {
+                        photoCanvas.Width = availableWidth;
+                        photoCanvas.InvalidateMeasure();
+                        photoCanvas.InvalidateArrange();
+                        FileList.InvalidateMeasure();
+                    }
                 }
-                else
+            }
+            else
+            {
+                FileList.ClearValue(FrameworkElement.WidthProperty);
+                FileList.ClearValue(FrameworkElement.HeightProperty);
+
+                var wrapPanel = FindVisualChild<WrapPanel>(FileList);
+                if (wrapPanel != null)
                 {
-                    availableWidth = Math.Max(0, baseWidth - GetHorizontalMargin(wrapPanel));
-                }
-                if (availableWidth > 0)
-                {
-                    if (Math.Abs(wrapPanel.Width - availableWidth) > 0.5)
+                    var targetMargin = new Thickness(4);
+                    if (!wrapPanel.Margin.Equals(targetMargin))
+                    {
+                        wrapPanel.Margin = targetMargin;
+                        wrapPanel.InvalidateMeasure();
+                        wrapPanel.InvalidateArrange();
+                    }
+                    wrapPanel.UseLayoutRounding = true;
+                    wrapPanel.SnapsToDevicePixels = true;
+
+                    double baseWidth = GetContentLayoutWidth();
+                    double availableWidth = Math.Max(0, baseWidth - GetHorizontalMargin(wrapPanel));
+                    if (availableWidth > 0 &&
+                        Math.Abs(wrapPanel.Width - availableWidth) > 0.5)
                     {
                         wrapPanel.Width = availableWidth;
                         wrapPanel.InvalidateMeasure();
@@ -1935,6 +2540,13 @@ namespace DesktopPlus
             UpdateDetailItemWidths();
         }
 
+        private bool CurrentViewNeedsContentLayoutRefresh()
+        {
+            string normalizedViewMode = NormalizeViewMode(viewMode);
+            return string.Equals(normalizedViewMode, ViewModePhotos, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalizedViewMode, ViewModeDetails, StringComparison.OrdinalIgnoreCase);
+        }
+
         private void ApplyPhotoModeItemCompaction(bool isPhotoMode)
         {
             if (FileList == null)
@@ -1944,34 +2556,39 @@ namespace DesktopPlus
 
             foreach (ListBoxItem item in FileList.Items.OfType<ListBoxItem>())
             {
+                bool matchesSearch = ShouldItemMatchCurrentSearchFilter(item);
+
                 if (item.Content is not FrameworkElement root ||
                     root.Tag is not PhotoTileLayoutInfo layout)
                 {
+                    bool shouldShow = matchesSearch;
                     if (isPhotoMode &&
                         item.Tag is string pathTag &&
                         !IsPhotoPath(pathTag))
                     {
-                        item.Visibility = Visibility.Collapsed;
-                        item.IsHitTestVisible = false;
+                        shouldShow = false;
                     }
-                    else
+
+                    item.Visibility = shouldShow ? Visibility.Visible : Visibility.Collapsed;
+                    if (!isPhotoMode)
                     {
-                        item.Visibility = Visibility.Visible;
-                        item.IsHitTestVisible = true;
+                        ClearPhotoModeContainerLayout(item);
+                        item.Opacity = shouldShow ? 1 : 0;
                     }
+                    item.IsHitTestVisible = shouldShow;
                     continue;
                 }
 
                 if (isPhotoMode)
                 {
-                    bool isPhoto = layout.IsPhotoFile;
-                    item.Visibility = isPhoto ? Visibility.Visible : Visibility.Collapsed;
-                    item.IsHitTestVisible = isPhoto;
+                    bool shouldShow = layout.IsPhotoFile && matchesSearch;
+                    item.Visibility = shouldShow ? Visibility.Visible : Visibility.Collapsed;
+                    item.IsHitTestVisible = shouldShow;
                     item.Margin = new Thickness(0);
                     item.Padding = new Thickness(0);
                     item.BorderThickness = new Thickness(0);
 
-                    if (!isPhoto)
+                    if (!shouldShow)
                     {
                         item.Width = 0;
                         item.Height = 0;
@@ -1997,19 +2614,38 @@ namespace DesktopPlus
                     continue;
                 }
 
-                item.Visibility = Visibility.Visible;
-                item.ClearValue(FrameworkElement.WidthProperty);
-                item.ClearValue(FrameworkElement.HeightProperty);
-                item.ClearValue(FrameworkElement.MinWidthProperty);
-                item.ClearValue(FrameworkElement.MinHeightProperty);
-                item.ClearValue(FrameworkElement.MaxWidthProperty);
-                item.ClearValue(FrameworkElement.MaxHeightProperty);
-                item.ClearValue(FrameworkElement.MarginProperty);
-                item.ClearValue(System.Windows.Controls.Control.PaddingProperty);
-                item.ClearValue(System.Windows.Controls.Control.BorderThicknessProperty);
-                item.Opacity = 1;
-                item.IsHitTestVisible = true;
+                item.Visibility = matchesSearch ? Visibility.Visible : Visibility.Collapsed;
+                ClearPhotoModeContainerLayout(item);
+                item.Opacity = matchesSearch ? 1 : 0;
+                item.IsHitTestVisible = matchesSearch;
             }
+        }
+
+        private static void ClearPhotoModeContainerLayout(ListBoxItem item)
+        {
+            item.ClearValue(FrameworkElement.WidthProperty);
+            item.ClearValue(FrameworkElement.HeightProperty);
+            item.ClearValue(FrameworkElement.MinWidthProperty);
+            item.ClearValue(FrameworkElement.MinHeightProperty);
+            item.ClearValue(FrameworkElement.MaxWidthProperty);
+            item.ClearValue(FrameworkElement.MaxHeightProperty);
+            item.ClearValue(FrameworkElement.MarginProperty);
+            item.ClearValue(System.Windows.Controls.Canvas.LeftProperty);
+            item.ClearValue(System.Windows.Controls.Canvas.TopProperty);
+            item.ClearValue(System.Windows.Controls.Control.PaddingProperty);
+            item.ClearValue(System.Windows.Controls.Control.BorderThicknessProperty);
+        }
+
+        private bool ShouldItemMatchCurrentSearchFilter(ListBoxItem item)
+        {
+            string filter = SearchBox?.Text?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(filter))
+            {
+                return true;
+            }
+
+            return IsParentNavigationItem(item) ||
+                GetSearchCandidateText(item).IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private void UpdatePhotoTileLayouts()
@@ -2018,6 +2654,17 @@ namespace DesktopPlus
                 !string.Equals(NormalizeViewMode(viewMode), ViewModePhotos, StringComparison.OrdinalIgnoreCase))
             {
                 return;
+            }
+
+            var photoCanvas = GetPhotoItemsCanvas();
+            if (photoCanvas == null)
+            {
+                FileList.UpdateLayout();
+                photoCanvas = GetPhotoItemsCanvas();
+                if (photoCanvas == null)
+                {
+                    return;
+                }
             }
 
             double contentWidth = GetContentLayoutWidth();
@@ -2035,18 +2682,8 @@ namespace DesktopPlus
                 viewportWidth = contentWidth;
             }
             double availableWidth = Math.Max(120, viewportWidth);
-            double gap = 0;
-            double dpiScaleX = 1.0;
-            try
-            {
-                var dpi = VisualTreeHelper.GetDpi(this);
-                dpiScaleX = Math.Max(1.0, dpi.DpiScaleX);
-            }
-            catch
-            {
-            }
-            double targetRowHeight = Math.Clamp(180 * zoomFactor, 110, 280);
-            var photos = new List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>();
+            double targetRowHeight = Math.Clamp(220 * zoomFactor, 140, 340);
+            var photos = new List<PhotoLayoutEntry>();
             foreach (ListBoxItem item in FileList.Items.OfType<ListBoxItem>())
             {
                 if (item.Visibility != Visibility.Visible ||
@@ -2064,217 +2701,481 @@ namespace DesktopPlus
                     measuredAspect = (double)bitmapSource.PixelWidth / bitmapSource.PixelHeight;
                 }
                 double aspect = Math.Clamp(measuredAspect, 0.08, 20.0);
-                photos.Add((item, root, layout, aspect));
+                photos.Add(new PhotoLayoutEntry
+                {
+                    Container = item,
+                    Root = root,
+                    Layout = layout,
+                    Aspect = aspect
+                });
             }
             if (photos.Count == 0)
             {
+                photoCanvas.Width = availableWidth;
+                photoCanvas.Height = 0;
+                FileList.Width = availableWidth;
+                FileList.Height = 0;
                 return;
             }
 
             var rows = BuildPhotoRows(photos, availableWidth, targetRowHeight);
-            RebalancePhotoRows(rows);
-
-            System.Diagnostics.Debug.WriteLine($"[PhotoLayout] contentWidth={contentWidth:F1} viewportWidth={ContentContainer.ViewportWidth:F1} availableWidth={availableWidth:F1} dpiScaleX={dpiScaleX:F2} rows={rows.Count}");
+            double top = 0;
 
             for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
             {
                 var row = rows[rowIndex];
-                if (row.Count == 0)
+                if (row.Columns.Count == 0 || row.Height <= 0.5)
                 {
                     continue;
                 }
 
-                int count = row.Count;
-                double rowAspectSum = row.Sum(entry => entry.Aspect);
-                if (rowAspectSum <= 0.0001)
+                var columns = rowIndex % 2 == 0
+                    ? row.Columns
+                    : row.Columns.AsEnumerable().Reverse().ToList();
+                double left = 0;
+                for (int columnIndex = 0; columnIndex < columns.Count; columnIndex++)
                 {
-                    continue;
+                    var column = columns[columnIndex];
+                    double inverseAspectSum = Math.Max(
+                        0.0001,
+                        column.Entries.Sum(entry => 1.0 / entry.Aspect));
+                    double remainingRowWidth = Math.Max(1, availableWidth - left);
+                    double columnWidth = columnIndex == columns.Count - 1
+                        ? remainingRowWidth
+                        : Math.Max(48, row.Height / inverseAspectSum);
+                    double columnTop = top;
+                    for (int entryIndex = 0; entryIndex < column.Entries.Count; entryIndex++)
+                    {
+                        var entry = column.Entries[entryIndex];
+                        double remainingColumnHeight = Math.Max(1, row.Height - (columnTop - top));
+                        double tileHeight = entryIndex == column.Entries.Count - 1
+                            ? remainingColumnHeight
+                            : Math.Max(48, columnWidth / entry.Aspect);
+                        ApplyPhotoTileSize(
+                            entry.Container,
+                            entry.Root,
+                            entry.Layout,
+                            columnWidth,
+                            tileHeight,
+                            leftOffset: 0);
+                        System.Windows.Controls.Canvas.SetLeft(entry.Container, left);
+                        System.Windows.Controls.Canvas.SetTop(entry.Container, columnTop);
+                        ReloadPhotoIfNeeded(entry.Layout, columnWidth, tileHeight);
+                        columnTop += tileHeight;
+                    }
+
+                    left += columnWidth;
                 }
 
-                double usableWidth = Math.Max(count / dpiScaleX, availableWidth - ((count - 1) * gap));
-                int targetRowPixels = Math.Max(count, (int)Math.Floor(usableWidth * dpiScaleX));
-                int[] pixelWidths = DistributeJustifiedPixels(
-                    row.Select(entry => entry.Aspect).ToArray(),
-                    targetRowPixels);
-                double rowHeight = (targetRowPixels / dpiScaleX) / rowAspectSum;
-                double rowWidthSum = 0;
-                for (int j = 0; j < count; j++)
-                {
-                    double width = pixelWidths[j] / dpiScaleX;
-                    rowWidthSum += width;
-                    ApplyPhotoTileSize(row[j].Container, row[j].Root, row[j].Layout, width, rowHeight, leftOffset: 0);
-                    ReloadPhotoIfNeeded(row[j].Layout, width, rowHeight);
-                }
-                System.Diagnostics.Debug.WriteLine($"  row[{rowIndex}] count={count} usable={usableWidth:F1} targetPx={targetRowPixels} widthSum={rowWidthSum:F1} rowH={rowHeight:F1} aspects={string.Join(",", row.Select(r => r.Aspect.ToString("F2")))}");
+                top += row.Height;
             }
+
+            photoCanvas.Width = availableWidth;
+            photoCanvas.Height = Math.Max(0, top);
+            FileList.Width = availableWidth;
+            FileList.Height = Math.Max(0, top);
         }
 
-        private List<List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>> BuildPhotoRows(
-            List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)> photos,
+        private List<PhotoMosaicRow> BuildPhotoRows(
+            List<PhotoLayoutEntry> photos,
             double availableWidth,
             double targetRowHeight)
         {
-            var rows = new List<List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>>();
+            var rows = new List<PhotoMosaicRow>();
             if (photos.Count == 0)
             {
                 return rows;
             }
 
-            var currentRow = new List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>();
-            double currentAspectSum = 0;
-            for (int i = 0; i < photos.Count; i++)
+            var remaining = new List<PhotoLayoutEntry>(photos);
+            while (remaining.Count > 0)
             {
-                var photo = photos[i];
-                currentRow.Add(photo);
-                currentAspectSum += photo.Aspect;
-
-                int count = currentRow.Count;
-
-                // A single wide image (e.g. screenshot) that would fill the row on its own
-                // should be placed alone at full width.
-                if (count == 1)
+                var candidate = SelectBestPhotoMosaicCandidate(remaining, availableWidth, targetRowHeight);
+                if (candidate == null)
                 {
-                    bool fillsRowAlone = photo.Aspect * targetRowHeight >= availableWidth * 0.85;
-                    if (fillsRowAlone)
+                    var fallback = CreateFallbackPhotoMosaicRow(
+                        remaining.Take(Math.Min(3, remaining.Count)).ToList(),
+                        availableWidth);
+                    rows.Add(fallback);
+                    foreach (var entry in fallback.Columns.SelectMany(column => column.Entries).ToList())
                     {
-                        rows.Add(currentRow);
-                        currentRow = new List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>();
-                        currentAspectSum = 0;
+                        remaining.Remove(entry);
                     }
                     continue;
                 }
 
-                double rowHeight = GetJustifiedRowHeight(availableWidth, currentAspectSum, count, gap: 0);
-                bool reachedTargetHeight = rowHeight <= targetRowHeight;
-                bool safetyCutoff = count >= 7;
-                if (reachedTargetHeight || safetyCutoff)
+                var row = new PhotoMosaicRow { Height = candidate.Height };
+                foreach (var column in candidate.Columns)
                 {
-                    rows.Add(currentRow);
-                    currentRow = new List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>();
-                    currentAspectSum = 0;
+                    row.Columns.Add(column);
                 }
-            }
-
-            if (currentRow.Count > 0)
-            {
-                rows.Add(currentRow);
+                rows.Add(row);
+                foreach (var entry in candidate.SelectedEntries)
+                {
+                    remaining.Remove(entry);
+                }
             }
 
             return rows;
         }
 
-        private static void RebalancePhotoRows(
-            List<List<(ListBoxItem Container, FrameworkElement Root, PhotoTileLayoutInfo Layout, double Aspect)>> rows)
+        private PhotoMosaicCandidate? SelectBestPhotoMosaicCandidate(
+            List<PhotoLayoutEntry> remaining,
+            double availableWidth,
+            double targetRowHeight)
         {
-            if (rows.Count < 2)
+            if (remaining.Count == 0)
+            {
+                return null;
+            }
+
+            bool isLastRow = remaining.Count <= 4;
+            var orderedByAspect = remaining
+                .OrderBy(entry => entry.Aspect)
+                .ToList();
+            var candidatePool = new List<PhotoLayoutEntry>();
+            AddPhotoCandidatePoolEntries(candidatePool, orderedByAspect.Take(3));
+            AddPhotoCandidatePoolEntries(candidatePool, orderedByAspect.Skip(Math.Max(0, orderedByAspect.Count - 3)));
+            AddPhotoCandidatePoolEntries(
+                candidatePool,
+                orderedByAspect
+                    .OrderBy(entry => Math.Abs(entry.Aspect - 1.25))
+                    .Take(2));
+            if (candidatePool.Count == 0)
+            {
+                return null;
+            }
+
+            PhotoMosaicCandidate? bestCandidate = null;
+            for (int i = 0; i < candidatePool.Count; i++)
+            {
+                var first = candidatePool[i];
+                if (remaining.Count == 1 || first.Aspect >= 2.15)
+                {
+                    TryConsiderPhotoMosaicCandidate(
+                        ref bestCandidate,
+                        availableWidth,
+                        targetRowHeight,
+                        isLastRow,
+                        CreatePhotoMosaicColumn(first));
+                }
+
+                for (int j = i + 1; j < candidatePool.Count; j++)
+                {
+                    var second = candidatePool[j];
+                    TryConsiderPhotoMosaicCandidate(
+                        ref bestCandidate,
+                        availableWidth,
+                        targetRowHeight,
+                        isLastRow,
+                        CreatePhotoMosaicColumn(first),
+                        CreatePhotoMosaicColumn(second));
+
+                    for (int k = j + 1; k < candidatePool.Count; k++)
+                    {
+                        var third = candidatePool[k];
+                        TryConsiderPhotoMosaicCandidate(
+                            ref bestCandidate,
+                            availableWidth,
+                            targetRowHeight,
+                            isLastRow,
+                            CreatePhotoMosaicColumn(first),
+                            CreatePhotoMosaicColumn(second),
+                            CreatePhotoMosaicColumn(third));
+                        TryConsiderPhotoMosaicCandidate(
+                            ref bestCandidate,
+                            availableWidth,
+                            targetRowHeight,
+                            isLastRow,
+                            CreatePhotoMosaicColumn(first),
+                            CreatePhotoMosaicColumn(second, third));
+                        TryConsiderPhotoMosaicCandidate(
+                            ref bestCandidate,
+                            availableWidth,
+                            targetRowHeight,
+                            isLastRow,
+                            CreatePhotoMosaicColumn(first, second),
+                            CreatePhotoMosaicColumn(third));
+
+                        for (int l = k + 1; l < candidatePool.Count; l++)
+                        {
+                            var fourth = candidatePool[l];
+                            TryConsiderPhotoMosaicCandidate(
+                                ref bestCandidate,
+                                availableWidth,
+                                targetRowHeight,
+                                isLastRow,
+                                CreatePhotoMosaicColumn(first),
+                                CreatePhotoMosaicColumn(second),
+                                CreatePhotoMosaicColumn(third, fourth));
+                            TryConsiderPhotoMosaicCandidate(
+                                ref bestCandidate,
+                                availableWidth,
+                                targetRowHeight,
+                                isLastRow,
+                                CreatePhotoMosaicColumn(first),
+                                CreatePhotoMosaicColumn(second, third),
+                                CreatePhotoMosaicColumn(fourth));
+                            TryConsiderPhotoMosaicCandidate(
+                                ref bestCandidate,
+                                availableWidth,
+                                targetRowHeight,
+                                isLastRow,
+                                CreatePhotoMosaicColumn(first, second),
+                                CreatePhotoMosaicColumn(third),
+                                CreatePhotoMosaicColumn(fourth));
+                            TryConsiderPhotoMosaicCandidate(
+                                ref bestCandidate,
+                                availableWidth,
+                                targetRowHeight,
+                                isLastRow,
+                                CreatePhotoMosaicColumn(first, second),
+                                CreatePhotoMosaicColumn(third, fourth));
+                        }
+                    }
+                }
+            }
+
+            if (bestCandidate == null)
+            {
+                var fallbackEntries = remaining
+                    .OrderBy(entry => Math.Abs(entry.Aspect - 1.25))
+                    .Take(Math.Min(3, remaining.Count))
+                    .ToArray();
+                if (fallbackEntries.Length > 0)
+                {
+                    TryConsiderPhotoMosaicCandidate(
+                        ref bestCandidate,
+                        availableWidth,
+                        targetRowHeight,
+                        isLastRow: true,
+                        fallbackEntries.Select(entry => CreatePhotoMosaicColumn(entry)).ToArray());
+                }
+            }
+
+            return bestCandidate;
+        }
+
+        private static void AddPhotoCandidatePoolEntries(
+            List<PhotoLayoutEntry> target,
+            IEnumerable<PhotoLayoutEntry> source)
+        {
+            foreach (var entry in source)
+            {
+                if (!target.Contains(entry))
+                {
+                    target.Add(entry);
+                }
+            }
+        }
+
+        private void TryConsiderPhotoMosaicCandidate(
+            ref PhotoMosaicCandidate? bestCandidate,
+            double availableWidth,
+            double targetRowHeight,
+            bool isLastRow,
+            params PhotoMosaicColumn[] columns)
+        {
+            if (!TryCreatePhotoMosaicCandidate(
+                    columns,
+                    availableWidth,
+                    targetRowHeight,
+                    isLastRow,
+                    out var candidate))
             {
                 return;
             }
 
-            // Avoid 2+1 endings that leave a visible half-empty last row.
-            for (int i = rows.Count - 1; i > 0; i--)
+            if (bestCandidate == null || candidate.Score < bestCandidate.Score)
             {
-                var current = rows[i];
-                var previous = rows[i - 1];
-                if (current.Count != 1)
-                {
-                    continue;
-                }
-
-                if (previous.Count >= 3)
-                {
-                    var moved = previous[^1];
-                    previous.RemoveAt(previous.Count - 1);
-                    current.Insert(0, moved);
-                    continue;
-                }
-
-                if (previous.Count == 2)
-                {
-                    previous.Add(current[0]);
-                    rows.RemoveAt(i);
-                }
+                bestCandidate = candidate;
             }
         }
-        private static double GetJustifiedRowHeight(double availableWidth, double aspectSum, int count, double gap)
+
+        private bool TryCreatePhotoMosaicCandidate(
+            IReadOnlyList<PhotoMosaicColumn> columns,
+            double availableWidth,
+            double targetRowHeight,
+            bool isLastRow,
+            out PhotoMosaicCandidate candidate)
         {
-            if (count <= 0 || aspectSum <= 0.0001)
+            candidate = null!;
+            if (columns.Count == 0)
             {
-                return 0;
+                return false;
             }
-            double usableWidth = availableWidth - ((count - 1) * gap);
-            if (usableWidth <= 0)
+
+            var selectedEntries = new HashSet<PhotoLayoutEntry>();
+            double inverseWidthFactorSum = 0;
+            var columnFactors = new double[columns.Count];
+            for (int i = 0; i < columns.Count; i++)
             {
-                return 0;
+                var column = columns[i];
+                if (column.Entries.Count == 0)
+                {
+                    return false;
+                }
+
+                double inverseAspectSum = 0;
+                foreach (var entry in column.Entries)
+                {
+                    if (!selectedEntries.Add(entry))
+                    {
+                        return false;
+                    }
+
+                    inverseAspectSum += 1.0 / Math.Max(0.08, entry.Aspect);
+                }
+
+                if (inverseAspectSum <= 0.0001)
+                {
+                    return false;
+                }
+
+                columnFactors[i] = inverseAspectSum;
+                inverseWidthFactorSum += 1.0 / inverseAspectSum;
             }
-            return usableWidth / aspectSum;
+            if (inverseWidthFactorSum <= 0.0001)
+            {
+                return false;
+            }
+
+            double rowHeight = availableWidth / inverseWidthFactorSum;
+            if (double.IsNaN(rowHeight) || double.IsInfinity(rowHeight) || rowHeight < 52)
+            {
+                return false;
+            }
+
+            double minRowHeight = Math.Max(110, targetRowHeight * 0.6);
+            double maxRowHeight = Math.Max(320, targetRowHeight * 2.1);
+            double minColumnWidth = Math.Max(80, availableWidth * 0.14);
+            double minTileHeight = Math.Max(72, targetRowHeight * 0.42);
+            double maxTileHeight = Math.Max(240, targetRowHeight * 1.7);
+            double score = Math.Abs(rowHeight - targetRowHeight) / Math.Max(1, targetRowHeight);
+            if (rowHeight < minRowHeight)
+            {
+                score += ((minRowHeight - rowHeight) / minRowHeight) * 2.4;
+            }
+            if (rowHeight > maxRowHeight)
+            {
+                score += ((rowHeight - maxRowHeight) / maxRowHeight) * 1.9;
+            }
+
+            bool hasStack = false;
+            int totalEntries = 0;
+            for (int i = 0; i < columns.Count; i++)
+            {
+                var column = columns[i];
+                double columnWidth = rowHeight / columnFactors[i];
+                if (double.IsNaN(columnWidth) || double.IsInfinity(columnWidth) || columnWidth < 44)
+                {
+                    return false;
+                }
+
+                totalEntries += column.Entries.Count;
+                if (column.Entries.Count > 1)
+                {
+                    hasStack = true;
+                }
+
+                if (columnWidth < minColumnWidth)
+                {
+                    score += ((minColumnWidth - columnWidth) / minColumnWidth) * 1.5;
+                }
+
+                foreach (var entry in column.Entries)
+                {
+                    double tileHeight = columnWidth / Math.Max(0.08, entry.Aspect);
+                    if (double.IsNaN(tileHeight) || double.IsInfinity(tileHeight) || tileHeight < 44)
+                    {
+                        return false;
+                    }
+
+                    if (tileHeight < minTileHeight)
+                    {
+                        score += ((minTileHeight - tileHeight) / minTileHeight) * 1.8;
+                    }
+                    if (tileHeight > maxTileHeight)
+                    {
+                        score += ((tileHeight - maxTileHeight) / maxTileHeight) * 0.8;
+                    }
+                    if (entry.Aspect >= 2.2 && column.Entries.Count > 1)
+                    {
+                        score += 0.25;
+                    }
+                }
+            }
+
+            if (hasStack)
+            {
+                score -= 0.1;
+            }
+
+            score -= Math.Min(0.24, 0.04 * Math.Max(0, totalEntries - 1));
+
+            if (columns.Count == 1 && columns[0].Entries.Count == 1)
+            {
+                double aspect = columns[0].Entries[0].Aspect;
+                if (aspect >= 2.6)
+                {
+                    score -= 0.5;
+                }
+                else if (aspect >= 2.15)
+                {
+                    score -= 0.24;
+                }
+                else
+                {
+                    score += 1.7;
+                }
+            }
+
+            if (isLastRow)
+            {
+                score -= 0.12;
+            }
+
+            candidate = new PhotoMosaicCandidate
+            {
+                Height = rowHeight,
+                Score = score
+            };
+            foreach (var column in columns)
+            {
+                candidate.Columns.Add(column);
+            }
+            foreach (var entry in selectedEntries)
+            {
+                candidate.SelectedEntries.Add(entry);
+            }
+
+            return true;
         }
-        private static int[] DistributeJustifiedPixels(double[] aspects, int targetPixels)
+
+        private static PhotoMosaicColumn CreatePhotoMosaicColumn(params PhotoLayoutEntry[] entries)
         {
-            int count = aspects.Length;
-            var result = new int[count];
-            if (count == 0 || targetPixels <= 0)
+            var column = new PhotoMosaicColumn();
+            foreach (var entry in entries)
             {
-                return result;
+                column.Entries.Add(entry);
             }
-            double aspectSum = Math.Max(0.0001, aspects.Sum());
-            var fractions = new (int Index, double Fraction)[count];
-            int usedPixels = 0;
-            for (int i = 0; i < count; i++)
+
+            return column;
+        }
+
+        private static PhotoMosaicRow CreateFallbackPhotoMosaicRow(
+            IReadOnlyList<PhotoLayoutEntry> entries,
+            double availableWidth)
+        {
+            double aspectSum = Math.Max(0.0001, entries.Sum(entry => entry.Aspect));
+            double rowHeight = Math.Max(96, availableWidth / aspectSum);
+            var row = new PhotoMosaicRow { Height = rowHeight };
+            foreach (var entry in entries)
             {
-                double ideal = targetPixels * (aspects[i] / aspectSum);
-                int baseWidth = Math.Max(1, (int)Math.Floor(ideal));
-                result[i] = baseWidth;
-                usedPixels += baseWidth;
-                fractions[i] = (i, ideal - baseWidth);
+                row.Columns.Add(CreatePhotoMosaicColumn(entry));
             }
-            int delta = targetPixels - usedPixels;
-            if (delta > 0)
-            {
-                foreach (var entry in fractions.OrderByDescending(f => f.Fraction).ThenBy(f => f.Index))
-                {
-                    if (delta <= 0)
-                    {
-                        break;
-                    }
-                    result[entry.Index]++;
-                    delta--;
-                }
-            }
-            else if (delta < 0)
-            {
-                foreach (var entry in fractions.OrderBy(f => f.Fraction).ThenByDescending(f => f.Index))
-                {
-                    if (delta >= 0)
-                    {
-                        break;
-                    }
-                    if (result[entry.Index] > 1)
-                    {
-                        result[entry.Index]--;
-                        delta++;
-                    }
-                }
-            }
-            int cursor = 0;
-            while (delta > 0)
-            {
-                result[cursor % count]++;
-                cursor++;
-                delta--;
-            }
-            cursor = 0;
-            while (delta < 0 && cursor < count * 3)
-            {
-                int index = cursor % count;
-                if (result[index] > 1)
-                {
-                    result[index]--;
-                    delta++;
-                }
-                cursor++;
-            }
-            return result;
+
+            return row;
         }
         private int GetRequestedPhotoDecodePixels(double displayWidth, double displayHeight, double oversampleFactor)
         {
@@ -2390,6 +3291,8 @@ namespace DesktopPlus
                     element.Width = targetWidth;
                 }
             }
+
+            RefreshDetailsHeader();
         }
 
         private double GetContentLayoutWidth()
@@ -2399,16 +3302,20 @@ namespace DesktopPlus
                 return 0;
             }
 
-            // `ActualWidth` remains stable even when the vertical scrollbar toggles.
-            // This keeps wrapping and fit-to-content independent from scrollbar width.
-            if (ContentContainer.ActualWidth > 0)
+            var contentPresenter = FindVisualChild<ScrollContentPresenter>(ContentContainer);
+            if (contentPresenter != null && contentPresenter.ActualWidth > 0)
             {
-                return ContentContainer.ActualWidth;
+                return contentPresenter.ActualWidth;
             }
 
             if (ContentContainer.ViewportWidth > 0)
             {
                 return ContentContainer.ViewportWidth;
+            }
+
+            if (ContentContainer.ActualWidth > 0)
+            {
+                return ContentContainer.ActualWidth;
             }
 
             return 0;
@@ -2417,27 +3324,6 @@ namespace DesktopPlus
         private static double GetHorizontalMargin(FrameworkElement element)
         {
             return element.Margin.Left + element.Margin.Right;
-        }
-
-        private double GetPhotoScrollbarReserveWidth()
-        {
-            if (ContentContainer == null)
-            {
-                return 0;
-            }
-
-            if (ContentContainer.ComputedVerticalScrollBarVisibility != Visibility.Visible)
-            {
-                return 0;
-            }
-
-            double measuredReserve = ContentContainer.ActualWidth - ContentContainer.ViewportWidth;
-            if (double.IsNaN(measuredReserve) || double.IsInfinity(measuredReserve))
-            {
-                return 0;
-            }
-
-            return Math.Max(0, measuredReserve);
         }
 
         private static int GetFirstRowItemCount(System.Windows.Controls.ListBox fileList, WrapPanel wrapPanel)
@@ -2574,4 +3460,3 @@ namespace DesktopPlus
         }
     }
 }
-

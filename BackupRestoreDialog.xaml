@@ -1,0 +1,320 @@
+<Window x:Class="DesktopPlus.BackupRestoreDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="{DynamicResource Loc.BackupRestoreDialogTitle}"
+        Width="860"
+        MinWidth="760"
+        Height="580"
+        MinHeight="520"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        KeyDown="Window_KeyDown">
+    <Window.Resources>
+        <SolidColorBrush x:Key="DialogBackground" Color="#111720"/>
+        <SolidColorBrush x:Key="DialogBorder" Color="#3A4252"/>
+        <SolidColorBrush x:Key="DialogCardBackground" Color="#182130"/>
+        <SolidColorBrush x:Key="DialogCardBorder" Color="#33405A"/>
+        <SolidColorBrush x:Key="DialogPrimary" Color="#3E6DE0"/>
+        <SolidColorBrush x:Key="DialogPrimaryBorder" Color="#5A83E8"/>
+        <SolidColorBrush x:Key="DialogGhostBackground" Color="#232D3F"/>
+        <SolidColorBrush x:Key="DialogGhostBorder" Color="#3D4C65"/>
+        <SolidColorBrush x:Key="DialogMuted" Color="#95A7C2"/>
+        <SolidColorBrush x:Key="DialogText" Color="#F3F6FB"/>
+        <SolidColorBrush x:Key="DialogSubtle" Color="#C9D5E7"/>
+        <SolidColorBrush x:Key="ListItemBackground" Color="#202A3A"/>
+        <SolidColorBrush x:Key="ListItemBorder" Color="#31415E"/>
+        <SolidColorBrush x:Key="ListItemSelectedBackground" Color="#243754"/>
+        <SolidColorBrush x:Key="ListItemSelectedBorder" Color="#5B86E7"/>
+
+        <Style x:Key="DialogButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="40"/>
+            <Setter Property="Padding" Value="16,0"/>
+            <Setter Property="Foreground" Value="{StaticResource DialogText}"/>
+            <Setter Property="Background" Value="{StaticResource DialogGhostBackground}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource DialogGhostBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#76A0FF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.88"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DialogPrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource DialogButtonStyle}">
+            <Setter Property="Background" Value="{StaticResource DialogPrimary}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource DialogPrimaryBorder}"/>
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+
+        <Style x:Key="BackupListItemStyle" TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Bd"
+                                Background="{StaticResource ListItemBackground}"
+                                BorderBrush="{StaticResource ListItemBorder}"
+                                BorderThickness="1"
+                                CornerRadius="12"
+                                Padding="12"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#7AA2F2"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource ListItemSelectedBackground}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource ListItemSelectedBorder}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DetailLabelStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource DialogMuted}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Margin" Value="0,0,0,3"/>
+        </Style>
+
+        <Style x:Key="DetailValueStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource DialogText}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+    </Window.Resources>
+
+    <Border CornerRadius="18"
+            BorderThickness="1"
+            BorderBrush="{StaticResource DialogBorder}"
+            Background="{StaticResource DialogBackground}"
+            SnapsToDevicePixels="True"
+            MouseLeftButtonDown="RootBorder_MouseLeftButtonDown">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="26"
+                              ShadowDepth="0"
+                              Opacity="0.45"
+                              Color="#000000"/>
+        </Border.Effect>
+
+        <Grid Margin="20">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <Border Width="28"
+                        Height="28"
+                        CornerRadius="14"
+                        Background="#243754"
+                        BorderBrush="#5B86E7"
+                        BorderThickness="1">
+                    <TextBlock Text="B"
+                               Foreground="#EAF2FF"
+                               FontSize="14"
+                               FontWeight="SemiBold"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"/>
+                </Border>
+
+                <TextBlock Grid.Column="1"
+                           Margin="10,0,0,0"
+                           Text="{DynamicResource Loc.BackupRestoreDialogTitle}"
+                           Foreground="{StaticResource DialogText}"
+                           FontSize="18"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center"/>
+            </Grid>
+
+            <TextBlock Grid.Row="1"
+                       Text="{DynamicResource Loc.BackupRestoreDialogSubtitle}"
+                       Foreground="{StaticResource DialogMuted}"
+                       FontSize="12"
+                       Margin="0,0,0,14"/>
+
+            <Grid Grid.Row="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.08*"/>
+                    <ColumnDefinition Width="14"/>
+                    <ColumnDefinition Width="0.92*"/>
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0"
+                        Background="{StaticResource DialogCardBackground}"
+                        BorderBrush="{StaticResource DialogCardBorder}"
+                        BorderThickness="1"
+                        CornerRadius="14"
+                        Padding="14">
+                    <Grid>
+                        <TextBlock x:Name="EmptyStateText"
+                                   Text="{DynamicResource Loc.BackupRestoreEmpty}"
+                                   Foreground="{StaticResource DialogMuted}"
+                                   FontSize="13"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   HorizontalAlignment="Center"
+                                   MaxWidth="320"
+                                   Visibility="Collapsed"/>
+
+                        <ListBox x:Name="BackupList"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 ItemContainerStyle="{StaticResource BackupListItemStyle}"
+                                 SelectionChanged="BackupList_SelectionChanged"
+                                 MouseDoubleClick="BackupList_MouseDoubleClick">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding DisplayName}"
+                                                   Foreground="{StaticResource DialogText}"
+                                                   FontSize="15"
+                                                   FontWeight="SemiBold"/>
+                                        <TextBlock Margin="0,4,0,0"
+                                                   Text="{Binding CreatedDisplay}"
+                                                   Foreground="{StaticResource DialogSubtle}"
+                                                   FontSize="12"/>
+                                        <TextBlock Margin="0,2,0,0"
+                                                   Text="{Binding ArchiveFileName}"
+                                                   Foreground="{StaticResource DialogMuted}"
+                                                   FontSize="11"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Column="2"
+                        Background="{StaticResource DialogCardBackground}"
+                        BorderBrush="{StaticResource DialogCardBorder}"
+                        BorderThickness="1"
+                        CornerRadius="14"
+                        Padding="16">
+                    <Grid>
+                        <TextBlock x:Name="NoSelectionText"
+                                   Text="{DynamicResource Loc.BackupRestoreNoSelection}"
+                                   Foreground="{StaticResource DialogMuted}"
+                                   FontSize="13"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   HorizontalAlignment="Center"
+                                   MaxWidth="260"/>
+
+                        <ScrollViewer x:Name="DetailsScrollViewer"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      Visibility="Collapsed">
+                            <StackPanel>
+                                <TextBlock Text="{DynamicResource Loc.BackupRestoreVersions}"
+                                           Style="{StaticResource DetailLabelStyle}"/>
+                                <TextBlock x:Name="VersionsValueText"
+                                           Style="{StaticResource DetailValueStyle}"/>
+
+                                <TextBlock Text="{DynamicResource Loc.BackupRestoreCreated}"
+                                           Style="{StaticResource DetailLabelStyle}"/>
+                                <TextBlock x:Name="CreatedValueText"
+                                           Style="{StaticResource DetailValueStyle}"/>
+
+                                <TextBlock Text="{DynamicResource Loc.BackupRestoreFileName}"
+                                           Style="{StaticResource DetailLabelStyle}"/>
+                                <TextBlock x:Name="FileNameValueText"
+                                           Style="{StaticResource DetailValueStyle}"/>
+
+                                <TextBlock Text="{DynamicResource Loc.BackupRestoreFileSize}"
+                                           Style="{StaticResource DetailLabelStyle}"/>
+                                <TextBlock x:Name="FileSizeValueText"
+                                           Style="{StaticResource DetailValueStyle}"/>
+
+                                <TextBlock Text="{DynamicResource Loc.BackupRestoreSourceDir}"
+                                           Style="{StaticResource DetailLabelStyle}"/>
+                                <TextBlock x:Name="SourceDirectoryValueText"
+                                           Style="{StaticResource DetailValueStyle}"/>
+
+                                <TextBlock Text="{DynamicResource Loc.BackupRestoreIncludes}"
+                                           Style="{StaticResource DetailLabelStyle}"/>
+                                <TextBlock x:Name="IncludesValueText"
+                                           Style="{StaticResource DetailValueStyle}"
+                                           Margin="0,0,0,0"/>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <Grid Grid.Row="3" Margin="0,16,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="10"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="10"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="10"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Button Grid.Column="0"
+                        Content="{DynamicResource Loc.BackupRestoreRefreshButton}"
+                        Style="{StaticResource DialogButtonStyle}"
+                        Click="RefreshButton_Click"/>
+
+                <Button x:Name="RestoreButton"
+                        Grid.Column="4"
+                        Content="{DynamicResource Loc.BackupRestoreApplyButton}"
+                        Style="{StaticResource DialogPrimaryButtonStyle}"
+                        IsDefault="True"
+                        IsEnabled="False"
+                        Click="RestoreButton_Click"/>
+
+                <Button Grid.Column="6"
+                        Content="{DynamicResource Loc.BackupRestoreCancelButton}"
+                        Style="{StaticResource DialogButtonStyle}"
+                        IsCancel="True"
+                        Click="CancelButton_Click"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
