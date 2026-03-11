@@ -25,7 +25,7 @@ namespace DesktopPlus
 
         private List<FileSystemWatcher>? _recycleBinWatchers;
         private CancellationTokenSource? _recycleBinRefreshCts;
-        public bool showEmptyRecycleBinButton = true;
+        public bool showEmptyRecycleBinButton = false;
 
         private static readonly HashSet<string> RecycleBinDefaultTitles =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -502,6 +502,30 @@ namespace DesktopPlus
             return Path.GetFileName(dataPath);
         }
 
+        private bool TryGetRecycleBinDisplayNameForDataPath(string dataPath, out string displayName)
+        {
+            displayName = string.Empty;
+
+            if (PanelType != PanelKind.RecycleBin || string.IsNullOrWhiteSpace(dataPath))
+            {
+                return false;
+            }
+
+            string? infoPath = TryGetRecycleBinInfoPath(dataPath);
+            if (string.IsNullOrWhiteSpace(infoPath) || !File.Exists(infoPath))
+            {
+                return false;
+            }
+
+            if (!TryReadRecycleBinMetadata(infoPath, out string originalPath, out _))
+            {
+                return false;
+            }
+
+            displayName = GetRecycleBinDisplayName(originalPath, dataPath);
+            return !string.IsNullOrWhiteSpace(displayName);
+        }
+
         private static bool TryReadRecycleBinMetadata(string infoPath, out string originalPath, out DateTime? deletedUtc)
         {
             originalPath = string.Empty;
@@ -850,8 +874,13 @@ namespace DesktopPlus
             });
         }
 
-        public void EmptyRecycleBin()
+        public async Task EmptyRecycleBinAsync()
         {
+            if (_isDeleteOperationRunning)
+            {
+                return;
+            }
+
             var result = System.Windows.MessageBox.Show(
                 MainWindow.GetString("Loc.EmptyRecycleBinConfirm"),
                 MainWindow.GetString("Loc.EmptyRecycleBinTitle"),
@@ -863,12 +892,21 @@ namespace DesktopPlus
                 return;
             }
 
+            SetDeleteOperationState(true);
             try
             {
-                SHEmptyRecycleBin(IntPtr.Zero, null, SHERB_NOPROGRESSUI | SHERB_NOSOUND);
+                await RunStaFileOperationAsync(() =>
+                {
+                    SHEmptyRecycleBin(IntPtr.Zero, null, SHERB_NOPROGRESSUI | SHERB_NOSOUND);
+                    return true;
+                });
             }
             catch
             {
+            }
+            finally
+            {
+                SetDeleteOperationState(false);
             }
 
             if (PanelType == PanelKind.RecycleBin)
@@ -936,15 +974,12 @@ namespace DesktopPlus
             }
 
             StopFolderWatchers();
-            if (EmptyRecycleBinButton != null)
-            {
-                EmptyRecycleBinButton.IsEnabled = false;
-            }
+            SetDeleteOperationState(true);
 
             (bool DeletedAny, List<string> Failures) clearResult;
             try
             {
-                clearResult = await Task.Run(() =>
+                clearResult = await RunStaFileOperationAsync(() =>
                 {
                     bool deletedAny = false;
                     var failures = new List<string>();
@@ -974,10 +1009,7 @@ namespace DesktopPlus
             }
             finally
             {
-                if (EmptyRecycleBinButton != null)
-                {
-                    EmptyRecycleBinButton.IsEnabled = true;
-                }
+                SetDeleteOperationState(false);
             }
 
             InvalidateFolderSearchIndex(folderPath, rebuildInBackground: true, rerunActiveSearch: true);

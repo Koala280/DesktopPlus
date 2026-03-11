@@ -13,6 +13,7 @@
         AllowDrop="True"
         Drop="Window_Drop"
         PreviewDragOver="Window_DragOver"
+        DragLeave="Window_DragLeave"
         PreviewMouseWheel="Window_PreviewMouseWheel"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
@@ -227,110 +228,170 @@
 
                     </Grid>
 
-                    <Border x:Name="SearchContainer"
-                            Grid.Column="4"
-                            Background="#1A202A"
-                            BorderBrush="{StaticResource PanelBorder}"
-                            BorderThickness="1"
-                            CornerRadius="10"
-                            Padding="10,0,8,0"
-                            VerticalAlignment="Center">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="SearchBox"
-                                     Grid.Column="0"
-                                     Background="Transparent"
-                                     BorderThickness="0"
-                                     Foreground="{StaticResource PanelText}"
-                                     CaretBrush="#F2F5FA"
-                                     FontSize="13"
-                                     Padding="0"
-                                     VerticalContentAlignment="Center"
-                                     TextChanged="SearchBox_TextChanged">
-                                <TextBox.Style>
-                                    <Style TargetType="TextBox">
-                                        <Setter Property="Template">
-                                            <Setter.Value>
-                                                <ControlTemplate TargetType="TextBox">
-                                                    <Grid>
-                                                        <ScrollViewer x:Name="PART_ContentHost"
-                                                                      VerticalAlignment="Center"
-                                                                      Margin="0,0,0,1"/>
-                                                        <TextBlock x:Name="Placeholder"
-                                                                   Text="{DynamicResource Loc.PanelSearchPlaceholder}"
-                                                                   Foreground="{StaticResource PanelMuted}"
-                                                                   Margin="0,0,0,1"
-                                                                   VerticalAlignment="Center"
-                                                                   IsHitTestVisible="False"
-                                                                   Visibility="Collapsed"/>
-                                                    </Grid>
-                                                    <ControlTemplate.Triggers>
-                                                        <Trigger Property="Text" Value="">
-                                                            <Setter TargetName="Placeholder" Property="Visibility" Value="Visible"/>
-                                                        </Trigger>
-                                                        <Trigger Property="IsKeyboardFocused" Value="True">
-                                                            <Setter TargetName="Placeholder" Property="Visibility" Value="Collapsed"/>
-                                                        </Trigger>
-                                                    </ControlTemplate.Triggers>
-                                                </ControlTemplate>
-                                            </Setter.Value>
-                                        </Setter>
-                                    </Style>
-                                </TextBox.Style>
-                            </TextBox>
-                            <Button x:Name="SearchClearButton"
-                                    Grid.Column="1"
-                                    Width="20"
-                                    Height="20"
-                                    Margin="4,0,0,0"
-                                    VerticalAlignment="Center"
-                                    HorizontalAlignment="Right"
-                                    BorderThickness="0"
-                                    Focusable="False"
-                                    Cursor="Hand"
-                                    Click="SearchClearButton_Click">
-                                <Button.Style>
-                                    <Style TargetType="Button">
-                                        <Setter Property="Visibility" Value="Visible"/>
-                                        <Setter Property="Background" Value="Transparent"/>
-                                        <Setter Property="Foreground" Value="{StaticResource PanelMuted}"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
-                                                <Setter Property="Visibility" Value="Collapsed"/>
-                                            </DataTrigger>
-                                            <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter Property="Background" Value="#2A303A"/>
-                                                <Setter Property="Foreground" Value="{StaticResource PanelText}"/>
-                                            </Trigger>
-                                            <Trigger Property="IsPressed" Value="True">
-                                                <Setter Property="Background" Value="#353C48"/>
-                                            </Trigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Button.Style>
-                                <Button.Template>
-                                    <ControlTemplate TargetType="Button">
-                                        <Border x:Name="Bd"
-                                                Background="{TemplateBinding Background}"
-                                                CornerRadius="5">
-                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                        </Border>
-                                    </ControlTemplate>
-                                </Button.Template>
-                                <Path Data="M4,4 L12,12 M12,4 L4,12"
+                    <Grid x:Name="SearchHost"
+                          Grid.Column="4"
+                          HorizontalAlignment="Left"
+                          VerticalAlignment="Center">
+                        <Button x:Name="SearchCompactButton"
+                                Width="24"
+                                Height="24"
+                                Padding="0"
+                                Visibility="Collapsed"
+                                Opacity="0"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                BorderThickness="0"
+                                Foreground="{StaticResource PanelMuted}"
+                                Focusable="False"
+                                Cursor="Hand"
+                                ToolTip="{DynamicResource Loc.PanelSearchShowTooltip}"
+                                Click="SearchCompactButton_Click">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Opacity" Value="0.88"/>
+                                    <Style.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Opacity" Value="1"/>
+                                            <Setter Property="Foreground" Value="{StaticResource PanelText}"/>
+                                        </Trigger>
+                                        <Trigger Property="IsPressed" Value="True">
+                                            <Setter Property="Opacity" Value="0.68"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            BorderThickness="{TemplateBinding BorderThickness}">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </Button.Template>
+                            <Grid Width="14" Height="14">
+                                <Ellipse Width="9"
+                                         Height="9"
+                                         HorizontalAlignment="Left"
+                                         VerticalAlignment="Top"
+                                         Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                         StrokeThickness="1.5"/>
+                                <Path Data="M9.4,9.4 L13.2,13.2"
                                       Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                                       StrokeThickness="1.5"
                                       StrokeStartLineCap="Round"
-                                      StrokeEndLineCap="Round"
-                                      Width="10"
-                                      Height="10"
-                                      Stretch="Uniform"/>
-                            </Button>
-                        </Grid>
-                    </Border>
+                                      StrokeEndLineCap="Round"/>
+                            </Grid>
+                        </Button>
+
+                        <Border x:Name="SearchContainer"
+                                Width="0"
+                                Visibility="Collapsed"
+                                Opacity="0"
+                                Background="#1A202A"
+                                BorderBrush="{StaticResource PanelBorder}"
+                                BorderThickness="1"
+                                CornerRadius="10"
+                                Padding="10,0,8,0"
+                                VerticalAlignment="Center">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="SearchBox"
+                                         Grid.Column="0"
+                                         Background="Transparent"
+                                         BorderThickness="0"
+                                         Foreground="{StaticResource PanelText}"
+                                         CaretBrush="#F2F5FA"
+                                         FontSize="13"
+                                         Padding="0"
+                                         VerticalContentAlignment="Center"
+                                         TextChanged="SearchBox_TextChanged"
+                                         LostKeyboardFocus="SearchBox_LostKeyboardFocus">
+                                    <TextBox.Style>
+                                        <Style TargetType="TextBox">
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="TextBox">
+                                                        <Grid>
+                                                            <ScrollViewer x:Name="PART_ContentHost"
+                                                                          VerticalAlignment="Center"
+                                                                          Margin="0,0,0,1"/>
+                                                            <TextBlock x:Name="Placeholder"
+                                                                       Text="{DynamicResource Loc.PanelSearchPlaceholder}"
+                                                                       Foreground="{StaticResource PanelMuted}"
+                                                                       Margin="0,0,0,1"
+                                                                       VerticalAlignment="Center"
+                                                                       IsHitTestVisible="False"
+                                                                       Visibility="Collapsed"/>
+                                                        </Grid>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="Text" Value="">
+                                                                <Setter TargetName="Placeholder" Property="Visibility" Value="Visible"/>
+                                                            </Trigger>
+                                                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                                                <Setter TargetName="Placeholder" Property="Visibility" Value="Collapsed"/>
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </TextBox.Style>
+                                </TextBox>
+                                <Button x:Name="SearchClearButton"
+                                        Grid.Column="1"
+                                        Width="20"
+                                        Height="20"
+                                        Margin="4,0,0,0"
+                                        VerticalAlignment="Center"
+                                        HorizontalAlignment="Right"
+                                        BorderThickness="0"
+                                        Focusable="False"
+                                        Cursor="Hand"
+                                        Click="SearchClearButton_Click">
+                                    <Button.Style>
+                                        <Style TargetType="Button">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                            <Setter Property="Background" Value="Transparent"/>
+                                            <Setter Property="Foreground" Value="{StaticResource PanelMuted}"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter Property="Background" Value="#2A303A"/>
+                                                    <Setter Property="Foreground" Value="{StaticResource PanelText}"/>
+                                                </Trigger>
+                                                <Trigger Property="IsPressed" Value="True">
+                                                    <Setter Property="Background" Value="#353C48"/>
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border x:Name="Bd"
+                                                    Background="{TemplateBinding Background}"
+                                                    CornerRadius="5">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                    <Path Data="M4,4 L12,12 M12,4 L4,12"
+                                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                          StrokeThickness="1.5"
+                                          StrokeStartLineCap="Round"
+                                          StrokeEndLineCap="Round"
+                                          Width="10"
+                                          Height="10"
+                                          Stretch="Uniform"/>
+                                </Button>
+                            </Grid>
+                        </Border>
+                    </Grid>
 
                     <Border x:Name="SearchSpacer"
                             Grid.Column="5"
@@ -400,7 +461,7 @@
                             BorderBrush="{StaticResource PanelBorder}"
                             BorderThickness="1.5"
                             CornerRadius="9"
-                            Margin="4"
+                            Margin="4,6,14,4"
                             Visibility="Visible">
                         <Border.Style>
                             <Style TargetType="Border">
@@ -482,11 +543,13 @@
                                      PreviewMouseLeftButtonUp="FileList_PreviewMouseLeftButtonUp"
                                      PreviewMouseRightButtonDown="FileList_PreviewMouseRightButtonDown"
                                      MouseRightButtonUp="FileList_MouseRightButtonUp"
-                                     LostMouseCapture="FileList_LostMouseCapture"
-                                     MouseMove="FileList_MouseMove"
-                                     AllowDrop="True"
-                                     Drop="FileList_Drop"
-                                     MouseDoubleClick="FileList_MouseDoubleClick">
+                                      LostMouseCapture="FileList_LostMouseCapture"
+                                      MouseMove="FileList_MouseMove"
+                                      AllowDrop="True"
+                                      DragOver="FileList_DragOver"
+                                      DragLeave="FileList_DragLeave"
+                                      Drop="FileList_Drop"
+                                      MouseDoubleClick="FileList_MouseDoubleClick">
                                 <ListBox.ItemsPanel>
                                     <ItemsPanelTemplate>
                                         <WrapPanel x:Name="FileWrapPanel"

@@ -157,10 +157,12 @@ namespace DesktopPlus
             Authors,
             Categories,
             Tags,
-            Title
+            Title,
+            ExplorerMetadata
         }
 
         private DetailsSortColumn _detailsSortColumn = DetailsSortColumn.Name;
+        private string? _detailsSortMetadataKey;
         private bool _detailsSortAscending = true;
         private bool _detailsSortActive;
         private readonly List<string> _detailsDefaultOrderPaths = new List<string>();
@@ -173,10 +175,10 @@ namespace DesktopPlus
         private string? _detailsHeaderContextColumnKey;
         private bool _detailsHeaderResizing;
         private string? _detailsHeaderResizeLeftKey;
-        private string? _detailsHeaderResizeRightKey;
+        private UIElement? _detailsHeaderResizeCaptureSource;
         private Point _detailsHeaderResizeStartPoint;
         private double _detailsHeaderResizeStartLeftWidth;
-        private double _detailsHeaderResizeStartRightWidth;
+        private bool _detailsHeaderSuppressNextPrimaryAction;
         private const double DetailsHeaderDragThreshold = 5.0;
         private const double DetailsHeaderResizeHitWidth = 8.0;
         private const string DetailsHeaderDropIndicatorTag = "DesktopPlus.DetailsHeaderDropIndicator";
@@ -924,11 +926,13 @@ namespace DesktopPlus
             {
                 _detailsSortActive = true;
                 _detailsSortColumn = clickedColumn;
+                _detailsSortMetadataKey = null;
                 _detailsSortAscending = true;
             }
             else if (_detailsSortColumn != clickedColumn)
             {
                 _detailsSortColumn = clickedColumn;
+                _detailsSortMetadataKey = null;
                 _detailsSortAscending = true;
             }
             else if (_detailsSortAscending)
@@ -939,6 +943,7 @@ namespace DesktopPlus
             {
                 _detailsSortActive = false;
                 _detailsSortColumn = DetailsSortColumn.Name;
+                _detailsSortMetadataKey = null;
                 _detailsSortAscending = true;
                 RestoreDefaultDetailsOrderInPlace();
 
@@ -1028,7 +1033,7 @@ namespace DesktopPlus
             return container;
         }
 
-        private void RefreshParentNavigationItemVisual()
+        private void EnsureParentNavigationItemState()
         {
             if (FileList == null)
             {
@@ -1038,17 +1043,54 @@ namespace DesktopPlus
             var backItem = FileList.Items
                 .OfType<ListBoxItem>()
                 .FirstOrDefault(IsParentNavigationItem);
-            if (backItem?.Tag is not string parentPath || string.IsNullOrWhiteSpace(parentPath))
+            string existingParentPath = backItem?.Tag as string ?? string.Empty;
+            string parentPath = TryGetCurrentFolderParentPath(out string resolvedParentPath)
+                ? resolvedParentPath
+                : string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(existingParentPath) &&
+                !string.Equals(existingParentPath, parentPath, StringComparison.OrdinalIgnoreCase))
             {
+                _baseItemPaths.Remove(existingParentPath);
+            }
+
+            if (string.IsNullOrWhiteSpace(parentPath))
+            {
+                if (backItem != null)
+                {
+                    backItem.Visibility = Visibility.Collapsed;
+                }
                 return;
             }
 
             string displayName = BuildParentNavigationDisplayName(parentPath);
+            if (backItem == null)
+            {
+                backItem = CreateFileListBoxItem(
+                    displayName,
+                    parentPath,
+                    isBackButton: true,
+                    _currentAppearance);
+                FileList.Items.Insert(0, backItem);
+            }
+
+            backItem.Tag = parentPath;
             backItem.Content = CreateListBoxItem(displayName, parentPath, isBackButton: true, _currentAppearance);
             ApplyListItemContainerSpacing(backItem);
             backItem.Visibility = ShouldShowParentNavigationListItem()
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            _baseItemPaths.Add(parentPath);
+        }
+
+        private void RefreshParentNavigationItemVisual()
+        {
+            if (FileList == null)
+            {
+                return;
+            }
+
+            EnsureParentNavigationItemState();
         }
 
         private void SortCurrentFolderItemsInPlace()
@@ -1147,6 +1189,12 @@ namespace DesktopPlus
                     comparison = string.Compare(
                         GetComparableDetailsText(MetadataTitle, leftPath, leftIsFolder),
                         GetComparableDetailsText(MetadataTitle, rightPath, rightIsFolder),
+                        StringComparison.CurrentCultureIgnoreCase);
+                    break;
+                case DetailsSortColumn.ExplorerMetadata:
+                    comparison = string.Compare(
+                        GetComparableDetailsText(_detailsSortMetadataKey ?? string.Empty, leftPath, leftIsFolder),
+                        GetComparableDetailsText(_detailsSortMetadataKey ?? string.Empty, rightPath, rightIsFolder),
                         StringComparison.CurrentCultureIgnoreCase);
                     break;
                 case DetailsSortColumn.Name:
@@ -1349,7 +1397,7 @@ namespace DesktopPlus
             var visibleColumns = GetVisibleDetailsColumns();
             var panel = new Grid
             {
-                Width = rowWidth,
+                Width = GetDetailsColumnVisualWidth(actualWidths, rowWidth),
                 Margin = new Thickness(4, 2, 4, 2),
                 Opacity = baseOpacity
             };
@@ -1375,15 +1423,10 @@ namespace DesktopPlus
                 }
                 else
                 {
-                    cellElement = new TextBlock
-                    {
-                        Text = GetDetailsColumnValueText(metadataKey, displayName, path, isFolder, isBackButton),
-                        Foreground = metadataBrush,
-                        FontSize = metaSize,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        TextTrimming = TextTrimming.CharacterEllipsis,
-                        Margin = new Thickness(8, 0, 0, 0)
-                    };
+                    cellElement = CreateDetailsMetadataCell(
+                        GetDetailsColumnValueText(metadataKey, displayName, path, isFolder, isBackButton),
+                        metaSize,
+                        metadataBrush);
                 }
 
                 Grid.SetColumn(cellElement, columnIndex++);
@@ -1637,6 +1680,28 @@ namespace DesktopPlus
             return ParentNavigationTextPrefix + GetDisplayNameForPath(path);
         }
 
+        private bool TryGetCurrentFolderParentPath(out string parentPath)
+        {
+            parentPath = string.Empty;
+
+            if (PanelType != PanelKind.Folder || string.IsNullOrWhiteSpace(currentFolderPath))
+            {
+                return false;
+            }
+
+            try
+            {
+                parentPath = Path.GetDirectoryName(
+                    currentFolderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) ?? string.Empty;
+            }
+            catch
+            {
+                parentPath = Path.GetDirectoryName(currentFolderPath) ?? string.Empty;
+            }
+
+            return !string.IsNullOrWhiteSpace(parentPath);
+        }
+
         private bool IsParentNavigationPath(string path)
         {
             if (PanelType != PanelKind.Folder ||
@@ -1646,8 +1711,7 @@ namespace DesktopPlus
                 return false;
             }
 
-            string? parentPath = Path.GetDirectoryName(currentFolderPath);
-            return !string.IsNullOrWhiteSpace(parentPath) &&
+            return TryGetCurrentFolderParentPath(out string parentPath) &&
                    string.Equals(path, parentPath, StringComparison.OrdinalIgnoreCase);
         }
 
@@ -2008,6 +2072,10 @@ namespace DesktopPlus
 
             if (!changed)
             {
+                RefreshParentNavigationItemVisual();
+                RefreshDetailsHeader();
+                UpdateWrapPanelWidth();
+                UpdateDropZoneVisibility();
                 return;
             }
 
@@ -2557,11 +2625,14 @@ namespace DesktopPlus
             foreach (ListBoxItem item in FileList.Items.OfType<ListBoxItem>())
             {
                 bool matchesSearch = ShouldItemMatchCurrentSearchFilter(item);
+                bool isParentNavigationItem = IsParentNavigationItem(item);
 
                 if (item.Content is not FrameworkElement root ||
                     root.Tag is not PhotoTileLayoutInfo layout)
                 {
-                    bool shouldShow = matchesSearch;
+                    bool shouldShow = isParentNavigationItem
+                        ? (ShouldShowParentNavigationListItem() && matchesSearch)
+                        : matchesSearch;
                     if (isPhotoMode &&
                         item.Tag is string pathTag &&
                         !IsPhotoPath(pathTag))
@@ -3283,16 +3354,8 @@ namespace DesktopPlus
             }
 
             double targetWidth = GetDetailsItemWidth();
-            foreach (var item in FileList.Items.OfType<ListBoxItem>())
-            {
-                if (item.Content is FrameworkElement element &&
-                    Math.Abs(element.Width - targetWidth) > 0.5)
-                {
-                    element.Width = targetWidth;
-                }
-            }
-
-            RefreshDetailsHeader();
+            var actualWidths = GetActualDetailsColumnWidths(targetWidth);
+            ApplyDetailsColumnWidthsToVisuals(actualWidths, targetWidth);
         }
 
         private double GetContentLayoutWidth()

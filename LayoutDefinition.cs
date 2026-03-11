@@ -9,12 +9,13 @@ namespace DesktopPlus
         public string DefaultPanelPresetName { get; set; } = "";
         public bool PanelDefaultShowHidden { get; set; }
         public bool PanelDefaultShowParentNavigationItem { get; set; } = true;
+        public string PanelDefaultIconViewParentNavigationMode { get; set; } = DesktopPanel.IconParentNavigationModeItem;
         public bool PanelDefaultShowFileExtensions { get; set; } = true;
         public bool PanelDefaultExpandOnHover { get; set; } = false;
         public bool PanelDefaultOpenFoldersExternally { get; set; }
         public bool PanelDefaultOpenItemsOnSingleClick { get; set; }
         public bool PanelDefaultShowSettingsButton { get; set; } = true;
-        public bool PanelDefaultShowEmptyRecycleBinButton { get; set; } = true;
+        public bool PanelDefaultShowEmptyRecycleBinButton { get; set; } = false;
         public string PanelDefaultMovementMode { get; set; } = "titlebar";
         public string PanelDefaultSearchVisibilityMode { get; set; } = "always";
         public string PanelDefaultViewMode { get; set; } = "icons";

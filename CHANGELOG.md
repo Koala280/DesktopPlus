@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-03-11
+
+### Added
+
+- Explorer detail view columns can now include folder-specific metadata discovered from Windows Explorer and keep those custom selections in the column picker.
+- Folder panels now support configurable parent navigation modes, including a header back button, a parent-folder item, or disabling parent navigation entirely.
+
+### Changed
+
+- Panel search adapts to narrow headers by switching to a compact search button instead of forcing an inline search field.
+- Desktop auto-sort now reuses matching folder-backed targets more reliably and can promote legacy list targets to folder targets when the destination already exists.
+- `Start with Windows` now prefers a per-user scheduled task (`DesktopPlus Startup`) and falls back to the `Run` registry key only when Task Scheduler registration is unavailable.
+
+### Fixed
+
+- Explorer metadata caches now refresh correctly after drag/drop, file operations, and folder watcher updates so detail values stay in sync.
+- Recycle bin panel defaults now keep the empty button disabled unless it is explicitly enabled in panel or layout settings.
+
 ## [1.2.0] - 2026-03-07
 
 ### Added

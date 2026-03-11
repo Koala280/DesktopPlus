@@ -62,6 +62,7 @@ namespace DesktopPlus
             public int OpenTabIndex { get; init; } = -1;
             public WindowData? SavedPanel { get; init; }
             public int SavedTabIndex { get; init; } = -1;
+            public bool UsesFolderTarget { get; init; }
 
             public bool HasOpenPanel => OpenPanel != null;
             public bool HasSavedPanel => SavedPanel != null;
@@ -983,7 +984,137 @@ namespace DesktopPlus
             return -1;
         }
 
-        private AutoSortTargetMatch? ResolveAutoSortTargetMatch(string targetName)
+        private static string NormalizeComparableFolderPath(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                return Path.GetFullPath(path)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            }
+            catch
+            {
+                return path.Trim()
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            }
+        }
+
+        private static bool AreComparableFolderPathsEqual(string? left, string? right)
+        {
+            string normalizedLeft = NormalizeComparableFolderPath(left);
+            string normalizedRight = NormalizeComparableFolderPath(right);
+            return !string.IsNullOrWhiteSpace(normalizedLeft) &&
+                   string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryResolveOpenAutoSortTargetUsage(
+            DesktopPanel panel,
+            int tabIndex,
+            string? targetFolderPath,
+            out bool usesFolderTarget)
+        {
+            usesFolderTarget = false;
+
+            if (panel == null)
+            {
+                return false;
+            }
+
+            PanelKind kind;
+            string folderPath;
+            string defaultFolderPath;
+
+            if (tabIndex >= 0 && tabIndex < panel.Tabs.Count)
+            {
+                if (tabIndex == panel.ActiveTabIndex)
+                {
+                    kind = ResolvePanelKind(panel);
+                    folderPath = panel.currentFolderPath ?? "";
+                    defaultFolderPath = panel.defaultFolderPath ?? "";
+                }
+                else
+                {
+                    var tab = panel.Tabs[tabIndex];
+                    kind = ResolvePanelKind(tab);
+                    folderPath = tab.FolderPath ?? "";
+                    defaultFolderPath = tab.DefaultFolderPath ?? "";
+                }
+            }
+            else
+            {
+                kind = ResolvePanelKind(panel);
+                folderPath = panel.currentFolderPath ?? "";
+                defaultFolderPath = panel.defaultFolderPath ?? "";
+            }
+
+            if (kind == PanelKind.List || kind == PanelKind.None)
+            {
+                return true;
+            }
+
+            if (kind == PanelKind.Folder &&
+                (AreComparableFolderPathsEqual(folderPath, targetFolderPath) ||
+                 AreComparableFolderPathsEqual(defaultFolderPath, targetFolderPath)))
+            {
+                usesFolderTarget = true;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryResolveSavedAutoSortTargetUsage(
+            WindowData panel,
+            int tabIndex,
+            string? targetFolderPath,
+            out bool usesFolderTarget)
+        {
+            usesFolderTarget = false;
+
+            if (panel == null)
+            {
+                return false;
+            }
+
+            PanelKind kind;
+            string folderPath;
+            string defaultFolderPath;
+
+            if (tabIndex >= 0 && panel.Tabs != null && tabIndex < panel.Tabs.Count)
+            {
+                var tab = panel.Tabs[tabIndex];
+                kind = ResolvePanelKind(tab);
+                folderPath = tab.FolderPath ?? "";
+                defaultFolderPath = tab.DefaultFolderPath ?? "";
+            }
+            else
+            {
+                kind = ResolvePanelKind(panel);
+                folderPath = panel.FolderPath ?? "";
+                defaultFolderPath = panel.DefaultFolderPath ?? "";
+            }
+
+            if (kind == PanelKind.List || kind == PanelKind.None)
+            {
+                return true;
+            }
+
+            if (kind == PanelKind.Folder &&
+                (AreComparableFolderPathsEqual(folderPath, targetFolderPath) ||
+                 AreComparableFolderPathsEqual(defaultFolderPath, targetFolderPath)))
+            {
+                usesFolderTarget = true;
+                return true;
+            }
+
+            return false;
+        }
+
+        private AutoSortTargetMatch? ResolveAutoSortTargetMatch(string targetName, string? targetFolderPath)
         {
             if (string.IsNullOrWhiteSpace(targetName))
             {
@@ -999,23 +1130,27 @@ namespace DesktopPlus
             foreach (var panel in openPanels)
             {
                 int tabIndex = panel.FindTabIndexByName(normalizedTarget);
-                if (tabIndex >= 0)
+                if (tabIndex >= 0 &&
+                    TryResolveOpenAutoSortTargetUsage(panel, tabIndex, targetFolderPath, out bool usesFolderTarget))
                 {
                     return new AutoSortTargetMatch
                     {
                         OpenPanel = panel,
-                        OpenTabIndex = tabIndex
+                        OpenTabIndex = tabIndex,
+                        UsesFolderTarget = usesFolderTarget
                     };
                 }
             }
 
             foreach (var panel in openPanels)
             {
-                if (MatchesAutoSortPanelName(normalizedTarget, panel.PanelTitle?.Text ?? panel.Title))
+                if (MatchesAutoSortPanelName(normalizedTarget, panel.PanelTitle?.Text ?? panel.Title) &&
+                    TryResolveOpenAutoSortTargetUsage(panel, -1, targetFolderPath, out bool usesFolderTarget))
                 {
                     return new AutoSortTargetMatch
                     {
-                        OpenPanel = panel
+                        OpenPanel = panel,
+                        UsesFolderTarget = usesFolderTarget
                     };
                 }
             }
@@ -1038,12 +1173,14 @@ namespace DesktopPlus
                 }
 
                 int tabIndex = FindMatchingTabIndex(saved.Tabs, normalizedTarget);
-                if (tabIndex >= 0)
+                if (tabIndex >= 0 &&
+                    TryResolveSavedAutoSortTargetUsage(saved, tabIndex, targetFolderPath, out bool usesFolderTarget))
                 {
                     return new AutoSortTargetMatch
                     {
                         SavedPanel = saved,
-                        SavedTabIndex = tabIndex
+                        SavedTabIndex = tabIndex,
+                        UsesFolderTarget = usesFolderTarget
                     };
                 }
             }
@@ -1061,16 +1198,184 @@ namespace DesktopPlus
                     continue;
                 }
 
-                if (MatchesAutoSortPanelName(normalizedTarget, saved.PanelTitle))
+                if (MatchesAutoSortPanelName(normalizedTarget, saved.PanelTitle) &&
+                    TryResolveSavedAutoSortTargetUsage(saved, -1, targetFolderPath, out bool usesFolderTarget))
                 {
                     return new AutoSortTargetMatch
                     {
-                        SavedPanel = saved
+                        SavedPanel = saved,
+                        UsesFolderTarget = usesFolderTarget
                     };
                 }
             }
 
             return null;
+        }
+
+        private static bool IsLegacyAutoSortListTarget(IEnumerable<string>? pinnedItems, string? targetFolderPath)
+        {
+            if (string.IsNullOrWhiteSpace(targetFolderPath))
+            {
+                return false;
+            }
+
+            var paths = pinnedItems?
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList()
+                ?? new List<string>();
+
+            return paths.Count > 0 && paths.All(path => IsPathInside(path, targetFolderPath));
+        }
+
+        private static int ResolveSavedAutoSortTargetTabIndex(WindowData panel, int tabIndex)
+        {
+            if (panel?.Tabs == null || panel.Tabs.Count == 0)
+            {
+                return -1;
+            }
+
+            if (tabIndex >= 0 && tabIndex < panel.Tabs.Count)
+            {
+                return tabIndex;
+            }
+
+            return Math.Max(0, Math.Min(panel.ActiveTabIndex, panel.Tabs.Count - 1));
+        }
+
+        private static void SyncSavedPanelActiveTabContent(WindowData panel, int tabIndex)
+        {
+            if (panel?.Tabs == null ||
+                tabIndex < 0 ||
+                tabIndex >= panel.Tabs.Count ||
+                tabIndex != panel.ActiveTabIndex)
+            {
+                return;
+            }
+
+            var tab = panel.Tabs[tabIndex];
+            var kind = ResolvePanelKind(tab);
+            panel.PanelType = kind.ToString();
+            panel.FolderPath = kind == PanelKind.Folder ? tab.FolderPath ?? "" : "";
+            panel.DefaultFolderPath = tab.DefaultFolderPath ?? "";
+            panel.PinnedItems = kind == PanelKind.List
+                ? tab.PinnedItems?.ToList() ?? new List<string>()
+                : new List<string>();
+        }
+
+        private static bool TryPromoteOpenAutoSortTargetToFolder(
+            DesktopPanel panel,
+            int tabIndex,
+            string? targetFolderPath)
+        {
+            if (panel == null ||
+                string.IsNullOrWhiteSpace(targetFolderPath) ||
+                !Directory.Exists(targetFolderPath))
+            {
+                return false;
+            }
+
+            PanelKind kind;
+            List<string>? pinnedItems;
+
+            if (tabIndex >= 0 && tabIndex < panel.Tabs.Count)
+            {
+                if (tabIndex == panel.ActiveTabIndex)
+                {
+                    kind = ResolvePanelKind(panel);
+                    pinnedItems = panel.PinnedItems;
+                }
+                else
+                {
+                    var tab = panel.Tabs[tabIndex];
+                    kind = ResolvePanelKind(tab);
+                    pinnedItems = tab.PinnedItems;
+                }
+            }
+            else
+            {
+                kind = ResolvePanelKind(panel);
+                pinnedItems = panel.PinnedItems;
+            }
+
+            if (kind == PanelKind.List && !IsLegacyAutoSortListTarget(pinnedItems, targetFolderPath))
+            {
+                return false;
+            }
+
+            if (kind != PanelKind.List && kind != PanelKind.None)
+            {
+                return false;
+            }
+
+            if (tabIndex >= 0 && tabIndex < panel.Tabs.Count && tabIndex != panel.ActiveTabIndex)
+            {
+                var tab = panel.Tabs[tabIndex];
+                tab.PanelType = PanelKind.Folder.ToString();
+                tab.FolderPath = targetFolderPath;
+                tab.DefaultFolderPath = targetFolderPath;
+                tab.PinnedItems = new List<string>();
+                return true;
+            }
+
+            panel.defaultFolderPath = targetFolderPath;
+            panel.LoadFolder(targetFolderPath, saveSettings: false, renamePanelTitle: false);
+            panel.defaultFolderPath = targetFolderPath;
+            panel.SaveActiveTabState();
+            return true;
+        }
+
+        private static bool TryPromoteSavedAutoSortTargetToFolder(
+            WindowData panel,
+            int tabIndex,
+            string? targetFolderPath)
+        {
+            if (panel == null ||
+                string.IsNullOrWhiteSpace(targetFolderPath) ||
+                !Directory.Exists(targetFolderPath))
+            {
+                return false;
+            }
+
+            int resolvedTabIndex = ResolveSavedAutoSortTargetTabIndex(panel, tabIndex);
+            if (resolvedTabIndex >= 0)
+            {
+                var tab = panel.Tabs![resolvedTabIndex];
+                var kind = ResolvePanelKind(tab);
+                if (kind == PanelKind.List && !IsLegacyAutoSortListTarget(tab.PinnedItems, targetFolderPath))
+                {
+                    return false;
+                }
+
+                if (kind != PanelKind.List && kind != PanelKind.None)
+                {
+                    return false;
+                }
+
+                tab.PanelType = PanelKind.Folder.ToString();
+                tab.FolderPath = targetFolderPath;
+                tab.DefaultFolderPath = targetFolderPath;
+                tab.PinnedItems = new List<string>();
+                SyncSavedPanelActiveTabContent(panel, resolvedTabIndex);
+                return true;
+            }
+
+            var panelKind = ResolvePanelKind(panel);
+            if (panelKind == PanelKind.List && !IsLegacyAutoSortListTarget(panel.PinnedItems, targetFolderPath))
+            {
+                return false;
+            }
+
+            if (panelKind != PanelKind.List && panelKind != PanelKind.None)
+            {
+                return false;
+            }
+
+            panel.PanelType = PanelKind.Folder.ToString();
+            panel.FolderPath = targetFolderPath;
+            panel.DefaultFolderPath = targetFolderPath;
+            panel.PinnedItems = new List<string>();
+            return true;
         }
 
         private static List<string> MergeDistinctPaths(IEnumerable<string>? existing, IEnumerable<string> additions)
@@ -1516,7 +1821,7 @@ namespace DesktopPlus
             return (shiftedLeft, shiftedTop);
         }
 
-        private WindowData CreateAutoSortPanelData(string panelName, IEnumerable<string> initialItems, int index)
+        private WindowData CreateAutoSortPanelData(string panelName, string? targetFolderPath, IEnumerable<string> initialItems, int index)
         {
             const double panelWidth = 420;
             const double panelHeight = 360;
@@ -1524,13 +1829,14 @@ namespace DesktopPlus
             const double gap = 12;
 
             var position = FindFreeAutoSortPanelPosition(index, panelWidth, panelHeight, margin, gap);
+            bool useFolderTarget = !string.IsNullOrWhiteSpace(targetFolderPath);
 
             return new WindowData
             {
                 PanelId = GeneratePanelId(),
-                PanelType = PanelKind.List.ToString(),
-                FolderPath = "",
-                DefaultFolderPath = "",
+                PanelType = useFolderTarget ? PanelKind.Folder.ToString() : PanelKind.List.ToString(),
+                FolderPath = useFolderTarget ? targetFolderPath! : "",
+                DefaultFolderPath = useFolderTarget ? targetFolderPath! : "",
                 Left = position.Left,
                 Top = position.Top,
                 Width = panelWidth,
@@ -1547,7 +1853,9 @@ namespace DesktopPlus
                 OpenFoldersExternally = false,
                 MovementMode = "titlebar",
                 SearchVisibilityMode = DesktopPanel.SearchVisibilityAlways,
-                PinnedItems = MergeDistinctPaths(Array.Empty<string>(), initialItems)
+                PinnedItems = useFolderTarget
+                    ? new List<string>()
+                    : MergeDistinctPaths(Array.Empty<string>(), initialItems)
             };
         }
 
@@ -1563,11 +1871,44 @@ namespace DesktopPlus
                 return;
             }
 
-            var targetMatch = ResolveAutoSortTargetMatch(panelName);
+            string? targetFolderPath = movedPaths
+                .Select(path =>
+                {
+                    try
+                    {
+                        return Path.GetDirectoryName(
+                            path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                    }
+                    catch
+                    {
+                        return Path.GetDirectoryName(path);
+                    }
+                })
+                .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path));
+
+            var targetMatch = ResolveAutoSortTargetMatch(panelName, targetFolderPath);
 
             if (targetMatch != null && targetMatch.HasOpenPanel)
             {
                 var openPanel = targetMatch.OpenPanel!;
+                if (targetMatch.UsesFolderTarget)
+                {
+                    if (!string.IsNullOrWhiteSpace(targetFolderPath) &&
+                        Directory.Exists(targetFolderPath) &&
+                        (targetMatch.OpenTabIndex < 0 ||
+                         targetMatch.OpenTabIndex == openPanel.ActiveTabIndex))
+                    {
+                        openPanel.LoadFolder(targetFolderPath, saveSettings: false, renamePanelTitle: false);
+                    }
+
+                    return;
+                }
+
+                if (TryPromoteOpenAutoSortTargetToFolder(openPanel, targetMatch.OpenTabIndex, targetFolderPath))
+                {
+                    return;
+                }
+
                 if (targetMatch.OpenTabIndex >= 0)
                 {
                     openPanel.AppendItemsToTab(targetMatch.OpenTabIndex, movedPaths, animateEntries: true);
@@ -1592,6 +1933,30 @@ namespace DesktopPlus
                 NormalizeWindowData(savedPanel);
                 savedPanel.IsHidden = false;
 
+                if (targetMatch.UsesFolderTarget)
+                {
+                    DesktopPanel openedFolderPanel = OpenPanelFromData(savedPanel);
+                    if (targetMatch.SavedTabIndex >= 0 &&
+                        openedFolderPanel.ActiveTabIndex != targetMatch.SavedTabIndex)
+                    {
+                        openedFolderPanel.SwitchToTab(targetMatch.SavedTabIndex);
+                    }
+
+                    return;
+                }
+
+                if (TryPromoteSavedAutoSortTargetToFolder(savedPanel, targetMatch.SavedTabIndex, targetFolderPath))
+                {
+                    DesktopPanel openedFolderPanel = OpenPanelFromData(savedPanel);
+                    if (targetMatch.SavedTabIndex >= 0 &&
+                        openedFolderPanel.ActiveTabIndex != targetMatch.SavedTabIndex)
+                    {
+                        openedFolderPanel.SwitchToTab(targetMatch.SavedTabIndex);
+                    }
+
+                    return;
+                }
+
                 if (targetMatch.SavedTabIndex >= 0 &&
                     savedPanel.Tabs != null &&
                     targetMatch.SavedTabIndex < savedPanel.Tabs.Count)
@@ -1601,13 +1966,28 @@ namespace DesktopPlus
                     targetTab.PanelType = PanelKind.List.ToString();
                     targetTab.FolderPath = "";
                     targetTab.DefaultFolderPath = "";
+                    SyncSavedPanelActiveTabContent(savedPanel, targetMatch.SavedTabIndex);
                 }
                 else
                 {
-                    savedPanel.PanelType = PanelKind.List.ToString();
-                    savedPanel.FolderPath = "";
-                    savedPanel.DefaultFolderPath = "";
-                    savedPanel.PinnedItems = MergeDistinctPaths(savedPanel.PinnedItems, movedPaths);
+                    int resolvedSavedTabIndex = ResolveSavedAutoSortTargetTabIndex(savedPanel, targetMatch.SavedTabIndex);
+                    if (resolvedSavedTabIndex >= 0)
+                    {
+                        var activeTab = savedPanel.Tabs![resolvedSavedTabIndex];
+                        activeTab.PinnedItems = MergeDistinctPaths(activeTab.PinnedItems, movedPaths);
+                        activeTab.PanelType = PanelKind.List.ToString();
+                        activeTab.FolderPath = "";
+                        activeTab.DefaultFolderPath = "";
+                        SyncSavedPanelActiveTabContent(savedPanel, resolvedSavedTabIndex);
+                    }
+                    else
+                    {
+                        savedPanel.PanelType = PanelKind.List.ToString();
+                        savedPanel.FolderPath = "";
+                        savedPanel.DefaultFolderPath = "";
+                        savedPanel.PinnedItems = MergeDistinctPaths(savedPanel.PinnedItems, movedPaths);
+                    }
+
                     savedPanel.PanelTitle = panelName;
                 }
 
@@ -1632,7 +2012,7 @@ namespace DesktopPlus
                 return;
             }
 
-            var data = CreateAutoSortPanelData(panelName, movedPaths, _newAutoSortPanelIndex++);
+            var data = CreateAutoSortPanelData(panelName, targetFolderPath, movedPaths, _newAutoSortPanelIndex++);
             DesktopPanel panel = OpenPanelFromData(data);
             panel.AnimateListItemsForPaths(movedPaths);
         }

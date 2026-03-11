@@ -218,6 +218,21 @@
                                   Content="{DynamicResource Loc.PanelSettingsShowParentFolder}"
                                   Style="{StaticResource AccentCheckBox}"
                                   Margin="0,8,0,0"/>
+                        <TextBlock x:Name="IconParentNavigationModeLabel"
+                                   Text="{DynamicResource Loc.PanelSettingsBackNavigation}"
+                                   Foreground="{StaticResource Muted}"
+                                   FontSize="12"
+                                   Margin="0,10,0,0"
+                                   Visibility="Collapsed"/>
+                        <ComboBox x:Name="IconParentNavigationModeSelect"
+                                  Height="34"
+                                  Style="{StaticResource FlatCombo}"
+                                  Margin="0,4,0,0"
+                                  Visibility="Collapsed">
+                            <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsBackNavigationHeader}" Tag="header"/>
+                            <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsBackNavigationParentItem}" Tag="item"/>
+                            <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsBackNavigationNone}" Tag="none"/>
+                        </ComboBox>
                         <CheckBox x:Name="FileExtensionsToggle"
                                   Content="{DynamicResource Loc.PanelSettingsShowFileExtensions}"
                                   Style="{StaticResource AccentCheckBox}"
@@ -274,8 +289,14 @@
                                       Height="34"
                                       Style="{StaticResource FlatCombo}"
                                       Margin="0,4,0,0">
-                                <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSearchAlways}" Tag="always"/>
-                                <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSearchExpandedOnly}" Tag="expanded"/>
+                                <ComboBoxItem x:Name="SearchVisibilityFieldItem"
+                                              Content="{DynamicResource Loc.PanelSettingsSearchAlways}"
+                                              Tag="always"
+                                              ToolTip="{DynamicResource Loc.PanelSettingsSearchFieldUnavailable}"
+                                              ToolTipService.ShowOnDisabled="True"/>
+                                <ComboBoxItem x:Name="SearchVisibilityButtonItem"
+                                              Content="{DynamicResource Loc.PanelSettingsSearchExpandedOnly}"
+                                              Tag="button"/>
                                 <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSearchHidden}" Tag="hidden"/>
                             </ComboBox>
                         </Grid>

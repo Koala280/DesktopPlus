@@ -350,6 +350,8 @@ namespace DesktopPlus
 
             bool changed = false;
 
+            changed |= PruneShadowedSingleTabHosts(savedWindows, openPanelKeys);
+
             void RemoveWindows(HashSet<string> keys)
             {
                 if (keys.Count == 0)
@@ -494,6 +496,67 @@ namespace DesktopPlus
 
             RemoveWindows(orphanedMultiTabKeys);
             return changed;
+        }
+
+        private static bool PruneShadowedSingleTabHosts(
+            List<WindowData> windows,
+            IReadOnlyCollection<string>? livePanelKeys = null)
+        {
+            if (windows == null || windows.Count == 0)
+            {
+                return false;
+            }
+
+            var liveKeys = new HashSet<string>(
+                livePanelKeys ?? Array.Empty<string>(),
+                StringComparer.OrdinalIgnoreCase);
+            var standaloneKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var window in windows)
+            {
+                if (window == null)
+                {
+                    continue;
+                }
+
+                NormalizeWindowData(window);
+                if (window.Tabs == null || window.Tabs.Count == 0)
+                {
+                    standaloneKeys.Add(GetPanelKey(window));
+                }
+            }
+
+            var wrapperKeysToRemove = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var window in windows)
+            {
+                if (window?.Tabs == null || window.Tabs.Count != 1)
+                {
+                    continue;
+                }
+
+                string ownerKey = GetPanelKey(window);
+                string tabPanelKey = window.Tabs[0].PanelId ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(tabPanelKey) ||
+                    string.Equals(ownerKey, tabPanelKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (standaloneKeys.Contains(tabPanelKey) || liveKeys.Contains(tabPanelKey))
+                {
+                    wrapperKeysToRemove.Add(ownerKey);
+                }
+            }
+
+            if (wrapperKeysToRemove.Count == 0)
+            {
+                return false;
+            }
+
+            windows.RemoveAll(window =>
+                window != null &&
+                wrapperKeysToRemove.Contains(GetPanelKey(window)));
+            return true;
         }
 
         private List<SavedPanelRepresentation> CreateSavedPanelRepresentations(IEnumerable<WindowData> windows)
@@ -845,6 +908,32 @@ namespace DesktopPlus
             return score;
         }
 
+        private static PanelOverviewItem SelectPreferredPanelOverviewItem(IEnumerable<PanelOverviewItem> items)
+        {
+            return items
+                .OrderByDescending(item => item.Panel != null && IsDirectPanelOverviewBinding(item))
+                .ThenByDescending(ScorePanelOverviewItemForDedup)
+                .ThenBy(item => item.PanelKey, StringComparer.OrdinalIgnoreCase)
+                .First();
+        }
+
+        private static string GetLivePanelOverviewBindingKey(PanelOverviewItem item)
+        {
+            if (item.Panel == null)
+            {
+                return string.Empty;
+            }
+
+            return string.Concat(
+                item.Panel.GetHashCode().ToString(),
+                "|",
+                GetPanelKey(item.Panel),
+                "|",
+                item.HostTabIndex.ToString(),
+                "|",
+                item.RepresentsTab ? "tab" : "panel");
+        }
+
         private List<PanelOverviewItem> DeduplicatePanelOverviewItems(IEnumerable<PanelOverviewItem> items)
         {
             var deduped = new List<PanelOverviewItem>();
@@ -866,25 +955,18 @@ namespace DesktopPlus
                     .Where(item => item.Panel != null)
                     .ToList();
 
-                if (liveItems.Count == duplicates.Count)
+                if (liveItems.Count > 0)
                 {
-                    deduped.AddRange(duplicates);
+                    var uniqueLiveItems = liveItems
+                        .GroupBy(GetLivePanelOverviewBindingKey, StringComparer.OrdinalIgnoreCase)
+                        .Select(SelectPreferredPanelOverviewItem)
+                        .ToList();
+
+                    deduped.AddRange(uniqueLiveItems);
                     continue;
                 }
 
-                if (liveItems.Count > 1)
-                {
-                    deduped.AddRange(liveItems);
-                    continue;
-                }
-
-                PanelOverviewItem keep = duplicates
-                    .OrderByDescending(item => item.Panel != null && IsDirectPanelOverviewBinding(item))
-                    .ThenByDescending(ScorePanelOverviewItemForDedup)
-                    .ThenBy(item => item.PanelKey, StringComparer.OrdinalIgnoreCase)
-                    .First();
-
-                deduped.Add(keep);
+                deduped.Add(SelectPreferredPanelOverviewItem(duplicates));
             }
 
             return deduped;
@@ -1119,6 +1201,7 @@ namespace DesktopPlus
         {
             panel.showHiddenItems = data.ShowHidden;
             panel.showParentNavigationItem = data.ShowParentNavigationItem;
+            panel.iconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(data.IconViewParentNavigationMode, data.ShowParentNavigationItem);
             panel.showFileExtensions = data.ShowFileExtensions;
             panel.viewMode = DesktopPanel.NormalizeViewMode(data.ViewMode);
             panel.showMetadataType = data.ShowMetadataType;
@@ -1152,6 +1235,7 @@ namespace DesktopPlus
             panel.showEmptyRecycleBinButton = data.ShowEmptyRecycleBinButton;
             panel.ApplyMovementMode(string.IsNullOrWhiteSpace(data.MovementMode) ? "titlebar" : data.MovementMode);
             panel.ApplySettingsButtonVisibility();
+            panel.UpdateEmptyRecycleBinButtonVisibility();
             panel.SetSearchVisibilityMode(data.SearchVisibilityMode);
 
             double storedTop = data.Top;
@@ -1337,6 +1421,59 @@ namespace DesktopPlus
             });
         }
 
+        private static bool RemoveSavedPanelRepresentationsByPanelKey(string panelKey)
+        {
+            if (string.IsNullOrWhiteSpace(panelKey))
+            {
+                return false;
+            }
+
+            bool changed = false;
+            var remainingWindows = new List<WindowData>(savedWindows.Count);
+
+            foreach (var window in savedWindows)
+            {
+                if (window == null)
+                {
+                    changed = true;
+                    continue;
+                }
+
+                NormalizeWindowData(window);
+                if (string.Equals(GetPanelKey(window), panelKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    changed = true;
+                    continue;
+                }
+
+                if (window.Tabs != null && window.Tabs.Count > 0)
+                {
+                    int removedCount = window.Tabs.RemoveAll(tab =>
+                        string.Equals(tab.PanelId, panelKey, StringComparison.OrdinalIgnoreCase));
+                    if (removedCount > 0)
+                    {
+                        changed = true;
+                        if (window.Tabs.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        window.ActiveTabIndex = Math.Max(0, Math.Min(window.ActiveTabIndex, window.Tabs.Count - 1));
+                        SyncSavedWindowHiddenState(window);
+                    }
+                }
+
+                remainingWindows.Add(window);
+            }
+
+            if (changed)
+            {
+                savedWindows = remainingWindows;
+            }
+
+            return changed;
+        }
+
         private void PanelTitle_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (e.ClickCount != 2) return;
@@ -1398,7 +1535,8 @@ namespace DesktopPlus
                     }
                 }
 
-                if (existing != null)
+                bool removedSavedRepresentation = RemoveSavedPanelRepresentationsByPanelKey(item.PanelKey);
+                if (!removedSavedRepresentation && existing != null)
                 {
                     if (tab != null && existing.Tabs != null && tabIndex >= 0 && tabIndex < existing.Tabs.Count)
                     {
@@ -1634,20 +1772,70 @@ namespace DesktopPlus
             return panel;
         }
 
-        private DesktopPanel? FindOpenRecycleBinPanel()
+        private static bool IsRecycleBinPanelId(string? panelId)
         {
-            return Application.Current.Windows
-                .OfType<DesktopPanel>()
-                .Where(IsUserPanel)
-                .FirstOrDefault(panel =>
-                    string.Equals(GetPanelKey(panel), RecycleBinPanelId, StringComparison.OrdinalIgnoreCase));
+            return string.Equals(panelId, RecycleBinPanelId, StringComparison.OrdinalIgnoreCase);
         }
 
-        private WindowData? FindSavedRecycleBinPanel()
+        private static bool IsRecycleBinTab(PanelTabData? tab)
         {
-            return savedWindows.FirstOrDefault(window =>
-                ResolvePanelKind(window) == PanelKind.RecycleBin ||
-                string.Equals(window.PanelId, RecycleBinPanelId, StringComparison.OrdinalIgnoreCase));
+            return tab != null &&
+                (ResolvePanelKind(tab) == PanelKind.RecycleBin || IsRecycleBinPanelId(tab.PanelId));
+        }
+
+        private static bool IsRecycleBinWindow(WindowData? window)
+        {
+            return window != null &&
+                (ResolvePanelKind(window) == PanelKind.RecycleBin || IsRecycleBinPanelId(window.PanelId));
+        }
+
+        private (DesktopPanel Panel, int TabIndex)? FindOpenRecycleBinPanel()
+        {
+            foreach (var panel in Application.Current.Windows.OfType<DesktopPanel>().Where(IsUserPanel))
+            {
+                int tabIndex = panel.Tabs
+                    .Select((tab, index) => new { tab, index })
+                    .Where(entry => IsRecycleBinTab(entry.tab))
+                    .Select(entry => entry.index)
+                    .DefaultIfEmpty(-1)
+                    .First();
+                if (tabIndex >= 0)
+                {
+                    return (panel, tabIndex);
+                }
+
+                if (ResolvePanelKind(panel) == PanelKind.RecycleBin ||
+                    IsRecycleBinPanelId(GetPanelKey(panel)))
+                {
+                    return (panel, -1);
+                }
+            }
+
+            return null;
+        }
+
+        private (WindowData Window, int TabIndex)? FindSavedRecycleBinPanel()
+        {
+            foreach (var window in savedWindows)
+            {
+                int tabIndex = (window.Tabs ?? new List<PanelTabData>())
+                    .Select((tab, index) => new { tab, index })
+                    .Where(entry => IsRecycleBinTab(entry.tab))
+                    .Select(entry => entry.index)
+                    .DefaultIfEmpty(-1)
+                    .First();
+                if (tabIndex >= 0)
+                {
+                    return (window, tabIndex);
+                }
+
+                if (IsRecycleBinWindow(window))
+                {
+                    return (window, -1);
+                }
+            }
+
+            return null;
         }
 
         private void OpenRecycleBinPanel_Click(object sender, RoutedEventArgs e)
@@ -1657,25 +1845,65 @@ namespace DesktopPlus
 
         private void OpenOrRevealRecycleBinPanel()
         {
-            var openPanel = FindOpenRecycleBinPanel();
-            if (openPanel != null)
+            var openMatch = FindOpenRecycleBinPanel();
+            if (openMatch != null)
             {
-                openPanel.PanelId = RecycleBinPanelId;
-                openPanel.LoadRecycleBin(saveSettings: false, renamePanelTitle: false);
+                var (openPanel, tabIndex) = openMatch.Value;
                 openPanel.Show();
                 openPanel.WindowState = WindowState.Normal;
+
+                if (tabIndex >= 0 && tabIndex < openPanel.Tabs.Count)
+                {
+                    var tab = openPanel.Tabs[tabIndex];
+                    tab.PanelId = RecycleBinPanelId;
+                    if (openPanel.GetVisibleTabCount() <= 1)
+                    {
+                        openPanel.PanelId = RecycleBinPanelId;
+                    }
+
+                    if (tab.IsHidden)
+                    {
+                        openPanel.SetTabHidden(tabIndex, isHidden: false, activateTabWhenShown: true);
+                    }
+                    else if (openPanel.ActiveTabIndex != tabIndex)
+                    {
+                        openPanel.SwitchToTab(tabIndex);
+                    }
+                }
+                else
+                {
+                    openPanel.PanelId = RecycleBinPanelId;
+                    openPanel.LoadRecycleBin(saveSettings: false, renamePanelTitle: false);
+                }
+
                 SaveSettings();
                 NotifyPanelsChanged();
                 return;
             }
 
-            var savedPanel = FindSavedRecycleBinPanel();
-            if (savedPanel != null)
+            var savedMatch = FindSavedRecycleBinPanel();
+            if (savedMatch != null)
             {
-                savedPanel.PanelId = RecycleBinPanelId;
-                savedPanel.PanelType = PanelKind.RecycleBin.ToString();
+                var (savedPanel, tabIndex) = savedMatch.Value;
                 savedPanel.IsHidden = false;
-                OpenPanelFromData(savedPanel);
+
+                if (tabIndex >= 0 && savedPanel.Tabs != null && tabIndex < savedPanel.Tabs.Count)
+                {
+                    savedPanel.Tabs[tabIndex].PanelId = RecycleBinPanelId;
+                    savedPanel.Tabs[tabIndex].IsHidden = false;
+                    var restoredPanel = OpenPanelFromData(savedPanel);
+                    if (restoredPanel.ActiveTabIndex != tabIndex)
+                    {
+                        restoredPanel.SwitchToTab(tabIndex);
+                    }
+                }
+                else
+                {
+                    savedPanel.PanelId = RecycleBinPanelId;
+                    savedPanel.PanelType = PanelKind.RecycleBin.ToString();
+                    OpenPanelFromData(savedPanel);
+                }
+
                 SaveSettings();
                 NotifyPanelsChanged();
                 return;
@@ -1707,6 +1935,7 @@ namespace DesktopPlus
             panel.showSettingsButton = sourcePanel.showSettingsButton;
             panel.showEmptyRecycleBinButton = sourcePanel.showEmptyRecycleBinButton;
             panel.ApplySettingsButtonVisibility();
+            panel.UpdateEmptyRecycleBinButtonVisibility();
             panel.ApplyMovementMode(sourcePanel.movementMode);
             panel.SetSearchVisibilityMode(sourcePanel.searchVisibilityMode);
 

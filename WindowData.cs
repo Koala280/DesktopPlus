@@ -23,8 +23,9 @@ namespace DesktopPlus
         public string PresetName { get; set; } = "";
         public bool ShowHidden { get; set; }
         public bool ShowParentNavigationItem { get; set; } = true;
+        public string IconViewParentNavigationMode { get; set; } = DesktopPanel.IconParentNavigationModeItem;
         public bool ShowSettingsButton { get; set; } = true;
-        public bool ShowEmptyRecycleBinButton { get; set; } = true;
+        public bool ShowEmptyRecycleBinButton { get; set; } = false;
         public bool ExpandOnHover { get; set; } = false;
         public bool OpenFoldersExternally { get; set; }
         public bool OpenItemsOnSingleClick { get; set; }

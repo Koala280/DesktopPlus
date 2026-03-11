@@ -34,6 +34,19 @@ namespace DesktopPlus
             MetadataTags,
             MetadataTitle
         };
+        private static readonly string[] FixedDetailColumnOptionKeys =
+        {
+            MetadataName,
+            MetadataModified,
+            MetadataType,
+            MetadataSize,
+            MetadataCreated,
+            MetadataDimensions,
+            MetadataAuthors,
+            MetadataCategories,
+            MetadataTags,
+            MetadataTitle
+        };
 
         public DetailColumnSelectionState CreateDetailColumnSelectionState()
         {
@@ -78,7 +91,9 @@ namespace DesktopPlus
 
         private bool OpenDetailsColumnPickerDialog(Window? owner = null)
         {
-            var dialog = new DetailColumnsWindow(CreateDetailColumnSelectionState())
+            var dialog = new DetailColumnsWindow(
+                CreateDetailColumnSelectionState(),
+                CreateAvailableDetailColumnOptions())
             {
                 Owner = owner ?? this
             };
@@ -90,6 +105,61 @@ namespace DesktopPlus
 
             ApplyDetailColumnSelectionState(dialog.ResultState);
             return true;
+        }
+
+        public IReadOnlyList<DetailColumnOption> CreateAvailableDetailColumnOptions()
+        {
+            var options = new List<DetailColumnOption>(FixedDetailColumnOptionKeys.Length + 32);
+            var fixedLabels = new HashSet<string>(StringComparer.CurrentCultureIgnoreCase);
+            var selectedExplorerKeys = NormalizeMetadataOrder(metadataOrder)
+                .Where(ExplorerDetailsColumnProvider.IsExplorerMetadataKey)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string key in FixedDetailColumnOptionKeys)
+            {
+                string label = GetDetailsColumnLabelText(key);
+                fixedLabels.Add(label);
+                options.Add(new DetailColumnOption(
+                    key,
+                    label,
+                    string.Equals(key, MetadataName, StringComparison.OrdinalIgnoreCase) || IsDetailsMetadataColumnVisible(key),
+                    !string.Equals(key, MetadataName, StringComparison.OrdinalIgnoreCase)));
+            }
+
+            var explorerOptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (PanelType == PanelKind.Folder &&
+                !string.IsNullOrWhiteSpace(currentFolderPath) &&
+                Directory.Exists(currentFolderPath))
+            {
+                foreach (var column in ExplorerDetailsColumnProvider.GetAvailableColumns(currentFolderPath))
+                {
+                    if (string.IsNullOrWhiteSpace(column.Label) || fixedLabels.Contains(column.Label))
+                    {
+                        continue;
+                    }
+
+                    explorerOptions[column.Key] = column.Label;
+                }
+            }
+
+            foreach (string key in selectedExplorerKeys)
+            {
+                if (!explorerOptions.ContainsKey(key))
+                {
+                    explorerOptions[key] = GetDetailsColumnLabelText(key);
+                }
+            }
+
+            foreach (var option in explorerOptions.OrderBy(pair => pair.Value, StringComparer.CurrentCultureIgnoreCase))
+            {
+                options.Add(new DetailColumnOption(
+                    option.Key,
+                    option.Value,
+                    selectedExplorerKeys.Contains(option.Key),
+                    isEnabled: true));
+            }
+
+            return options;
         }
 
         private bool IsDetailsMetadataColumnVisible(string metadataKey)
@@ -137,6 +207,12 @@ namespace DesktopPlus
             if (string.Equals(metadataKey, MetadataTitle, StringComparison.OrdinalIgnoreCase))
             {
                 return showMetadataTitle;
+            }
+
+            if (ExplorerDetailsColumnProvider.IsExplorerMetadataKey(metadataKey))
+            {
+                return NormalizeMetadataOrder(metadataOrder).Any(key =>
+                    string.Equals(key, metadataKey, StringComparison.OrdinalIgnoreCase));
             }
 
             return false;
@@ -200,6 +276,23 @@ namespace DesktopPlus
                 showMetadataTitle = isVisible;
                 changed = true;
             }
+            else if (ExplorerDetailsColumnProvider.IsExplorerMetadataKey(metadataKey))
+            {
+                var reordered = NormalizeMetadataOrder(metadataOrder).ToList();
+                bool currentlyVisible = reordered.Any(key => string.Equals(key, metadataKey, StringComparison.OrdinalIgnoreCase));
+                if (isVisible && !currentlyVisible)
+                {
+                    reordered.Add(metadataKey);
+                    metadataOrder = NormalizeMetadataOrder(reordered);
+                    changed = true;
+                }
+                else if (!isVisible && currentlyVisible)
+                {
+                    reordered.RemoveAll(key => string.Equals(key, metadataKey, StringComparison.OrdinalIgnoreCase));
+                    metadataOrder = NormalizeMetadataOrder(reordered);
+                    changed = true;
+                }
+            }
 
             if (!changed)
             {
@@ -237,20 +330,25 @@ namespace DesktopPlus
         {
             if (string.Equals(metadataKey, MetadataName, StringComparison.OrdinalIgnoreCase))
             {
-                return 170;
+                return 120;
             }
 
             if (string.Equals(metadataKey, MetadataSize, StringComparison.OrdinalIgnoreCase))
             {
-                return 74;
+                return 68;
             }
 
             if (string.Equals(metadataKey, MetadataDimensions, StringComparison.OrdinalIgnoreCase))
             {
+                return 80;
+            }
+
+            if (ExplorerDetailsColumnProvider.IsExplorerMetadataKey(metadataKey))
+            {
                 return 88;
             }
 
-            return 96;
+            return 84;
         }
 
         private List<string> GetVisibleDetailsMetadataColumns()
@@ -271,7 +369,10 @@ namespace DesktopPlus
                 .ToList();
         }
 
-        private Dictionary<string, double> GetActualDetailsColumnWidths(double totalWidth)
+        private Dictionary<string, double> GetActualDetailsColumnWidths(
+            double totalWidth,
+            IReadOnlyDictionary<string, double>? preferredWidthsOverride = null,
+            bool constrainToAvailableWidth = true)
         {
             var visibleColumns = GetVisibleDetailsColumns();
             double minimumRequiredWidth = visibleColumns.Sum(GetMinimumDetailsColumnWidth);
@@ -279,12 +380,29 @@ namespace DesktopPlus
             var actualWidths = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
             var preferredWidths = visibleColumns.ToDictionary(
                 key => key,
-                key => GetStoredDetailsColumnWidth(key),
+                key =>
+                {
+                    if (preferredWidthsOverride != null &&
+                        preferredWidthsOverride.TryGetValue(key, out double overrideWidth) &&
+                        overrideWidth > 0)
+                    {
+                        return Math.Max(GetMinimumDetailsColumnWidth(key), overrideWidth);
+                    }
+
+                    return GetStoredDetailsColumnWidth(key);
+                },
                 StringComparer.OrdinalIgnoreCase);
 
             double preferredTotal = preferredWidths.Values.Sum();
 
-            if (preferredTotal > availableWidth && preferredWidths.Count > 0)
+            if (!constrainToAvailableWidth || preferredTotal <= availableWidth || preferredWidths.Count == 0)
+            {
+                foreach (var pair in preferredWidths)
+                {
+                    actualWidths[pair.Key] = pair.Value;
+                }
+            }
+            else if (preferredWidths.Count > 0)
             {
                 var remainingKeys = new List<string>(preferredWidths.Keys);
                 double remainingBudget = availableWidth;
@@ -325,21 +443,19 @@ namespace DesktopPlus
                     }
                 }
             }
-            else
-            {
-                foreach (var pair in preferredWidths)
-                {
-                    actualWidths[pair.Key] = pair.Value;
-                }
-            }
-
-            if (visibleColumns.Count > 0 && actualWidths.TryGetValue(MetadataName, out double nameWidth))
-            {
-                double remainingWidth = availableWidth - actualWidths.Values.Sum();
-                actualWidths[MetadataName] = Math.Max(GetMinimumDetailsColumnWidth(MetadataName), nameWidth + remainingWidth);
-            }
-
             return actualWidths;
+        }
+
+        private static double GetDetailsColumnVisualWidth(
+            IReadOnlyDictionary<string, double> widths,
+            double viewportWidth)
+        {
+            if (widths == null || widths.Count == 0)
+            {
+                return Math.Max(0, viewportWidth);
+            }
+
+            return Math.Max(viewportWidth, widths.Values.Sum());
         }
 
         private string GetDetailsColumnLabelText(string metadataKey)
@@ -394,6 +510,11 @@ namespace DesktopPlus
                 return MainWindow.GetString("Loc.PanelSettingsMetaTitle");
             }
 
+            if (ExplorerDetailsColumnProvider.IsExplorerMetadataKey(metadataKey))
+            {
+                return ExplorerDetailsColumnProvider.GetDisplayLabel(metadataKey);
+            }
+
             return metadataKey;
         }
 
@@ -440,6 +561,12 @@ namespace DesktopPlus
             if (string.Equals(metadataKey, MetadataDimensions, StringComparison.OrdinalIgnoreCase))
             {
                 return GetDimensionsText(path, isFolder);
+            }
+
+            if (ExplorerDetailsColumnProvider.IsExplorerMetadataKey(metadataKey))
+            {
+                string value = ExplorerDetailsColumnProvider.GetValue(path, metadataKey);
+                return string.IsNullOrWhiteSpace(value) ? "-" : value;
             }
 
             if (isFolder)
@@ -517,11 +644,22 @@ namespace DesktopPlus
                 return DetailsSortColumn.Title;
             }
 
+            if (ExplorerDetailsColumnProvider.IsExplorerMetadataKey(metadataKey))
+            {
+                return DetailsSortColumn.ExplorerMetadata;
+            }
+
             return DetailsSortColumn.Name;
         }
 
         private bool IsDetailsColumnSorted(string metadataKey)
         {
+            if (_detailsSortColumn == DetailsSortColumn.ExplorerMetadata)
+            {
+                return _detailsSortActive &&
+                    string.Equals(_detailsSortMetadataKey, metadataKey, StringComparison.OrdinalIgnoreCase);
+            }
+
             return _detailsSortActive &&
                 _detailsSortColumn == MapDetailsColumnToSortColumn(metadataKey);
         }
@@ -533,11 +671,15 @@ namespace DesktopPlus
             {
                 _detailsSortActive = true;
                 _detailsSortColumn = clickedColumn;
+                _detailsSortMetadataKey = clickedColumn == DetailsSortColumn.ExplorerMetadata ? metadataKey : null;
                 _detailsSortAscending = true;
             }
-            else if (_detailsSortColumn != clickedColumn)
+            else if (_detailsSortColumn != clickedColumn ||
+                (clickedColumn == DetailsSortColumn.ExplorerMetadata &&
+                 !string.Equals(_detailsSortMetadataKey, metadataKey, StringComparison.OrdinalIgnoreCase)))
             {
                 _detailsSortColumn = clickedColumn;
+                _detailsSortMetadataKey = clickedColumn == DetailsSortColumn.ExplorerMetadata ? metadataKey : null;
                 _detailsSortAscending = true;
             }
             else if (_detailsSortAscending)
@@ -548,6 +690,7 @@ namespace DesktopPlus
             {
                 _detailsSortActive = false;
                 _detailsSortColumn = DetailsSortColumn.Name;
+                _detailsSortMetadataKey = null;
                 _detailsSortAscending = true;
                 RestoreDefaultDetailsOrderInPlace();
 
@@ -617,7 +760,7 @@ namespace DesktopPlus
             var visibleColumns = GetVisibleDetailsColumns();
             SyncParentNavigationItemVisibility();
             DetailsHeaderBorder.Visibility = Visibility.Visible;
-            DetailsHeaderGrid.Width = totalWidth;
+            DetailsHeaderGrid.Width = GetDetailsColumnVisualWidth(actualWidths, totalWidth);
             DetailsHeaderGrid.Children.Clear();
             DetailsHeaderGrid.ColumnDefinitions.Clear();
             DetailsHeaderGrid.RowDefinitions.Clear();
@@ -632,11 +775,13 @@ namespace DesktopPlus
                 });
 
                 Border cell = CreateDetailsHeaderCell(
-                    key,
+                    metadataKey: key,
                     showRightDivider: i < visibleColumns.Count - 1,
-                    labelBrush,
-                    accentBrush,
-                    separatorBrush);
+                    leftResizePartnerKey: i > 0 ? visibleColumns[i - 1] : null,
+                    rightResizePartnerKey: i < visibleColumns.Count - 1 ? visibleColumns[i + 1] : string.Empty,
+                    labelBrush: labelBrush,
+                    accentBrush: accentBrush,
+                    separatorBrush: separatorBrush);
                 Grid.SetRow(cell, 0);
                 Grid.SetColumn(cell, i);
                 DetailsHeaderGrid.Children.Add(cell);
@@ -648,9 +793,7 @@ namespace DesktopPlus
             parentPath = string.Empty;
 
             string normalizedViewMode = NormalizeViewMode(viewMode);
-            bool useHeaderBackButton =
-                string.Equals(normalizedViewMode, ViewModeDetails, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(normalizedViewMode, ViewModeIcons, StringComparison.OrdinalIgnoreCase);
+            bool useHeaderBackButton = IsCurrentParentNavigationHeaderMode(normalizedViewMode);
 
             if (!useHeaderBackButton ||
                 PanelType != PanelKind.Folder ||
@@ -660,64 +803,83 @@ namespace DesktopPlus
                 return false;
             }
 
-            try
-            {
-                parentPath = Path.GetDirectoryName(
-                    currentFolderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) ?? string.Empty;
-            }
-            catch
-            {
-                parentPath = Path.GetDirectoryName(currentFolderPath) ?? string.Empty;
-            }
-
-            return !string.IsNullOrWhiteSpace(parentPath);
+            return TryGetCurrentFolderParentPath(out parentPath);
         }
 
         private bool ShouldShowParentNavigationListItem()
         {
-            return showParentNavigationItem && !TryGetEmbeddedParentNavigationPath(out _);
+            string normalizedViewMode = NormalizeViewMode(viewMode);
+            return showParentNavigationItem &&
+                IsCurrentParentNavigationItemMode(normalizedViewMode);
+        }
+
+        private bool IsCurrentParentNavigationHeaderMode(string normalizedViewMode)
+        {
+            if (string.Equals(normalizedViewMode, ViewModeDetails, StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Equals(
+                    NormalizeDetailsViewParentNavigationMode(iconViewParentNavigationMode, showParentNavigationItem),
+                    DetailsParentNavigationModeHeader,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (string.Equals(normalizedViewMode, ViewModeIcons, StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Equals(
+                    NormalizeIconViewParentNavigationMode(iconViewParentNavigationMode, showParentNavigationItem),
+                    IconParentNavigationModeHeader,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+
+            return false;
+        }
+
+        private bool IsCurrentParentNavigationItemMode(string normalizedViewMode)
+        {
+            if (string.Equals(normalizedViewMode, ViewModeDetails, StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Equals(
+                    NormalizeDetailsViewParentNavigationMode(iconViewParentNavigationMode, showParentNavigationItem),
+                    DetailsParentNavigationModeItem,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (string.Equals(normalizedViewMode, ViewModeIcons, StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Equals(
+                    NormalizeIconViewParentNavigationMode(iconViewParentNavigationMode, showParentNavigationItem),
+                    IconParentNavigationModeItem,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+
+            return false;
         }
 
         private void SyncParentNavigationItemVisibility()
         {
-            if (FileList == null)
-            {
-                return;
-            }
-
-            var backItem = FileList.Items
-                .OfType<ListBoxItem>()
-                .FirstOrDefault(IsParentNavigationItem);
-            if (backItem == null)
-            {
-                return;
-            }
-
-            Visibility targetVisibility = ShouldShowParentNavigationListItem()
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-            if (backItem.Visibility != targetVisibility)
-            {
-                backItem.Visibility = targetVisibility;
-            }
+            EnsureParentNavigationItemState();
         }
 
         private void UpdateDetailsHeaderNavigationButton(bool isVisible, string parentPath)
         {
+            _headerBackButtonRequestedVisible = isVisible && !string.IsNullOrWhiteSpace(parentPath);
+
             if (HeaderBackButton == null)
             {
                 return;
             }
 
-            if (!isVisible || string.IsNullOrWhiteSpace(parentPath))
+            if (!_headerBackButtonRequestedVisible)
             {
                 HeaderBackButton.Tag = null;
-                HeaderBackButton.Visibility = Visibility.Collapsed;
+                ApplyHeaderBackButtonVisualState(show: false, animate: IsLoaded && !_isCollapseAnimationRunning);
                 return;
             }
 
             HeaderBackButton.Tag = parentPath;
-            HeaderBackButton.Visibility = Visibility.Visible;
+            ApplyHeaderBackButtonVisualState(
+                show: ShouldShowHeaderBackButtonVisual(),
+                animate: IsLoaded && !_isCollapseAnimationRunning);
         }
 
         private void HeaderBackButton_Click(object sender, RoutedEventArgs e)
@@ -736,6 +898,8 @@ namespace DesktopPlus
         private Border CreateDetailsHeaderCell(
             string metadataKey,
             bool showRightDivider,
+            string? leftResizePartnerKey,
+            string? rightResizePartnerKey,
             Brush labelBrush,
             Brush accentBrush,
             Brush separatorBrush,
@@ -772,6 +936,11 @@ namespace DesktopPlus
             var wrapper = new Grid();
             wrapper.Children.Add(label);
 
+            if (CanResizeDetailsHeaderColumn(metadataKey))
+            {
+                wrapper.Children.Add(CreateDetailsHeaderResizeGrip(metadataKey, rightResizePartnerKey ?? string.Empty, alignRight: true));
+            }
+
             if (isSorted && !suppressNameHeader)
             {
                 var chevron = new System.Windows.Shapes.Path
@@ -800,6 +969,33 @@ namespace DesktopPlus
 
         private void DetailsHeaderCell_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
+            if (TryGetDetailsHeaderResizeGripKeysFromSource(
+                    e.OriginalSource as DependencyObject,
+                    out string gripLeftKey,
+                    out string gripRightKey))
+            {
+                if (DetailsHeaderGrid == null)
+                {
+                    return;
+                }
+
+                if (e.ClickCount >= 2)
+                {
+                    _detailsHeaderSuppressNextPrimaryAction = true;
+                    AutoSizeDetailsDivider(gripLeftKey, gripRightKey);
+                }
+                else
+                {
+                    UIElement captureSource = e.OriginalSource as UIElement ??
+                        sender as UIElement ??
+                        DetailsHeaderGrid;
+                    BeginDetailsHeaderResize(captureSource, gripLeftKey, gripRightKey, e.GetPosition(DetailsHeaderGrid));
+                }
+
+                e.Handled = true;
+                return;
+            }
+
             if (sender is not Border cell || cell.Tag is not string metadataKey)
             {
                 return;
@@ -819,6 +1015,15 @@ namespace DesktopPlus
 
         private void DetailsHeaderCell_PreviewMouseMove(object sender, MouseEventArgs e)
         {
+            if (TryGetDetailsHeaderResizeGripKeysFromSource(e.OriginalSource as DependencyObject, out _, out _))
+            {
+                if (sender is Border resizeCell)
+                {
+                    resizeCell.Cursor = Cursors.SizeWE;
+                }
+                return;
+            }
+
             if (sender is Border hoverCell && hoverCell.Tag is string hoverMetadataKey && e.LeftButton != MouseButtonState.Pressed)
             {
                 hoverCell.Cursor = TryGetDetailsHeaderResizePair(
@@ -832,7 +1037,10 @@ namespace DesktopPlus
 
             if (_detailsHeaderResizing)
             {
-                e.Handled = true;
+                if (_detailsHeaderResizeCaptureSource == null)
+                {
+                    e.Handled = true;
+                }
                 return;
             }
 
@@ -919,8 +1127,30 @@ namespace DesktopPlus
 
         private void DetailsHeaderCell_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
+            if (TryGetDetailsHeaderResizeGripKeysFromSource(e.OriginalSource as DependencyObject, out _, out _))
+            {
+                if (_detailsHeaderSuppressNextPrimaryAction)
+                {
+                    _detailsHeaderSuppressNextPrimaryAction = false;
+                    e.Handled = true;
+                }
+                return;
+            }
+
             if (_detailsHeaderResizing)
             {
+                if (_detailsHeaderResizeCaptureSource == null)
+                {
+                    e.Handled = true;
+                }
+                return;
+            }
+
+            if (_detailsHeaderSuppressNextPrimaryAction)
+            {
+                _detailsHeaderSuppressNextPrimaryAction = false;
+                _detailsHeaderDragSource = null;
+                _detailsHeaderDragKey = null;
                 e.Handled = true;
                 return;
             }
@@ -1038,31 +1268,177 @@ namespace DesktopPlus
 
             if (e.ClickCount >= 2)
             {
+                _detailsHeaderSuppressNextPrimaryAction = true;
                 AutoSizeDetailsDivider(leftKey, rightKey);
                 return true;
             }
+
+            return BeginDetailsHeaderResize(cell, leftKey, rightKey, e.GetPosition(DetailsHeaderGrid));
+        }
+
+        private bool BeginDetailsHeaderResize(
+            UIElement captureSource,
+            string leftKey,
+            string rightKey,
+            Point startPointInGrid)
+        {
+            if (DetailsHeaderGrid == null)
+            {
+                return false;
+            }
+
             var displayedWidths = GetDisplayedDetailsColumnWidths();
-            if (!displayedWidths.TryGetValue(leftKey, out double leftWidth) ||
-                !displayedWidths.TryGetValue(rightKey, out double rightWidth))
+            if (!displayedWidths.TryGetValue(leftKey, out double leftWidth))
             {
                 return false;
             }
 
             _detailsHeaderResizing = true;
             _detailsHeaderResizeLeftKey = leftKey;
-            _detailsHeaderResizeRightKey = rightKey;
-            _detailsHeaderResizeStartPoint = e.GetPosition(DetailsHeaderGrid);
+            AttachDetailsHeaderResizeCapture(captureSource);
+            _detailsHeaderResizeStartPoint = startPointInGrid;
             _detailsHeaderResizeStartLeftWidth = leftWidth;
-            _detailsHeaderResizeStartRightWidth = rightWidth;
-            Mouse.Capture(DetailsHeaderGrid, CaptureMode.SubTree);
             return true;
+        }
+
+        private void AttachDetailsHeaderResizeCapture(UIElement captureSource)
+        {
+            if (ReferenceEquals(_detailsHeaderResizeCaptureSource, captureSource))
+            {
+                if (!captureSource.IsMouseCaptured)
+                {
+                    captureSource.CaptureMouse();
+                }
+                return;
+            }
+
+            DetachDetailsHeaderResizeCapture();
+            _detailsHeaderResizeCaptureSource = captureSource;
+            captureSource.MouseMove += DetailsHeaderResizeCaptureSource_MouseMove;
+            captureSource.MouseLeftButtonUp += DetailsHeaderResizeCaptureSource_MouseLeftButtonUp;
+            captureSource.LostMouseCapture += DetailsHeaderResizeCaptureSource_LostMouseCapture;
+            captureSource.CaptureMouse();
+        }
+
+        private void DetachDetailsHeaderResizeCapture()
+        {
+            UIElement? captureSource = _detailsHeaderResizeCaptureSource;
+            if (captureSource == null)
+            {
+                return;
+            }
+
+            captureSource.MouseMove -= DetailsHeaderResizeCaptureSource_MouseMove;
+            captureSource.MouseLeftButtonUp -= DetailsHeaderResizeCaptureSource_MouseLeftButtonUp;
+            captureSource.LostMouseCapture -= DetailsHeaderResizeCaptureSource_LostMouseCapture;
+            _detailsHeaderResizeCaptureSource = null;
+
+            if (captureSource.IsMouseCaptured)
+            {
+                captureSource.ReleaseMouseCapture();
+            }
+        }
+
+        private void DetailsHeaderResizeCaptureSource_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_detailsHeaderResizing || DetailsHeaderGrid == null)
+            {
+                return;
+            }
+
+            if (e.LeftButton != MouseButtonState.Pressed)
+            {
+                FinalizeDetailsHeaderResize();
+                return;
+            }
+
+            UpdateDetailsHeaderResize(e.GetPosition(DetailsHeaderGrid));
+            e.Handled = true;
+        }
+
+        private void DetailsHeaderResizeCaptureSource_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!FinalizeDetailsHeaderResize())
+            {
+                return;
+            }
+
+            e.Handled = true;
+        }
+
+        private void DetailsHeaderResizeCaptureSource_LostMouseCapture(object sender, MouseEventArgs e)
+        {
+            FinalizeDetailsHeaderResize();
+        }
+
+        private Border CreateDetailsHeaderResizeGrip(string leftKey, string rightKey, bool alignRight)
+        {
+            return new Border
+            {
+                Tag = Tuple.Create(leftKey, rightKey ?? string.Empty),
+                Width = DetailsHeaderResizeHitWidth * 2,
+                HorizontalAlignment = alignRight ? System.Windows.HorizontalAlignment.Right : System.Windows.HorizontalAlignment.Left,
+                VerticalAlignment = System.Windows.VerticalAlignment.Stretch,
+                Margin = alignRight
+                    ? new Thickness(0, -3, -DetailsHeaderResizeHitWidth, -3)
+                    : new Thickness(-DetailsHeaderResizeHitWidth, -3, 0, -3),
+                Cursor = Cursors.SizeWE,
+                Background = Brushes.Transparent,
+                Opacity = 0.001
+            };
+        }
+
+        private static bool TryGetDetailsHeaderResizeGripKeys(FrameworkElement? element, out string leftKey, out string rightKey)
+        {
+            leftKey = string.Empty;
+            rightKey = string.Empty;
+
+            if (element?.Tag is not Tuple<string, string> pair ||
+                string.IsNullOrWhiteSpace(pair.Item1))
+            {
+                return false;
+            }
+
+            leftKey = pair.Item1;
+            rightKey = pair.Item2 ?? string.Empty;
+            return true;
+        }
+
+        private static bool TryGetDetailsHeaderResizeGripKeysFromSource(
+            DependencyObject? source,
+            out string leftKey,
+            out string rightKey)
+        {
+            leftKey = string.Empty;
+            rightKey = string.Empty;
+            DependencyObject? current = source;
+
+            while (current != null)
+            {
+                if (current is FrameworkElement candidate &&
+                    TryGetDetailsHeaderResizeGripKeys(candidate, out leftKey, out rightKey))
+                {
+                    return true;
+                }
+
+                try
+                {
+                    current = VisualTreeHelper.GetParent(current);
+                }
+                catch
+                {
+                    current = null;
+                }
+            }
+
+            return false;
         }
 
         private bool CanResizeDetailsHeaderColumn(string metadataKey)
         {
             var visibleColumns = GetVisibleDetailsColumns();
             int index = visibleColumns.FindIndex(key => string.Equals(key, metadataKey, StringComparison.OrdinalIgnoreCase));
-            return index >= 0 && index < visibleColumns.Count - 1;
+            return index >= 0;
         }
 
         private static bool IsDetailsHeaderResizeGripHit(Border cell, Point pointInCell)
@@ -1095,8 +1471,7 @@ namespace DesktopPlus
 
             bool canUseLeftDivider = currentIndex > 0 &&
                 pointInCell.X <= DetailsHeaderResizeHitWidth;
-            bool canUseRightDivider = currentIndex < visibleColumns.Count - 1 &&
-                pointInCell.X >= Math.Max(0, cell.ActualWidth - DetailsHeaderResizeHitWidth);
+            bool canUseRightDivider = pointInCell.X >= Math.Max(0, cell.ActualWidth - DetailsHeaderResizeHitWidth);
             if (!canUseLeftDivider && !canUseRightDivider)
             {
                 return false;
@@ -1118,7 +1493,9 @@ namespace DesktopPlus
             }
 
             leftKey = visibleColumns[currentIndex];
-            rightKey = visibleColumns[currentIndex + 1];
+            rightKey = currentIndex < visibleColumns.Count - 1
+                ? visibleColumns[currentIndex + 1]
+                : string.Empty;
             return true;
         }
 
@@ -1295,9 +1672,10 @@ namespace DesktopPlus
         private void ApplyDetailsColumnWidthsToVisuals(Dictionary<string, double> widths, double totalWidth)
         {
             var visibleColumns = GetVisibleDetailsColumns();
+            double visualWidth = GetDetailsColumnVisualWidth(widths, totalWidth);
             if (DetailsHeaderGrid != null && DetailsHeaderGrid.ColumnDefinitions.Count == visibleColumns.Count)
             {
-                DetailsHeaderGrid.Width = totalWidth;
+                DetailsHeaderGrid.Width = visualWidth;
                 for (int i = 0; i < visibleColumns.Count; i++)
                 {
                     if (widths.TryGetValue(visibleColumns[i], out double width))
@@ -1314,7 +1692,7 @@ namespace DesktopPlus
                     continue;
                 }
 
-                row.Width = totalWidth;
+                row.Width = visualWidth;
                 for (int i = 0; i < visibleColumns.Count; i++)
                 {
                     if (widths.TryGetValue(visibleColumns[i], out double width))
@@ -1325,33 +1703,46 @@ namespace DesktopPlus
             }
         }
 
+        private void PersistDisplayedDetailsColumnWidths()
+        {
+            var widths = GetDisplayedDetailsColumnWidths();
+            foreach (string key in GetVisibleDetailsColumns())
+            {
+                if (widths.TryGetValue(key, out double width))
+                {
+                    SetStoredDetailsColumnWidth(key, width);
+                }
+            }
+
+            MainWindow.SaveSettings();
+            MainWindow.NotifyPanelsChanged();
+        }
+
         private void DetailsHeaderGrid_PreviewMouseMove(object sender, MouseEventArgs e)
         {
-            if (!_detailsHeaderResizing ||
-                DetailsHeaderGrid == null ||
-                string.IsNullOrWhiteSpace(_detailsHeaderResizeLeftKey) ||
-                string.IsNullOrWhiteSpace(_detailsHeaderResizeRightKey))
+            if (_detailsHeaderResizeCaptureSource != null)
             {
                 return;
             }
 
-            Point current = e.GetPosition(DetailsHeaderGrid);
-            double deltaX = current.X - _detailsHeaderResizeStartPoint.X;
-            double pairWidth = _detailsHeaderResizeStartLeftWidth + _detailsHeaderResizeStartRightWidth;
-            double minLeft = GetMinimumDetailsColumnWidth(_detailsHeaderResizeLeftKey);
-            double minRight = GetMinimumDetailsColumnWidth(_detailsHeaderResizeRightKey);
-            double targetLeft = Math.Max(minLeft, Math.Min(pairWidth - minRight, _detailsHeaderResizeStartLeftWidth + deltaX));
-            double targetRight = Math.Max(minRight, pairWidth - targetLeft);
+            if (!_detailsHeaderResizing ||
+                DetailsHeaderGrid == null ||
+                string.IsNullOrWhiteSpace(_detailsHeaderResizeLeftKey))
+            {
+                return;
+            }
 
-            var widths = GetDisplayedDetailsColumnWidths();
-            widths[_detailsHeaderResizeLeftKey] = targetLeft;
-            widths[_detailsHeaderResizeRightKey] = targetRight;
-            ApplyDetailsColumnWidthsToVisuals(widths, GetDetailsItemWidth());
+            UpdateDetailsHeaderResize(e.GetPosition(DetailsHeaderGrid));
             e.Handled = true;
         }
 
         private void DetailsHeaderGrid_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
+            if (_detailsHeaderResizeCaptureSource != null)
+            {
+                return;
+            }
+
             if (!FinalizeDetailsHeaderResize())
             {
                 return;
@@ -1362,6 +1753,11 @@ namespace DesktopPlus
 
         private void DetailsHeaderGrid_LostMouseCapture(object sender, MouseEventArgs e)
         {
+            if (_detailsHeaderResizeCaptureSource != null)
+            {
+                return;
+            }
+
             FinalizeDetailsHeaderResize();
         }
 
@@ -1373,36 +1769,42 @@ namespace DesktopPlus
             }
 
             string? leftKey = _detailsHeaderResizeLeftKey;
-            string? rightKey = _detailsHeaderResizeRightKey;
             _detailsHeaderResizing = false;
             _detailsHeaderResizeLeftKey = null;
-            _detailsHeaderResizeRightKey = null;
+            DetachDetailsHeaderResizeCapture();
             _detailsHeaderResizeStartLeftWidth = 0;
-            _detailsHeaderResizeStartRightWidth = 0;
 
             if (Mouse.Captured == DetailsHeaderGrid)
             {
                 Mouse.Capture(null);
             }
 
-            if (!string.IsNullOrWhiteSpace(leftKey) &&
-                !string.IsNullOrWhiteSpace(rightKey))
+            if (!string.IsNullOrWhiteSpace(leftKey))
             {
-                var widths = GetDisplayedDetailsColumnWidths();
-                if (widths.TryGetValue(leftKey, out double leftWidth))
-                {
-                    SetStoredDetailsColumnWidth(leftKey, leftWidth);
-                }
-
-                if (widths.TryGetValue(rightKey, out double rightWidth))
-                {
-                    SetStoredDetailsColumnWidth(rightKey, rightWidth);
-                }
-
-                MainWindow.SaveSettings();
-                MainWindow.NotifyPanelsChanged();
+                PersistDisplayedDetailsColumnWidths();
             }
             return true;
+        }
+
+        private void UpdateDetailsHeaderResize(Point currentPositionInGrid)
+        {
+            if (!_detailsHeaderResizing ||
+                string.IsNullOrWhiteSpace(_detailsHeaderResizeLeftKey))
+            {
+                return;
+            }
+
+            double deltaX = currentPositionInGrid.X - _detailsHeaderResizeStartPoint.X;
+            double minLeft = GetMinimumDetailsColumnWidth(_detailsHeaderResizeLeftKey);
+            double targetLeft = Math.Max(minLeft, _detailsHeaderResizeStartLeftWidth + deltaX);
+
+            var preferredWidths = GetDisplayedDetailsColumnWidths();
+            preferredWidths[_detailsHeaderResizeLeftKey] = targetLeft;
+            var actualWidths = GetActualDetailsColumnWidths(
+                GetDetailsItemWidth(),
+                preferredWidths,
+                constrainToAvailableWidth: false);
+            ApplyDetailsColumnWidthsToVisuals(actualWidths, GetDetailsItemWidth());
         }
 
         private static Border? GetDetailsHeaderDropIndicator(Border cell)
@@ -1508,33 +1910,24 @@ namespace DesktopPlus
         {
             if (FileList == null ||
                 string.IsNullOrWhiteSpace(leftKey) ||
-                string.IsNullOrWhiteSpace(rightKey) ||
                 !string.Equals(NormalizeViewMode(viewMode), ViewModeDetails, StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
 
             var widths = GetDisplayedDetailsColumnWidths();
-            if (!widths.TryGetValue(leftKey, out double currentLeftWidth) ||
-                !widths.TryGetValue(rightKey, out double currentRightWidth))
+            if (!widths.TryGetValue(leftKey, out _))
             {
                 return false;
             }
 
-            double pairWidth = currentLeftWidth + currentRightWidth;
-            double minLeft = GetMinimumDetailsColumnWidth(leftKey);
-            double minRight = GetMinimumDetailsColumnWidth(rightKey);
-            double fittedLeft = ComputeAutoSizeDetailsColumnWidth(leftKey);
-            double targetLeft = Math.Max(minLeft, Math.Min(pairWidth - minRight, fittedLeft));
-            double targetRight = Math.Max(minRight, pairWidth - targetLeft);
-
-            widths[leftKey] = targetLeft;
-            widths[rightKey] = targetRight;
-            ApplyDetailsColumnWidthsToVisuals(widths, GetDetailsItemWidth());
-            SetStoredDetailsColumnWidth(leftKey, targetLeft);
-            SetStoredDetailsColumnWidth(rightKey, targetRight);
-            MainWindow.SaveSettings();
-            MainWindow.NotifyPanelsChanged();
+            widths[leftKey] = ComputeAutoSizeDetailsColumnWidth(leftKey);
+            var actualWidths = GetActualDetailsColumnWidths(
+                GetDetailsItemWidth(),
+                widths,
+                constrainToAvailableWidth: false);
+            ApplyDetailsColumnWidthsToVisuals(actualWidths, GetDetailsItemWidth());
+            PersistDisplayedDetailsColumnWidths();
             return true;
         }
 
@@ -1624,7 +2017,10 @@ namespace DesktopPlus
             double textSize,
             Brush nameBrush)
         {
-            var container = new Grid();
+            var container = new Grid
+            {
+                Margin = new Thickness(12, 0, 10, 0)
+            };
             container.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(28, iconSize + 8)) });
             container.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
@@ -1654,6 +2050,25 @@ namespace DesktopPlus
             container.Children.Add(icon);
             container.Children.Add(nameText);
             return container;
+        }
+
+        private FrameworkElement CreateDetailsMetadataCell(
+            string text,
+            double fontSize,
+            Brush foreground)
+        {
+            return new Border
+            {
+                Padding = new Thickness(10, 0, 10, 0),
+                Child = new TextBlock
+                {
+                    Text = text,
+                    Foreground = foreground,
+                    FontSize = fontSize,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    TextTrimming = TextTrimming.CharacterEllipsis
+                }
+            };
         }
     }
 }

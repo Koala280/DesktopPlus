@@ -25,6 +25,8 @@ namespace DesktopPlus
             InitializeComponent();
             TrySetWindowIcon();
             _panel = panel;
+            _panel.SizeChanged += Panel_SizeChanged;
+            Closed += PanelSettings_Closed;
             LoadPresets();
             PopulatePanelSettings();
             UpdateResetPresetToStandardButtonState();
@@ -54,6 +56,11 @@ namespace DesktopPlus
             HiddenToggle.Unchecked += (_, __) => TryAutoApplySettings();
             ParentNavigationToggle.Checked += (_, __) => TryAutoApplySettings();
             ParentNavigationToggle.Unchecked += (_, __) => TryAutoApplySettings();
+            IconParentNavigationModeSelect.SelectionChanged += (_, __) =>
+            {
+                SyncParentNavigationToggleFromIconMode();
+                TryAutoApplySettings();
+            };
             FileExtensionsToggle.Checked += (_, __) => TryAutoApplySettings();
             FileExtensionsToggle.Unchecked += (_, __) => TryAutoApplySettings();
             SettingsButtonToggle.Checked += (_, __) => TryAutoApplySettings();
@@ -64,9 +71,14 @@ namespace DesktopPlus
             FolderActionSelect.SelectionChanged += (_, __) => TryAutoApplySettings();
             OpenClickBehaviorSelect.SelectionChanged += (_, __) => TryAutoApplySettings();
             MovementModeSelect.SelectionChanged += (_, __) => TryAutoApplySettings();
-            SearchVisibilitySelect.SelectionChanged += (_, __) => TryAutoApplySettings();
+            SearchVisibilitySelect.SelectionChanged += (_, __) =>
+            {
+                UpdateSearchVisibilityOptions();
+                TryAutoApplySettings();
+            };
             ViewModeSelect.SelectionChanged += (_, __) =>
             {
+                UpdateParentNavigationOptionsVisibility();
                 UpdateMetadataOptionsVisibility();
                 TryAutoApplySettings();
             };
@@ -197,8 +209,11 @@ namespace DesktopPlus
             SetMovementModeSelection(_panel.movementMode);
             SetSearchVisibilitySelection(_panel.searchVisibilityMode);
             SetViewModeSelection(_panel.viewMode);
+            SetIconParentNavigationModeSelection(_panel.iconViewParentNavigationMode, _panel.showParentNavigationItem);
             _detailColumnsState = _panel.CreateDetailColumnSelectionState();
+            UpdateParentNavigationOptionsVisibility();
             UpdateMetadataOptionsVisibility();
+            UpdateSearchVisibilityOptions();
         }
 
         private void PopulateGlobalPanelDefaults()
@@ -233,7 +248,10 @@ namespace DesktopPlus
                 MetadataOrder = DesktopPanel.NormalizeMetadataOrder(_layout.PanelDefaultMetadataOrder),
                 MetadataWidths = DesktopPanel.NormalizeMetadataWidths(_layout.PanelDefaultMetadataWidths)
             };
+            SetIconParentNavigationModeSelection(_layout.PanelDefaultIconViewParentNavigationMode, _layout.PanelDefaultShowParentNavigationItem);
+            UpdateParentNavigationOptionsVisibility();
             UpdateMetadataOptionsVisibility();
+            UpdateSearchVisibilityOptions();
         }
 
         private void SetMovementModeSelection(string? mode)
@@ -275,6 +293,42 @@ namespace DesktopPlus
             {
                 SearchVisibilitySelect.SelectedIndex = 0;
             }
+
+            UpdateSearchVisibilityOptions();
+        }
+
+        private void Panel_SizeChanged(object? sender, SizeChangedEventArgs e)
+        {
+            UpdateSearchVisibilityOptions();
+        }
+
+        private void PanelSettings_Closed(object? sender, EventArgs e)
+        {
+            if (_panel != null)
+            {
+                _panel.SizeChanged -= Panel_SizeChanged;
+            }
+        }
+
+        private void UpdateSearchVisibilityOptions()
+        {
+            if (SearchVisibilityFieldItem == null)
+            {
+                return;
+            }
+
+            bool canUseInlineSearch = _panel == null || _panel.CanDisplayInlineSearchFieldInCurrentHeader();
+            SearchVisibilityFieldItem.IsEnabled = canUseInlineSearch;
+
+            string? blockedToolTip = canUseInlineSearch
+                ? null
+                : MainWindow.GetString("Loc.PanelSettingsSearchFieldUnavailable");
+
+            SearchVisibilityFieldItem.ToolTip = blockedToolTip;
+            SearchVisibilitySelect.ToolTip = !canUseInlineSearch &&
+                                             ReferenceEquals(SearchVisibilitySelect.SelectedItem, SearchVisibilityFieldItem)
+                ? blockedToolTip
+                : null;
         }
 
         private void SetOpenClickBehaviorSelection(bool openOnSingleClick)
@@ -315,6 +369,195 @@ namespace DesktopPlus
             UpdateMetadataOptionsVisibility();
         }
 
+        private void SetIconParentNavigationModeSelection(string? mode, bool showParentNavigationItem)
+        {
+            if (IconParentNavigationModeSelect == null)
+            {
+                return;
+            }
+
+            string normalized = GetParentNavigationModeSelectionTag(GetSelectedViewMode(), mode, showParentNavigationItem);
+            foreach (ComboBoxItem item in IconParentNavigationModeSelect.Items)
+            {
+                if (string.Equals(item.Tag?.ToString(), normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    IconParentNavigationModeSelect.SelectedItem = item;
+                    break;
+                }
+            }
+
+            if (IconParentNavigationModeSelect.SelectedItem == null)
+            {
+                IconParentNavigationModeSelect.SelectedIndex = 0;
+            }
+        }
+
+        private string GetSelectedViewMode()
+        {
+            return DesktopPanel.NormalizeViewMode(
+                (ViewModeSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString());
+        }
+
+        private string GetSelectedIconParentNavigationMode()
+        {
+            string selectedTag = (IconParentNavigationModeSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
+            string selectedViewMode = GetSelectedViewMode();
+            bool showParentNavigationItem = ParentNavigationToggle.IsChecked != false;
+
+            if (string.Equals(selectedViewMode, DesktopPanel.ViewModeDetails, StringComparison.OrdinalIgnoreCase))
+            {
+                return selectedTag switch
+                {
+                    DesktopPanel.IconParentNavigationModeItem => DesktopPanel.DetailsParentNavigationModeItem,
+                    DesktopPanel.IconParentNavigationModeNone => DesktopPanel.DetailsParentNavigationModeNone,
+                    _ => DesktopPanel.DetailsParentNavigationModeHeader
+                };
+            }
+
+            return DesktopPanel.NormalizeIconViewParentNavigationMode(selectedTag, showParentNavigationItem);
+        }
+
+        private bool GetSelectedShowParentNavigationItem()
+        {
+            string selectedViewMode = GetSelectedViewMode();
+            if (string.Equals(selectedViewMode, DesktopPanel.ViewModePhotos, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return !IsParentNavigationModeNone(selectedViewMode, GetSelectedIconParentNavigationMode());
+        }
+
+        private void SetParentNavigationToggleWithoutAutoApply(bool isChecked)
+        {
+            bool previousApplying = _isApplyingSettings;
+            _isApplyingSettings = true;
+            try
+            {
+                ParentNavigationToggle.IsChecked = isChecked;
+            }
+            finally
+            {
+                _isApplyingSettings = previousApplying;
+            }
+        }
+
+        private void SetIconParentNavigationModeWithoutAutoApply(string mode, bool showParentNavigationItem)
+        {
+            bool previousApplying = _isApplyingSettings;
+            _isApplyingSettings = true;
+            try
+            {
+                SetIconParentNavigationModeSelection(mode, showParentNavigationItem);
+            }
+            finally
+            {
+                _isApplyingSettings = previousApplying;
+            }
+        }
+
+        private void SyncParentNavigationToggleFromIconMode()
+        {
+            if (ParentNavigationToggle == null || IconParentNavigationModeSelect == null)
+            {
+                return;
+            }
+
+            bool showParentNavigation = !IsParentNavigationModeNone(GetSelectedViewMode(), GetSelectedIconParentNavigationMode());
+            SetParentNavigationToggleWithoutAutoApply(showParentNavigation);
+        }
+
+        private void UpdateParentNavigationOptionsVisibility()
+        {
+            if (ParentNavigationToggle == null ||
+                IconParentNavigationModeLabel == null ||
+                IconParentNavigationModeSelect == null ||
+                ViewModeSelect == null)
+            {
+                return;
+            }
+
+            if (_panel != null && _panel.PanelType != PanelKind.Folder)
+            {
+                ParentNavigationToggle.Visibility = Visibility.Collapsed;
+                IconParentNavigationModeLabel.Visibility = Visibility.Collapsed;
+                IconParentNavigationModeSelect.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            string selectedViewMode = GetSelectedViewMode();
+            bool isIconView = string.Equals(selectedViewMode, DesktopPanel.ViewModeIcons, StringComparison.OrdinalIgnoreCase);
+            bool isDetailsView = string.Equals(selectedViewMode, DesktopPanel.ViewModeDetails, StringComparison.OrdinalIgnoreCase);
+            bool isPhotoView = string.Equals(selectedViewMode, DesktopPanel.ViewModePhotos, StringComparison.OrdinalIgnoreCase);
+
+            if (isIconView || isDetailsView)
+            {
+                string storedMode = _panel != null
+                    ? _panel.iconViewParentNavigationMode
+                    : _layout?.PanelDefaultIconViewParentNavigationMode ?? DesktopPanel.IconParentNavigationModeItem;
+                bool storedShowParentNavigation = _panel != null
+                    ? _panel.showParentNavigationItem
+                    : _layout?.PanelDefaultShowParentNavigationItem ?? true;
+                SetIconParentNavigationModeWithoutAutoApply(storedMode, storedShowParentNavigation);
+
+                ParentNavigationToggle.Visibility = Visibility.Collapsed;
+                IconParentNavigationModeLabel.Visibility = Visibility.Visible;
+                IconParentNavigationModeSelect.Visibility = Visibility.Visible;
+                SyncParentNavigationToggleFromIconMode();
+                return;
+            }
+
+            if (isPhotoView)
+            {
+                ParentNavigationToggle.Visibility = Visibility.Collapsed;
+                IconParentNavigationModeLabel.Visibility = Visibility.Collapsed;
+                IconParentNavigationModeSelect.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            ParentNavigationToggle.Visibility = Visibility.Visible;
+            IconParentNavigationModeLabel.Visibility = Visibility.Collapsed;
+            IconParentNavigationModeSelect.Visibility = Visibility.Collapsed;
+        }
+
+        private static bool IsParentNavigationModeNone(string viewMode, string mode)
+        {
+            if (string.Equals(viewMode, DesktopPanel.ViewModeDetails, StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Equals(
+                    DesktopPanel.NormalizeDetailsViewParentNavigationMode(mode),
+                    DesktopPanel.DetailsParentNavigationModeNone,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+
+            return string.Equals(
+                DesktopPanel.NormalizeIconViewParentNavigationMode(mode),
+                DesktopPanel.IconParentNavigationModeNone,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string GetParentNavigationModeSelectionTag(string viewMode, string? mode, bool showParentNavigationItem)
+        {
+            if (string.Equals(viewMode, DesktopPanel.ViewModeDetails, StringComparison.OrdinalIgnoreCase))
+            {
+                string normalizedDetailsMode = DesktopPanel.NormalizeDetailsViewParentNavigationMode(mode, showParentNavigationItem);
+                return normalizedDetailsMode switch
+                {
+                    DesktopPanel.DetailsParentNavigationModeItem => DesktopPanel.IconParentNavigationModeItem,
+                    DesktopPanel.DetailsParentNavigationModeNone => DesktopPanel.IconParentNavigationModeNone,
+                    _ => DesktopPanel.IconParentNavigationModeHeader
+                };
+            }
+
+            string normalizedIconMode = DesktopPanel.NormalizeIconViewParentNavigationMode(mode, showParentNavigationItem);
+            return normalizedIconMode switch
+            {
+                DesktopPanel.IconParentNavigationModeHeader => DesktopPanel.IconParentNavigationModeHeader,
+                DesktopPanel.IconParentNavigationModeNone => DesktopPanel.IconParentNavigationModeNone,
+                _ => DesktopPanel.IconParentNavigationModeItem
+            };
+        }
+
         private void ChangeFolder_Click(object sender, RoutedEventArgs e)
         {
             if (_panel == null)
@@ -329,6 +572,7 @@ namespace DesktopPlus
                 _panel.defaultFolderPath = dlg.SelectedPath;
                 _panel.LoadFolder(dlg.SelectedPath);
                 FolderPathLabel.Text = dlg.SelectedPath;
+                UpdateParentNavigationOptionsVisibility();
             }
         }
 
@@ -420,11 +664,14 @@ namespace DesktopPlus
                     ?? DesktopPanel.SearchVisibilityAlways;
                 string viewMode = (ViewModeSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString()
                     ?? DesktopPanel.ViewModeIcons;
+                bool showParentNavigationItem = GetSelectedShowParentNavigationItem();
+                string iconParentNavigationMode = GetSelectedIconParentNavigationMode();
 
                 mainWindow.ApplyLayoutGlobalPanelSettings(
                     _layout,
                     showHidden: HiddenToggle.IsChecked == true,
-                    showParentNavigationItem: ParentNavigationToggle.IsChecked != false,
+                    showParentNavigationItem: showParentNavigationItem,
+                    iconViewParentNavigationMode: iconParentNavigationMode,
                     showFileExtensions: FileExtensionsToggle.IsChecked != false,
                     expandOnHover: HoverToggle.IsChecked == true,
                     openFoldersExternally: FolderActionSelect.SelectedIndex == 1,
@@ -483,11 +730,18 @@ namespace DesktopPlus
             }
 
             _panel.SetExpandOnHover(HoverToggle.IsChecked == true);
+            bool selectedShowParentNavigationItem = GetSelectedShowParentNavigationItem();
+            string selectedIconParentNavigationMode = GetSelectedIconParentNavigationMode();
             bool hiddenChanged = _panel.showHiddenItems != (HiddenToggle.IsChecked == true);
-            bool parentNavigationChanged = _panel.showParentNavigationItem != (ParentNavigationToggle.IsChecked != false);
+            bool parentNavigationChanged = _panel.showParentNavigationItem != selectedShowParentNavigationItem;
+            bool iconParentNavigationModeChanged = !string.Equals(
+                DesktopPanel.NormalizeIconViewParentNavigationMode(_panel.iconViewParentNavigationMode, _panel.showParentNavigationItem),
+                selectedIconParentNavigationMode,
+                StringComparison.OrdinalIgnoreCase);
             bool fileExtensionsChanged = _panel.showFileExtensions != (FileExtensionsToggle.IsChecked != false);
             _panel.showHiddenItems = HiddenToggle.IsChecked == true;
-            _panel.showParentNavigationItem = ParentNavigationToggle.IsChecked != false;
+            _panel.showParentNavigationItem = selectedShowParentNavigationItem;
+            _panel.iconViewParentNavigationMode = selectedIconParentNavigationMode;
             _panel.showFileExtensions = FileExtensionsToggle.IsChecked != false;
             _panel.showSettingsButton = SettingsButtonToggle.IsChecked != false;
             _panel.showEmptyRecycleBinButton = EmptyRecycleBinToggle.IsChecked != false;
@@ -533,7 +787,7 @@ namespace DesktopPlus
                 _panel.ApplyAppearance(preset.Settings);
             }
 
-            if ((hiddenChanged || fileExtensionsChanged || parentNavigationChanged) &&
+            if ((hiddenChanged || fileExtensionsChanged || parentNavigationChanged || iconParentNavigationModeChanged) &&
                 !string.IsNullOrWhiteSpace(_panel.currentFolderPath))
             {
                 _panel.LoadFolder(_panel.currentFolderPath, false);
@@ -590,6 +844,9 @@ namespace DesktopPlus
             newPanel.SetExpandOnHover(_panel.expandOnHover);
             newPanel.showHiddenItems = _panel.showHiddenItems;
             newPanel.showParentNavigationItem = _panel.showParentNavigationItem;
+            newPanel.iconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
+                _panel.iconViewParentNavigationMode,
+                _panel.showParentNavigationItem);
             newPanel.showFileExtensions = _panel.showFileExtensions;
             newPanel.showSettingsButton = _panel.showSettingsButton;
             newPanel.showEmptyRecycleBinButton = _panel.showEmptyRecycleBinButton;
@@ -721,7 +978,7 @@ namespace DesktopPlus
                 ShowTitle = _detailColumnsState.ShowTitle,
                 MetadataOrder = DesktopPanel.NormalizeMetadataOrder(_detailColumnsState.MetadataOrder),
                 MetadataWidths = DesktopPanel.NormalizeMetadataWidths(_detailColumnsState.MetadataWidths)
-            })
+            }, CreateAvailableDetailColumnOptions())
             {
                 Owner = this
             };
@@ -733,6 +990,28 @@ namespace DesktopPlus
 
             _detailColumnsState = dialog.ResultState;
             TryAutoApplySettings();
+        }
+
+        private IReadOnlyList<DetailColumnOption> CreateAvailableDetailColumnOptions()
+        {
+            if (_panel != null)
+            {
+                return _panel.CreateAvailableDetailColumnOptions();
+            }
+
+            return new[]
+            {
+                new DetailColumnOption(DesktopPanel.MetadataName, MainWindow.GetString("Loc.DetailColumnName"), true, false),
+                new DetailColumnOption(DesktopPanel.MetadataModified, MainWindow.GetString("Loc.PanelSettingsMetaModified"), _detailColumnsState.ShowModified, true),
+                new DetailColumnOption(DesktopPanel.MetadataType, MainWindow.GetString("Loc.PanelSettingsMetaType"), _detailColumnsState.ShowType, true),
+                new DetailColumnOption(DesktopPanel.MetadataSize, MainWindow.GetString("Loc.PanelSettingsMetaSize"), _detailColumnsState.ShowSize, true),
+                new DetailColumnOption(DesktopPanel.MetadataCreated, MainWindow.GetString("Loc.PanelSettingsMetaCreated"), _detailColumnsState.ShowCreated, true),
+                new DetailColumnOption(DesktopPanel.MetadataDimensions, MainWindow.GetString("Loc.PanelSettingsMetaDimensions"), _detailColumnsState.ShowDimensions, true),
+                new DetailColumnOption(DesktopPanel.MetadataAuthors, MainWindow.GetString("Loc.PanelSettingsMetaAuthors"), _detailColumnsState.ShowAuthors, true),
+                new DetailColumnOption(DesktopPanel.MetadataCategories, MainWindow.GetString("Loc.PanelSettingsMetaCategories"), _detailColumnsState.ShowCategories, true),
+                new DetailColumnOption(DesktopPanel.MetadataTags, MainWindow.GetString("Loc.PanelSettingsMetaTags"), _detailColumnsState.ShowTags, true),
+                new DetailColumnOption(DesktopPanel.MetadataTitle, MainWindow.GetString("Loc.PanelSettingsMetaTitle"), _detailColumnsState.ShowTitle, true)
+            };
         }
     }
 }

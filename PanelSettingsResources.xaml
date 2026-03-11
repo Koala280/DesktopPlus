@@ -281,14 +281,14 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="CheckBox">
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,4,0,4">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="8,4,8,4">
                         <Border x:Name="Box"
                                 Width="18" Height="18"
                                 CornerRadius="4"
                                 Background="#1E232B"
                                 BorderBrush="#3A414E"
                                 BorderThickness="1"
-                                Margin="0,0,8,0">
+                                Margin="0,0,10,0">
                             <Path x:Name="Check"
                                   Data="M 0.8 4.2 L 3.2 6.8 L 8.4 1.4"
                                   Width="9"

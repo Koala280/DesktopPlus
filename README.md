@@ -179,7 +179,7 @@ DesktopPlus is local-first. It does not require an online account or cloud backe
 
 - Settings, layouts, presets, auto-sort rules, and panel state are saved in `%APPDATA%\DesktopPlus_Settings.json`.
 - Auto-sort moved items are stored in `%LOCALAPPDATA%\DesktopPlus\AutoSortStorage\`.
-- `Start with Windows` writes/removes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\DesktopPlus`.
+- `Start with Windows` prefers a per-user logon scheduled task (`DesktopPlus Startup`) and falls back to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\DesktopPlus` if Task Scheduler registration is unavailable.
 
 ## Unsigned Binary Note
 

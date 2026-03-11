@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -27,6 +28,7 @@ namespace DesktopPlus
         public string assignedPresetName = "";
         public bool showHiddenItems = false;
         public bool showParentNavigationItem = true;
+        public string iconViewParentNavigationMode = IconParentNavigationModeItem;
         public bool showFileExtensions = true;
         public bool expandOnHover = false;
         public bool openFoldersExternally = false;
@@ -58,11 +60,16 @@ namespace DesktopPlus
         private bool _isExpandedShiftedByBounds = false;
         private bool _hasForcedCollapseReturnTop = false;
         private double _forcedCollapseReturnTop;
+        private bool _isDeleteOperationRunning;
+        private bool _headerBackButtonRequestedVisible;
+        private bool _isCollapsedVisualState = false;
+        private int _headerBackButtonAnimationVersion;
         private bool _isBoundsCorrectionInProgress = false;
         private bool _isTemporarilyForeground;
         private bool _isDragMoveActive = false;
         private bool _isManualResizeActive = false;
         private bool _wrapPanelWidthUpdateQueued = false;
+        private long _panelZOrderToken = Interlocked.Increment(ref _nextPanelZOrderToken);
         private UIElement? _dragHandle;
         private Point _dragStartMouseScreen;
         private Point _dragStartWindowPosition;
@@ -76,6 +83,7 @@ namespace DesktopPlus
         private bool? _queuedHoverTargetVisible;
         private CancellationTokenSource? _searchCts;
         private bool _deferSortUntilSearchComplete;
+        private bool _isSearchExpandedFromCompactButton = false;
         private CancellationTokenSource? _folderLoadCts;
         private CancellationTokenSource? _recycleBinLoadCts;
         private bool _useLightweightItemVisuals;
@@ -96,8 +104,15 @@ namespace DesktopPlus
         private double _headerTopCornerRadius = 14;
         private double _headerBottomCornerRadius = 0;
         public const string SearchVisibilityAlways = "always";
-        public const string SearchVisibilityExpanded = "expanded";
+        public const string SearchVisibilityButton = "button";
+        public const string SearchVisibilityExpanded = "expanded"; // legacy
         public const string SearchVisibilityHidden = "hidden";
+        public const string IconParentNavigationModeHeader = "header";
+        public const string IconParentNavigationModeItem = "item";
+        public const string IconParentNavigationModeNone = "none";
+        public const string DetailsParentNavigationModeHeader = "details-header";
+        public const string DetailsParentNavigationModeItem = "details-item";
+        public const string DetailsParentNavigationModeNone = "details-none";
         public const string ViewModeIcons = "icons";
         public const string ViewModeDetails = "details";
         public const string ViewModePhotos = "photos";
@@ -138,7 +153,13 @@ namespace DesktopPlus
             MetadataTitle
         };
         private const double HeaderSearchWidth = 154;
+        private const double HeaderSearchButtonWidth = 24;
+        private const double HeaderInlineSearchMinimumWidth = 104;
         private const double HeaderSearchSpacerWidth = 8;
+        private const double HeaderBackButtonWidth = 24;
+        private const int HeaderBackButtonAnimationMs = 220;
+        private static readonly Thickness HeaderBackButtonVisibleMargin = new Thickness(0, 0, 8, 0);
+        private static readonly Thickness HeaderBackButtonHiddenMargin = new Thickness(0);
         private const double HeaderTitleMinWidth = 96;
         private const double HeaderHorizontalPadding = 24;
         private const double HeaderCoreFixedWidth = 64; // fixed spacer (8) + collapse (28) + close (28)
@@ -162,6 +183,7 @@ namespace DesktopPlus
         private const uint SwpNoActivate = 0x0010;
         private const uint SwpNoOwnerZOrder = 0x0200;
         private const double MouseWheelZoomStep = 0.05;
+        private static long _nextPanelZOrderToken;
 
         [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
         private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
@@ -276,6 +298,45 @@ namespace DesktopPlus
             ApplySearchVisibility();
             ApplyCollapsedVisualState(collapsed: false, animateCorners: false);
             UpdateDropZoneVisibility();
+        }
+
+        private void SetDeleteOperationState(bool isRunning)
+        {
+            _isDeleteOperationRunning = isRunning;
+
+            if (FileList != null)
+            {
+                FileList.IsEnabled = !isRunning;
+            }
+
+            if (EmptyRecycleBinButton != null)
+            {
+                EmptyRecycleBinButton.IsEnabled = !isRunning;
+            }
+        }
+
+        private static Task<T> RunStaFileOperationAsync<T>(Func<T> operation)
+        {
+            var completionSource = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    completionSource.SetResult(operation());
+                }
+                catch (Exception ex)
+                {
+                    completionSource.SetException(ex);
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "DesktopPlus.FileOperation"
+            };
+
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            return completionSource.Task;
         }
 
         public void UpdateDropZoneVisibility()
@@ -569,6 +630,7 @@ namespace DesktopPlus
 
         private void ApplyCollapsedVisualState(bool collapsed, bool animateCorners, TimeSpan? duration = null)
         {
+            _isCollapsedVisualState = collapsed;
             ResizeMode = ResizeMode.NoResize;
             if (PanelChrome != null)
             {
@@ -584,6 +646,7 @@ namespace DesktopPlus
                 BodyShadowHost.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
             }
             RebuildTabBar(collapsed);
+            ApplyHeaderBackButtonVisualState(ShouldShowHeaderBackButtonVisual(), animateCorners, duration);
             UpdateHeaderBottomBorderForCurrentState(collapsed);
 
             double targetBottomRadius = collapsed ? _headerTopCornerRadius : 0;
@@ -597,6 +660,124 @@ namespace DesktopPlus
                 StopHeaderCornerAnimation();
                 ApplyHeaderCornerRadius(targetBottomRadius);
             }
+        }
+
+        private bool ShouldShowHeaderBackButtonVisual()
+        {
+            return _headerBackButtonRequestedVisible && !_isCollapsedVisualState;
+        }
+
+        private void ApplyHeaderBackButtonVisualState(bool show, bool animate, TimeSpan? duration = null)
+        {
+            if (HeaderBackButton == null)
+            {
+                return;
+            }
+
+            double targetWidth = show ? HeaderBackButtonWidth : 0;
+            double targetOpacity = show ? 1 : 0;
+            Thickness targetMargin = show ? HeaderBackButtonVisibleMargin : HeaderBackButtonHiddenMargin;
+            HeaderBackButton.IsHitTestVisible = show;
+            int animationVersion = ++_headerBackButtonAnimationVersion;
+
+            if (!animate || !IsLoaded)
+            {
+                HeaderBackButton.BeginAnimation(FrameworkElement.WidthProperty, null);
+                HeaderBackButton.BeginAnimation(UIElement.OpacityProperty, null);
+                HeaderBackButton.BeginAnimation(FrameworkElement.MarginProperty, null);
+                HeaderBackButton.Width = targetWidth;
+                HeaderBackButton.Opacity = targetOpacity;
+                HeaderBackButton.Margin = targetMargin;
+                HeaderBackButton.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+                return;
+            }
+
+            double currentWidth = HeaderBackButton.Visibility == Visibility.Visible
+                ? ResolveCurrentWidth(HeaderBackButton, targetWidth)
+                : 0;
+            double currentOpacity = HeaderBackButton.Visibility == Visibility.Visible
+                ? HeaderBackButton.Opacity
+                : 0;
+            Thickness currentMargin = HeaderBackButton.Visibility == Visibility.Visible
+                ? HeaderBackButton.Margin
+                : HeaderBackButtonHiddenMargin;
+
+            HeaderBackButton.BeginAnimation(FrameworkElement.WidthProperty, null);
+            HeaderBackButton.BeginAnimation(UIElement.OpacityProperty, null);
+            HeaderBackButton.BeginAnimation(FrameworkElement.MarginProperty, null);
+            HeaderBackButton.Width = currentWidth;
+            HeaderBackButton.Opacity = currentOpacity;
+            HeaderBackButton.Margin = currentMargin;
+
+            if (show)
+            {
+                HeaderBackButton.Visibility = Visibility.Visible;
+            }
+
+            var easing = new CubicEase { EasingMode = show ? EasingMode.EaseOut : EasingMode.EaseInOut };
+            TimeSpan animationDuration = duration ?? TimeSpan.FromMilliseconds(HeaderBackButtonAnimationMs);
+
+            var widthAnimation = new DoubleAnimation
+            {
+                To = targetWidth,
+                Duration = animationDuration,
+                EasingFunction = easing,
+                FillBehavior = FillBehavior.HoldEnd
+            };
+            widthAnimation.Completed += (_, _) =>
+            {
+                if (HeaderBackButton == null || animationVersion != _headerBackButtonAnimationVersion)
+                {
+                    return;
+                }
+
+                HeaderBackButton.BeginAnimation(FrameworkElement.WidthProperty, null);
+                HeaderBackButton.Width = targetWidth;
+                if (!show)
+                {
+                    HeaderBackButton.Visibility = Visibility.Collapsed;
+                }
+            };
+
+            var opacityAnimation = new DoubleAnimation
+            {
+                To = targetOpacity,
+                Duration = animationDuration,
+                EasingFunction = easing,
+                FillBehavior = FillBehavior.HoldEnd
+            };
+            opacityAnimation.Completed += (_, _) =>
+            {
+                if (HeaderBackButton == null || animationVersion != _headerBackButtonAnimationVersion)
+                {
+                    return;
+                }
+
+                HeaderBackButton.BeginAnimation(UIElement.OpacityProperty, null);
+                HeaderBackButton.Opacity = targetOpacity;
+            };
+
+            var marginAnimation = new ThicknessAnimation
+            {
+                To = targetMargin,
+                Duration = animationDuration,
+                EasingFunction = easing,
+                FillBehavior = FillBehavior.HoldEnd
+            };
+            marginAnimation.Completed += (_, _) =>
+            {
+                if (HeaderBackButton == null || animationVersion != _headerBackButtonAnimationVersion)
+                {
+                    return;
+                }
+
+                HeaderBackButton.BeginAnimation(FrameworkElement.MarginProperty, null);
+                HeaderBackButton.Margin = targetMargin;
+            };
+
+            HeaderBackButton.BeginAnimation(FrameworkElement.WidthProperty, widthAnimation, HandoffBehavior.SnapshotAndReplace);
+            HeaderBackButton.BeginAnimation(UIElement.OpacityProperty, opacityAnimation, HandoffBehavior.SnapshotAndReplace);
+            HeaderBackButton.BeginAnimation(FrameworkElement.MarginProperty, marginAnimation, HandoffBehavior.SnapshotAndReplace);
         }
 
         private void UpdateHeaderBottomBorderForCurrentState(bool collapsed)
@@ -982,6 +1163,40 @@ namespace DesktopPlus
                 SwpNoMove | SwpNoSize | SwpNoActivate | SwpNoOwnerZOrder);
         }
 
+        internal void BringPanelToFrontWithinPanels()
+        {
+            if (_isTemporarilyForeground) return;
+            if (IsPreviewPanel) return;
+
+            IntPtr handle = _windowSource?.Handle ?? IntPtr.Zero;
+            if (handle == IntPtr.Zero) return;
+
+            _panelZOrderToken = Interlocked.Increment(ref _nextPanelZOrderToken);
+
+            var orderedPanels = System.Windows.Application.Current?.Windows
+                .OfType<DesktopPanel>()
+                .Where(panel =>
+                    panel != null &&
+                    !panel.IsPreviewPanel &&
+                    !panel._isTemporarilyForeground &&
+                    panel.IsVisible &&
+                    (panel._windowSource?.Handle ?? IntPtr.Zero) != IntPtr.Zero)
+                .OrderByDescending(panel => panel._panelZOrderToken)
+                .ThenBy(panel => panel.PanelId, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (orderedPanels == null || orderedPanels.Count == 0)
+            {
+                SendPanelToBack();
+                return;
+            }
+
+            foreach (DesktopPanel panel in orderedPanels)
+            {
+                panel.SendPanelToBack();
+            }
+        }
+
         public void SetTemporaryForegroundMode(bool enabled)
         {
             _isTemporarilyForeground = enabled;
@@ -1043,7 +1258,7 @@ namespace DesktopPlus
 
         private void DesktopPanel_Activated(object? sender, EventArgs e)
         {
-            SendPanelToBack();
+            BringPanelToFrontWithinPanels();
         }
 
         private void DesktopPanel_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -1452,18 +1667,12 @@ namespace DesktopPlus
         /// </summary>
         private void UpdateMergeTarget(Point mouseScreenDip)
         {
-            if (HasRecycleBinTab())
-            {
-                ClearMergeTarget();
-                return;
-            }
-
             DesktopPanel? newTarget = null;
 
             foreach (var other in System.Windows.Application.Current.Windows.OfType<DesktopPanel>())
             {
                 if (other == this || !other.IsVisible) continue;
-                if (other.HasRecycleBinTab()) continue;
+                if (HasRecycleBinTab() && other.HasRecycleBinTab()) continue;
 
                 // Check if mouse is within the other panel's header bounds
                 double headerHeight = 46;
@@ -1800,9 +2009,10 @@ namespace DesktopPlus
 
         public static string NormalizeSearchVisibilityMode(string? mode)
         {
-            if (string.Equals(mode, SearchVisibilityExpanded, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(mode, SearchVisibilityButton, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(mode, SearchVisibilityExpanded, StringComparison.OrdinalIgnoreCase))
             {
-                return SearchVisibilityExpanded;
+                return SearchVisibilityButton;
             }
 
             if (string.Equals(mode, SearchVisibilityHidden, StringComparison.OrdinalIgnoreCase))
@@ -1826,6 +2036,76 @@ namespace DesktopPlus
             }
 
             return ViewModeIcons;
+        }
+
+        public static string NormalizeIconViewParentNavigationMode(string? mode, bool showParentNavigationItem = true)
+        {
+            if (string.Equals(mode, IconParentNavigationModeHeader, StringComparison.OrdinalIgnoreCase))
+            {
+                return IconParentNavigationModeHeader;
+            }
+
+            if (string.Equals(mode, IconParentNavigationModeItem, StringComparison.OrdinalIgnoreCase))
+            {
+                return IconParentNavigationModeItem;
+            }
+
+            if (string.Equals(mode, IconParentNavigationModeNone, StringComparison.OrdinalIgnoreCase))
+            {
+                return IconParentNavigationModeNone;
+            }
+
+            if (string.Equals(mode, DetailsParentNavigationModeHeader, StringComparison.OrdinalIgnoreCase))
+            {
+                return DetailsParentNavigationModeHeader;
+            }
+
+            if (string.Equals(mode, DetailsParentNavigationModeItem, StringComparison.OrdinalIgnoreCase))
+            {
+                return DetailsParentNavigationModeItem;
+            }
+
+            if (string.Equals(mode, DetailsParentNavigationModeNone, StringComparison.OrdinalIgnoreCase))
+            {
+                return DetailsParentNavigationModeNone;
+            }
+
+            return showParentNavigationItem
+                ? IconParentNavigationModeItem
+                : IconParentNavigationModeNone;
+        }
+
+        public static string NormalizeDetailsViewParentNavigationMode(string? mode, bool showParentNavigationItem = true)
+        {
+            if (string.Equals(mode, DetailsParentNavigationModeHeader, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(mode, IconParentNavigationModeHeader, StringComparison.OrdinalIgnoreCase))
+            {
+                return DetailsParentNavigationModeHeader;
+            }
+
+            if (string.Equals(mode, DetailsParentNavigationModeItem, StringComparison.OrdinalIgnoreCase))
+            {
+                return DetailsParentNavigationModeItem;
+            }
+
+            if (string.Equals(mode, DetailsParentNavigationModeNone, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(mode, IconParentNavigationModeNone, StringComparison.OrdinalIgnoreCase))
+            {
+                return DetailsParentNavigationModeNone;
+            }
+
+            // Legacy details panels used the shared "item" default but always behaved
+            // like a header back button. Keep that behavior for existing settings.
+            if (string.Equals(mode, IconParentNavigationModeItem, StringComparison.OrdinalIgnoreCase))
+            {
+                return showParentNavigationItem
+                    ? DetailsParentNavigationModeHeader
+                    : DetailsParentNavigationModeNone;
+            }
+
+            return showParentNavigationItem
+                ? DetailsParentNavigationModeHeader
+                : DetailsParentNavigationModeNone;
         }
 
         public static List<string> NormalizeMetadataOrder(IEnumerable<string>? order)
@@ -1961,6 +2241,12 @@ namespace DesktopPlus
                 return MetadataTitle;
             }
 
+            string explorerMetadataKey = ExplorerDetailsColumnProvider.NormalizeMetadataKey(key);
+            if (!string.IsNullOrWhiteSpace(explorerMetadataKey))
+            {
+                return explorerMetadataKey;
+            }
+
             return string.Empty;
         }
 
@@ -2027,6 +2313,11 @@ namespace DesktopPlus
                 return 172;
             }
 
+            if (ExplorerDetailsColumnProvider.IsExplorerMetadataKey(key))
+            {
+                return 156;
+            }
+
             return 128;
         }
 
@@ -2048,23 +2339,57 @@ namespace DesktopPlus
         private bool ShouldShowSearch()
         {
             string normalized = NormalizeSearchVisibilityMode(searchVisibilityMode);
-            if (string.Equals(normalized, SearchVisibilityHidden, StringComparison.OrdinalIgnoreCase))
+            return !string.Equals(normalized, SearchVisibilityHidden, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public bool CanDisplayInlineSearchFieldInCurrentHeader()
+        {
+            return GetHeaderSearchAvailableWidth(reserveTitleWidth: true) >= HeaderInlineSearchMinimumWidth;
+        }
+
+        private bool ShouldUseCompactSearchPresentation(string normalizedMode)
+        {
+            if (string.Equals(normalizedMode, SearchVisibilityButton, StringComparison.OrdinalIgnoreCase))
             {
-                return false;
+                return true;
             }
 
-            if (string.Equals(normalized, SearchVisibilityExpanded, StringComparison.OrdinalIgnoreCase))
+            return !CanDisplayInlineSearchFieldInCurrentHeader();
+        }
+
+        private bool ShouldShowExpandedSearchFieldInCompactMode()
+        {
+            if (SearchBox?.IsKeyboardFocusWithin == true)
             {
-                return isContentVisible;
+                return true;
             }
 
-            return true;
+            if (!string.IsNullOrWhiteSpace(SearchBox?.Text))
+            {
+                return true;
+            }
+
+            return _isSearchExpandedFromCompactButton;
         }
 
         private void ApplySearchVisibility(bool animate = true)
         {
+            string normalizedMode = NormalizeSearchVisibilityMode(searchVisibilityMode);
             bool showSearch = ShouldShowSearch();
             bool shouldAnimate = animate && IsLoaded;
+            bool useCompactPresentation = showSearch && ShouldUseCompactSearchPresentation(normalizedMode);
+            bool showExpandedField = useCompactPresentation && ShouldShowExpandedSearchFieldInCompactMode();
+            bool showSearchField = showSearch && (!useCompactPresentation || showExpandedField);
+            bool showSearchButton = showSearch && useCompactPresentation && !showExpandedField;
+            bool hideHeaderIdentity = showExpandedField;
+            double targetSearchWidth = 0;
+            double targetButtonWidth = 0;
+            double targetSpacerWidth = 0;
+
+            if (!useCompactPresentation)
+            {
+                _isSearchExpandedFromCompactButton = false;
+            }
 
             if (SearchColumn != null)
             {
@@ -2076,99 +2401,34 @@ namespace DesktopPlus
                 SearchSpacerColumn.Width = GridLength.Auto;
             }
 
-            if (SearchContainer == null || SearchSpacer == null)
+            if (SearchContainer == null || SearchCompactButton == null || SearchSpacer == null)
             {
                 return;
             }
 
-            GetAdaptiveHeaderSearchWidths(out double adaptiveSearchWidth, out double adaptiveSpacerWidth);
-            double targetSearchWidth = showSearch ? adaptiveSearchWidth : 0;
-            double targetSpacerWidth = showSearch ? adaptiveSpacerWidth : 0;
-
-            if (!shouldAnimate)
+            if (showSearchField)
             {
-                SearchContainer.BeginAnimation(FrameworkElement.WidthProperty, null);
-                SearchContainer.BeginAnimation(UIElement.OpacityProperty, null);
-                SearchSpacer.BeginAnimation(FrameworkElement.WidthProperty, null);
-
-                SearchContainer.Width = targetSearchWidth;
-                SearchContainer.Opacity = showSearch ? 1 : 0;
-                SearchContainer.Visibility = showSearch ? Visibility.Visible : Visibility.Collapsed;
-
-                SearchSpacer.Width = targetSpacerWidth;
-                SearchSpacer.Visibility = showSearch ? Visibility.Visible : Visibility.Collapsed;
-                return;
+                GetAdaptiveHeaderSearchWidths(
+                    reserveTitleWidth: !hideHeaderIdentity,
+                    out targetSearchWidth,
+                    out targetSpacerWidth);
+            }
+            else if (showSearchButton)
+            {
+                targetButtonWidth = HeaderSearchButtonWidth;
+                targetSpacerWidth = HeaderSearchSpacerWidth;
             }
 
-            double currentSearchWidth = ResolveCurrentWidth(SearchContainer, targetSearchWidth);
-            double currentSpacerWidth = ResolveCurrentWidth(SearchSpacer, targetSpacerWidth);
-            double targetOpacity = showSearch ? 1 : 0;
-
-            SearchContainer.BeginAnimation(FrameworkElement.WidthProperty, null);
-            SearchContainer.BeginAnimation(UIElement.OpacityProperty, null);
-            SearchSpacer.BeginAnimation(FrameworkElement.WidthProperty, null);
-
-            SearchContainer.Width = currentSearchWidth;
-            SearchSpacer.Width = currentSpacerWidth;
-
-            if (showSearch)
-            {
-                SearchContainer.Visibility = Visibility.Visible;
-                SearchSpacer.Visibility = Visibility.Visible;
-            }
-
-            var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
-            var duration = TimeSpan.FromMilliseconds(SearchVisibilityAnimationMs);
-
-            var widthAnimation = new DoubleAnimation
-            {
-                To = targetSearchWidth,
-                Duration = duration,
-                EasingFunction = easing,
-                FillBehavior = FillBehavior.HoldEnd
-            };
-            widthAnimation.Completed += (_, _) =>
-            {
-                SearchContainer.BeginAnimation(FrameworkElement.WidthProperty, null);
-                SearchContainer.Width = targetSearchWidth;
-                SearchContainer.Visibility = showSearch ? Visibility.Visible : Visibility.Collapsed;
-            };
-
-            var spacerAnimation = new DoubleAnimation
-            {
-                To = targetSpacerWidth,
-                Duration = duration,
-                EasingFunction = easing,
-                FillBehavior = FillBehavior.HoldEnd
-            };
-            spacerAnimation.Completed += (_, _) =>
-            {
-                SearchSpacer.BeginAnimation(FrameworkElement.WidthProperty, null);
-                SearchSpacer.Width = targetSpacerWidth;
-                SearchSpacer.Visibility = showSearch ? Visibility.Visible : Visibility.Collapsed;
-            };
-
-            var opacityAnimation = new DoubleAnimation
-            {
-                To = targetOpacity,
-                Duration = TimeSpan.FromMilliseconds(showSearch ? SearchVisibilityAnimationMs : SearchVisibilityAnimationMs - 40),
-                EasingFunction = easing,
-                FillBehavior = FillBehavior.HoldEnd
-            };
-            opacityAnimation.Completed += (_, _) =>
-            {
-                SearchContainer.BeginAnimation(UIElement.OpacityProperty, null);
-                SearchContainer.Opacity = targetOpacity;
-            };
-
-            SearchContainer.BeginAnimation(FrameworkElement.WidthProperty, widthAnimation, HandoffBehavior.SnapshotAndReplace);
-            SearchSpacer.BeginAnimation(FrameworkElement.WidthProperty, spacerAnimation, HandoffBehavior.SnapshotAndReplace);
-            SearchContainer.BeginAnimation(UIElement.OpacityProperty, opacityAnimation, HandoffBehavior.SnapshotAndReplace);
+            ApplyAnimatedWidthAndOpacity(SearchContainer, showSearchField, targetSearchWidth, shouldAnimate);
+            ApplyAnimatedWidthAndOpacity(SearchCompactButton, showSearchButton, targetButtonWidth, shouldAnimate);
+            ApplyAnimatedWidth(SearchSpacer, showSearchField || showSearchButton, targetSpacerWidth, shouldAnimate);
+            ApplyAnimatedOpacity(PanelTitle, !hideHeaderIdentity, shouldAnimate, 0.95);
+            ApplyAnimatedOpacity(TabBarContainer, !hideHeaderIdentity, shouldAnimate, 1.0);
         }
 
-        private void GetAdaptiveHeaderSearchWidths(out double searchWidth, out double spacerWidth)
+        private void GetAdaptiveHeaderSearchWidths(bool reserveTitleWidth, out double searchWidth, out double spacerWidth)
         {
-            double available = GetHeaderSearchAvailableWidth();
+            double available = GetHeaderSearchAvailableWidth(reserveTitleWidth);
             if (available <= 0.5)
             {
                 searchWidth = 0;
@@ -2180,7 +2440,7 @@ namespace DesktopPlus
             spacerWidth = Math.Min(HeaderSearchSpacerWidth, Math.Max(0, available - searchWidth));
         }
 
-        private double GetHeaderSearchAvailableWidth()
+        private double GetHeaderSearchAvailableWidth(bool reserveTitleWidth)
         {
             double headerWidth = 0;
             if (HeaderBar != null && HeaderBar.ActualWidth > 0)
@@ -2200,8 +2460,14 @@ namespace DesktopPlus
             double reservedWidth = HeaderHorizontalPadding + HeaderCoreFixedWidth;
             reservedWidth += GetVisibleElementWidth(MoveButton, 34);
             reservedWidth += GetVisibleElementWidth(SettingsButton, 24);
+            reservedWidth += GetVisibleElementWidth(HeaderBackButton, 32);
 
-            return Math.Max(0, headerWidth - reservedWidth - HeaderTitleMinWidth);
+            if (reserveTitleWidth)
+            {
+                reservedWidth += HeaderTitleMinWidth;
+            }
+
+            return Math.Max(0, headerWidth - reservedWidth);
         }
 
         private static double GetVisibleElementWidth(FrameworkElement? element, double fallbackWidth)
@@ -2240,6 +2506,236 @@ namespace DesktopPlus
             }
 
             return fallback;
+        }
+
+        private void ApplyAnimatedWidthAndOpacity(FrameworkElement element, bool show, double targetWidth, bool animate, double visibleOpacity = 1)
+        {
+            double targetOpacity = show ? visibleOpacity : 0;
+
+            if (!animate || !IsLoaded)
+            {
+                element.BeginAnimation(FrameworkElement.WidthProperty, null);
+                element.BeginAnimation(UIElement.OpacityProperty, null);
+                element.Width = targetWidth;
+                element.Opacity = targetOpacity;
+                element.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+                return;
+            }
+
+            double currentWidth = element.Visibility == Visibility.Visible
+                ? ResolveCurrentWidth(element, targetWidth)
+                : 0;
+            double currentOpacity = element.Visibility == Visibility.Visible
+                ? element.Opacity
+                : 0;
+
+            element.BeginAnimation(FrameworkElement.WidthProperty, null);
+            element.BeginAnimation(UIElement.OpacityProperty, null);
+            element.Width = currentWidth;
+            element.Opacity = currentOpacity;
+
+            if (show)
+            {
+                element.Visibility = Visibility.Visible;
+            }
+
+            var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+            var duration = TimeSpan.FromMilliseconds(SearchVisibilityAnimationMs);
+
+            var widthAnimation = new DoubleAnimation
+            {
+                To = targetWidth,
+                Duration = duration,
+                EasingFunction = easing,
+                FillBehavior = FillBehavior.HoldEnd
+            };
+            widthAnimation.Completed += (_, _) =>
+            {
+                element.BeginAnimation(FrameworkElement.WidthProperty, null);
+                element.Width = targetWidth;
+                element.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            };
+
+            var opacityAnimation = new DoubleAnimation
+            {
+                To = targetOpacity,
+                Duration = TimeSpan.FromMilliseconds(show ? SearchVisibilityAnimationMs : SearchVisibilityAnimationMs - 40),
+                EasingFunction = easing,
+                FillBehavior = FillBehavior.HoldEnd
+            };
+            opacityAnimation.Completed += (_, _) =>
+            {
+                element.BeginAnimation(UIElement.OpacityProperty, null);
+                element.Opacity = targetOpacity;
+            };
+
+            element.BeginAnimation(FrameworkElement.WidthProperty, widthAnimation, HandoffBehavior.SnapshotAndReplace);
+            element.BeginAnimation(UIElement.OpacityProperty, opacityAnimation, HandoffBehavior.SnapshotAndReplace);
+        }
+
+        private void ApplyAnimatedWidth(FrameworkElement element, bool show, double targetWidth, bool animate)
+        {
+            if (!animate || !IsLoaded)
+            {
+                element.BeginAnimation(FrameworkElement.WidthProperty, null);
+                element.Width = targetWidth;
+                element.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+                return;
+            }
+
+            double currentWidth = element.Visibility == Visibility.Visible
+                ? ResolveCurrentWidth(element, targetWidth)
+                : 0;
+
+            element.BeginAnimation(FrameworkElement.WidthProperty, null);
+            element.Width = currentWidth;
+
+            if (show)
+            {
+                element.Visibility = Visibility.Visible;
+            }
+
+            var widthAnimation = new DoubleAnimation
+            {
+                To = targetWidth,
+                Duration = TimeSpan.FromMilliseconds(SearchVisibilityAnimationMs),
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.HoldEnd
+            };
+            widthAnimation.Completed += (_, _) =>
+            {
+                element.BeginAnimation(FrameworkElement.WidthProperty, null);
+                element.Width = targetWidth;
+                element.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            };
+
+            element.BeginAnimation(FrameworkElement.WidthProperty, widthAnimation, HandoffBehavior.SnapshotAndReplace);
+        }
+
+        private void ApplyAnimatedOpacity(FrameworkElement? element, bool show, bool animate, double visibleOpacity)
+        {
+            if (element == null)
+            {
+                return;
+            }
+
+            double targetOpacity = show ? visibleOpacity : 0;
+            element.IsHitTestVisible = show;
+
+            if (element.Visibility != Visibility.Visible)
+            {
+                element.BeginAnimation(UIElement.OpacityProperty, null);
+                element.Opacity = targetOpacity;
+                return;
+            }
+
+            if (!animate || !IsLoaded)
+            {
+                element.BeginAnimation(UIElement.OpacityProperty, null);
+                element.Opacity = targetOpacity;
+                return;
+            }
+
+            element.BeginAnimation(UIElement.OpacityProperty, null);
+            var opacityAnimation = new DoubleAnimation
+            {
+                To = targetOpacity,
+                Duration = TimeSpan.FromMilliseconds(SearchVisibilityAnimationMs),
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.HoldEnd
+            };
+            opacityAnimation.Completed += (_, _) =>
+            {
+                element.BeginAnimation(UIElement.OpacityProperty, null);
+                element.Opacity = targetOpacity;
+            };
+
+            element.BeginAnimation(UIElement.OpacityProperty, opacityAnimation, HandoffBehavior.SnapshotAndReplace);
+        }
+
+        private void SearchCompactButton_Click(object sender, RoutedEventArgs e)
+        {
+            ExpandCompactSearch(selectAll: false);
+        }
+
+        private void ExpandCompactSearch(bool selectAll)
+        {
+            if (!ShouldShowSearch())
+            {
+                return;
+            }
+
+            _isSearchExpandedFromCompactButton = true;
+            ApplySearchVisibility();
+            FocusSearchBoxDeferred(selectAll);
+        }
+
+        private void FocusSearchBoxDeferred(bool selectAll)
+        {
+            _ = Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (SearchBox == null)
+                {
+                    return;
+                }
+
+                SearchBox.Focus();
+                if (selectAll)
+                {
+                    SearchBox.SelectAll();
+                }
+
+                if (SearchBox.IsKeyboardFocusWithin)
+                {
+                    return;
+                }
+
+                var retryTimer = new System.Windows.Threading.DispatcherTimer(
+                    TimeSpan.FromMilliseconds(SearchVisibilityAnimationMs + 140),
+                    System.Windows.Threading.DispatcherPriority.Input,
+                    (s, _) =>
+                    {
+                        if (s is not System.Windows.Threading.DispatcherTimer timer)
+                        {
+                            return;
+                        }
+
+                        timer.Stop();
+                        if (SearchBox == null)
+                        {
+                            return;
+                        }
+
+                        SearchBox.Focus();
+                        if (selectAll)
+                        {
+                            SearchBox.SelectAll();
+                        }
+                    },
+                    Dispatcher);
+                retryTimer.Start();
+            }), System.Windows.Threading.DispatcherPriority.Input);
+        }
+
+        private void CollapseCompactSearchIfPossible()
+        {
+            if (SearchBox?.IsKeyboardFocusWithin == true)
+            {
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(SearchBox?.Text))
+            {
+                return;
+            }
+
+            if (!_isSearchExpandedFromCompactButton)
+            {
+                return;
+            }
+
+            _isSearchExpandedFromCompactButton = false;
+            ApplySearchVisibility();
         }
 
         private void Collapse_Click(object sender, RoutedEventArgs e)
@@ -2343,7 +2839,7 @@ namespace DesktopPlus
                 return;
             }
 
-            EmptyRecycleBin();
+            await EmptyRecycleBinAsync();
         }
     }
 }

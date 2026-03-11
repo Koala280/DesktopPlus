@@ -10,6 +10,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using Microsoft.VisualBasic.FileIO;
 using DataFormats = System.Windows.DataFormats;
 using DragDrop = System.Windows.DragDrop;
@@ -49,6 +50,10 @@ namespace DesktopPlus
         private bool _lastRenameClickWasOnName;
         private bool _isNormalizingFileListSelection;
         private readonly SemaphoreSlim _incomingFileImportSemaphore = new SemaphoreSlim(1, 1);
+        private const double FileListReorderPreviewAnimationMs = 190.0;
+        private int _fileListReorderInsertIndex = -1;
+        private ListBoxItem? _fileListReorderSourceItem;
+        private List<Rect>? _fileListReorderSlots;
 
         private sealed class InternalListReorderPayload
         {
@@ -61,6 +66,404 @@ namespace DesktopPlus
             public bool FolderChanged { get; set; }
             public List<string> ListItemsToAdd { get; } = new List<string>();
             public List<string> Failures { get; } = new List<string>();
+        }
+
+        private List<ListBoxItem> GetVisibleReorderableFileListItems()
+        {
+            return FileList?.Items
+                .OfType<ListBoxItem>()
+                .Where(item => item.Visibility == Visibility.Visible && !IsParentNavigationItem(item))
+                .ToList() ?? new List<ListBoxItem>();
+        }
+
+        private static bool IsPointWithinElementBounds(FrameworkElement? element, Point point, double tolerance = 0)
+        {
+            if (element == null)
+            {
+                return false;
+            }
+
+            double width = element.ActualWidth;
+            double height = element.ActualHeight;
+            return point.X >= -tolerance &&
+                   point.Y >= -tolerance &&
+                   point.X <= width + tolerance &&
+                   point.Y <= height + tolerance;
+        }
+
+        private Rect GetFileListItemLayoutBounds(ListBoxItem item)
+        {
+            if (FileList == null || item == null)
+            {
+                return Rect.Empty;
+            }
+
+            try
+            {
+                Point topLeft = item.TransformToAncestor(FileList).Transform(new Point(0, 0));
+                TranslateTransform? transform = GetFileListItemTransform(item, createIfMissing: false);
+                if (transform != null)
+                {
+                    topLeft.X -= transform.X;
+                    topLeft.Y -= transform.Y;
+                }
+
+                return new Rect(topLeft, new System.Windows.Size(item.ActualWidth, item.ActualHeight));
+            }
+            catch
+            {
+                return Rect.Empty;
+            }
+        }
+
+        private static double GetSquaredDistanceToRect(Point point, Rect rect)
+        {
+            double dx = 0;
+            if (point.X < rect.Left)
+            {
+                dx = rect.Left - point.X;
+            }
+            else if (point.X > rect.Right)
+            {
+                dx = point.X - rect.Right;
+            }
+
+            double dy = 0;
+            if (point.Y < rect.Top)
+            {
+                dy = rect.Top - point.Y;
+            }
+            else if (point.Y > rect.Bottom)
+            {
+                dy = point.Y - rect.Bottom;
+            }
+
+            return (dx * dx) + (dy * dy);
+        }
+
+        private bool ShouldInsertAfterFileListTarget(Rect targetBounds, Point mousePositionInFileList)
+        {
+            string normalizedViewMode = NormalizeViewMode(viewMode);
+            if (string.Equals(normalizedViewMode, ViewModeDetails, StringComparison.OrdinalIgnoreCase))
+            {
+                return mousePositionInFileList.Y > targetBounds.Top + (targetBounds.Height / 2.0);
+            }
+
+            if (mousePositionInFileList.Y < targetBounds.Top)
+            {
+                return false;
+            }
+
+            if (mousePositionInFileList.Y > targetBounds.Bottom)
+            {
+                return true;
+            }
+
+            return mousePositionInFileList.X > targetBounds.Left + (targetBounds.Width / 2.0);
+        }
+
+        private bool TryGetFileListReorderInsertIndex(ListBoxItem sourceItem, Point mousePositionInFileList, out int insertIndex)
+        {
+            insertIndex = -1;
+
+            if (FileList == null || sourceItem == null)
+            {
+                return false;
+            }
+
+            var reorderableItems = GetVisibleReorderableFileListItems();
+            int sourceIndex = reorderableItems.IndexOf(sourceItem);
+            if (sourceIndex < 0)
+            {
+                return false;
+            }
+
+            if (reorderableItems.Count <= 1)
+            {
+                insertIndex = sourceIndex;
+                return true;
+            }
+
+            // Cache slot positions once (before any animations) to avoid animation-affected
+            // positions causing the insert index to oscillate back and forth.
+            // Same approach as tab reorder which uses accumulated widths instead of TranslatePoint.
+            if (_fileListReorderSlots == null || _fileListReorderSlots.Count != reorderableItems.Count)
+            {
+                _fileListReorderSlots = reorderableItems.Select(GetFileListItemLayoutBounds).ToList();
+            }
+
+            Rect sourceBounds = _fileListReorderSlots[sourceIndex];
+            Rect occupiedBounds = sourceBounds;
+            bool hasOccupiedBounds = !sourceBounds.IsEmpty;
+            if (!sourceBounds.IsEmpty && sourceBounds.Contains(mousePositionInFileList))
+            {
+                insertIndex = sourceIndex;
+                return true;
+            }
+
+            for (int i = 0; i < reorderableItems.Count; i++)
+            {
+                if (ReferenceEquals(reorderableItems[i], sourceItem))
+                {
+                    continue;
+                }
+
+                Rect candidateBounds = _fileListReorderSlots[i];
+                if (!candidateBounds.IsEmpty)
+                {
+                    occupiedBounds = hasOccupiedBounds ? Rect.Union(occupiedBounds, candidateBounds) : candidateBounds;
+                    hasOccupiedBounds = true;
+                }
+
+                if (candidateBounds.IsEmpty || !candidateBounds.Contains(mousePositionInFileList))
+                {
+                    continue;
+                }
+
+                if (i > sourceIndex)
+                {
+                    insertIndex = i + 1;
+                }
+                else
+                {
+                    insertIndex = i;
+                }
+
+                insertIndex = Math.Max(0, Math.Min(insertIndex, reorderableItems.Count));
+                return true;
+            }
+
+            if (ReferenceEquals(_fileListReorderSourceItem, sourceItem) &&
+                _fileListReorderInsertIndex >= 0 &&
+                hasOccupiedBounds &&
+                occupiedBounds.Contains(mousePositionInFileList))
+            {
+                insertIndex = _fileListReorderInsertIndex;
+                return true;
+            }
+
+            // Fallback: find nearest item using cached slot positions
+            int nearestIndex = -1;
+            double nearestDist = double.MaxValue;
+            for (int i = 0; i < reorderableItems.Count; i++)
+            {
+                if (ReferenceEquals(reorderableItems[i], sourceItem))
+                {
+                    continue;
+                }
+
+                Rect bounds = _fileListReorderSlots[i];
+                if (bounds.IsEmpty)
+                {
+                    continue;
+                }
+
+                double dist = GetSquaredDistanceToRect(mousePositionInFileList, bounds);
+                if (dist < nearestDist)
+                {
+                    nearestDist = dist;
+                    nearestIndex = i;
+                }
+            }
+
+            if (nearestIndex < 0)
+            {
+                insertIndex = sourceIndex;
+                return true;
+            }
+
+            Rect targetBounds = _fileListReorderSlots[nearestIndex];
+            if (targetBounds.IsEmpty)
+            {
+                return false;
+            }
+
+            insertIndex = nearestIndex + (ShouldInsertAfterFileListTarget(targetBounds, mousePositionInFileList) ? 1 : 0);
+            insertIndex = Math.Max(0, Math.Min(insertIndex, reorderableItems.Count));
+            return true;
+        }
+
+        private void ApplyFileListReorderPreview(ListBoxItem sourceItem, int insertIndex)
+        {
+            var reorderableItems = GetVisibleReorderableFileListItems();
+            int sourceIndex = reorderableItems.IndexOf(sourceItem);
+            if (sourceIndex < 0)
+            {
+                ClearFileListReorderPreview();
+                return;
+            }
+
+            insertIndex = Math.Max(0, Math.Min(insertIndex, reorderableItems.Count));
+            if (ReferenceEquals(_fileListReorderSourceItem, sourceItem) &&
+                _fileListReorderInsertIndex == insertIndex)
+            {
+                return;
+            }
+
+            _fileListReorderSourceItem = sourceItem;
+            _fileListReorderInsertIndex = insertIndex;
+
+            // Use cached slot positions to avoid reading animation-affected layout bounds.
+            // Offsets are computed purely from the stable original positions.
+            if (_fileListReorderSlots == null || _fileListReorderSlots.Count != reorderableItems.Count)
+            {
+                _fileListReorderSlots = reorderableItems.Select(GetFileListItemLayoutBounds).ToList();
+            }
+
+            // Build preview order as indices: remove source, insert at target
+            var previewOrder = Enumerable.Range(0, reorderableItems.Count).ToList();
+            previewOrder.RemoveAt(sourceIndex);
+            int adjustedInsertIndex = insertIndex > sourceIndex ? insertIndex - 1 : insertIndex;
+            adjustedInsertIndex = Math.Max(0, Math.Min(adjustedInsertIndex, previewOrder.Count));
+            previewOrder.Insert(adjustedInsertIndex, sourceIndex);
+
+            foreach (ListBoxItem item in reorderableItems)
+            {
+                item.Opacity = ReferenceEquals(item, sourceItem) ? 0.82 : 1.0;
+                System.Windows.Controls.Panel.SetZIndex(item, ReferenceEquals(item, sourceItem) ? 3 : 0);
+            }
+
+            for (int targetSlot = 0; targetSlot < previewOrder.Count; targetSlot++)
+            {
+                int originalSlot = previewOrder[targetSlot];
+                Rect originalPos = _fileListReorderSlots[originalSlot];
+                Rect targetPos = _fileListReorderSlots[targetSlot];
+                ApplyFileListItemOffset(
+                    reorderableItems[originalSlot],
+                    targetPos.Left - originalPos.Left,
+                    targetPos.Top - originalPos.Top);
+            }
+        }
+
+        private void ClearFileListReorderPreview()
+        {
+            foreach (ListBoxItem item in GetVisibleReorderableFileListItems())
+            {
+                ApplyFileListItemOffset(item, 0, 0);
+                item.Opacity = 1.0;
+                System.Windows.Controls.Panel.SetZIndex(item, 0);
+            }
+
+            _fileListReorderInsertIndex = -1;
+            _fileListReorderSourceItem = null;
+            _fileListReorderSlots = null;
+        }
+
+        private static void ClearFileListReorderPreviewAcrossPanels()
+        {
+            foreach (DesktopPanel panel in System.Windows.Application.Current?.Windows.OfType<DesktopPanel>() ?? Enumerable.Empty<DesktopPanel>())
+            {
+                panel.ClearFileListReorderPreview();
+            }
+        }
+
+        private static void ApplyFileListItemOffset(ListBoxItem item, double targetX, double targetY)
+        {
+            TranslateTransform? transform = GetFileListItemTransform(item);
+            if (transform == null)
+            {
+                return;
+            }
+
+            var easing = new CubicEase { EasingMode = EasingMode.EaseInOut };
+            transform.BeginAnimation(
+                TranslateTransform.XProperty,
+                new DoubleAnimation(targetX, TimeSpan.FromMilliseconds(FileListReorderPreviewAnimationMs))
+                {
+                    EasingFunction = easing,
+                    FillBehavior = FillBehavior.HoldEnd
+                },
+                HandoffBehavior.SnapshotAndReplace);
+            transform.BeginAnimation(
+                TranslateTransform.YProperty,
+                new DoubleAnimation(targetY, TimeSpan.FromMilliseconds(FileListReorderPreviewAnimationMs))
+                {
+                    EasingFunction = easing,
+                    FillBehavior = FillBehavior.HoldEnd
+                },
+                HandoffBehavior.SnapshotAndReplace);
+        }
+
+        private static TranslateTransform? GetFileListItemTransform(ListBoxItem item, bool createIfMissing = true)
+        {
+            if (item.RenderTransform is TranslateTransform translate)
+            {
+                return translate;
+            }
+
+            if (item.RenderTransform is TransformGroup group)
+            {
+                TranslateTransform? existing = group.Children.OfType<TranslateTransform>().FirstOrDefault();
+                if (existing != null || !createIfMissing)
+                {
+                    return existing;
+                }
+
+                var appended = new TranslateTransform();
+                group.Children.Add(appended);
+                return appended;
+            }
+
+            if (!createIfMissing)
+            {
+                return null;
+            }
+
+            var created = new TranslateTransform();
+            item.RenderTransform = created;
+            return created;
+        }
+
+        private bool TryReorderFileListItem(ListBoxItem sourceItem, int insertIndex)
+        {
+            if (FileList == null || sourceItem == null)
+            {
+                return false;
+            }
+
+            var reorderableItems = GetVisibleReorderableFileListItems();
+            int sourceIndex = reorderableItems.IndexOf(sourceItem);
+            if (sourceIndex < 0)
+            {
+                return false;
+            }
+
+            insertIndex = Math.Max(0, Math.Min(insertIndex, reorderableItems.Count));
+            var reorderedItems = reorderableItems.ToList();
+            reorderedItems.RemoveAt(sourceIndex);
+
+            int adjustedInsertIndex = insertIndex > sourceIndex ? insertIndex - 1 : insertIndex;
+            adjustedInsertIndex = Math.Max(0, Math.Min(adjustedInsertIndex, reorderedItems.Count));
+            if (adjustedInsertIndex == sourceIndex)
+            {
+                return false;
+            }
+
+            ListBoxItem? insertBeforeItem = adjustedInsertIndex < reorderedItems.Count
+                ? reorderedItems[adjustedInsertIndex]
+                : null;
+
+            FileList.Items.Remove(sourceItem);
+            if (insertBeforeItem != null)
+            {
+                int fullInsertIndex = FileList.Items.IndexOf(insertBeforeItem);
+                if (fullInsertIndex < 0)
+                {
+                    FileList.Items.Add(sourceItem);
+                }
+                else
+                {
+                    FileList.Items.Insert(fullInsertIndex, sourceItem);
+                }
+            }
+            else
+            {
+                FileList.Items.Add(sourceItem);
+            }
+
+            FileList.SelectedItem = sourceItem;
+            sourceItem.IsSelected = true;
+            return true;
         }
 
         private static bool IsToggleModifierPressed()
@@ -1230,6 +1633,11 @@ namespace DesktopPlus
 
         private bool TryHandleDeleteSelection()
         {
+            if (_isDeleteOperationRunning)
+            {
+                return true;
+            }
+
             if (IsTextInputFocused() || FileList == null || FileList.SelectedItems.Count == 0)
             {
                 return false;
@@ -1260,37 +1668,11 @@ namespace DesktopPlus
                 if (recycledPaths.Count > 0 &&
                     ConfirmPermanentDeleteAction(recycledPaths.Count, GetSelectedItemDisplayName(selectedItems[0])))
                 {
-                    bool deletedAny = false;
-                    var failures = new List<string>();
-
-                    foreach (string path in recycledPaths)
-                    {
-                        if (TryDeleteRecycleBinItemPermanently(path, out string? error))
-                        {
-                            deletedAny = true;
-                            continue;
-                        }
-
-                        if (!string.IsNullOrWhiteSpace(error))
-                        {
-                            failures.Add($"{GetPathLeafName(path)}: {error}");
-                        }
-                    }
-
-                    if (deletedAny)
-                    {
-                        QueueRecycleBinRefresh(immediate: true);
-                        anyChanges = true;
-                    }
-
-                    if (failures.Count > 0)
-                    {
-                        System.Windows.MessageBox.Show(
-                            string.Format(MainWindow.GetString("Loc.MsgDeletePermanentError"), string.Join(Environment.NewLine, failures)),
-                            MainWindow.GetString("Loc.MsgError"),
-                            MessageBoxButton.OK,
-                            MessageBoxImage.Error);
-                    }
+                    var displayNames = selectedItems
+                        .Where(item => item.Tag is string)
+                        .GroupBy(item => (string)item.Tag!, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(group => group.Key, group => GetSelectedItemDisplayName(group.First()), StringComparer.OrdinalIgnoreCase);
+                    _ = DeleteRecycleBinSelectionAsync(recycledPaths, displayNames);
                 }
             }
             else if (PanelType == PanelKind.List)
@@ -1348,47 +1730,12 @@ namespace DesktopPlus
 
                     if (ConfirmDeleteAction(panelOnly: false, realPaths.Count, singleName))
                     {
-                        var failures = new List<string>();
-                        bool deletedAny = false;
-
-                        foreach (var path in realPaths)
-                        {
-                            if (TryMovePathToRecycleBin(path, out string? error))
-                            {
-                                if (PanelType == PanelKind.Folder)
-                                {
-                                    NotifyFolderContentChangeImmediate(FolderWatcherChangeKind.Deleted, path);
-                                }
-
-                                deletedAny = true;
-                                continue;
-                            }
-
-                            if (!string.IsNullOrWhiteSpace(error))
-                            {
-                                string displayName = GetDisplayNameForPath(path);
-                                if (string.IsNullOrWhiteSpace(displayName))
-                                {
-                                    displayName = GetPathLeafName(path);
-                                }
-
-                                failures.Add($"{displayName}: {error}");
-                            }
-                        }
-
-                        if (deletedAny)
-                        {
-                            anyChanges = true;
-                        }
-
-                        if (failures.Count > 0)
-                        {
-                            System.Windows.MessageBox.Show(
-                                string.Format(MainWindow.GetString("Loc.MsgDeletePathError"), string.Join(Environment.NewLine, failures)),
-                                MainWindow.GetString("Loc.MsgError"),
-                                MessageBoxButton.OK,
-                                MessageBoxImage.Error);
-                        }
+                        var displayNames = selectedItems
+                            .Where(item => item.Tag is string path &&
+                                realPaths.Contains(path, StringComparer.OrdinalIgnoreCase))
+                            .GroupBy(item => (string)item.Tag!, StringComparer.OrdinalIgnoreCase)
+                            .ToDictionary(group => group.Key, group => GetSelectedItemDisplayName(group.First()), StringComparer.OrdinalIgnoreCase);
+                        _ = DeletePathsToRecycleBinAsync(realPaths, displayNames, hadPanelOnlyChanges: false);
                     }
                 }
 
@@ -1408,6 +1755,167 @@ namespace DesktopPlus
             }
 
             return true;
+        }
+
+        private async Task DeleteRecycleBinSelectionAsync(
+            IReadOnlyList<string> recycledPaths,
+            IReadOnlyDictionary<string, string> displayNames)
+        {
+            SetDeleteOperationState(true);
+            bool changed = false;
+
+            try
+            {
+                var deleteResult = await RunStaFileOperationAsync(() =>
+                {
+                    bool deletedAny = false;
+                    var failures = new List<string>();
+
+                    foreach (string path in recycledPaths)
+                    {
+                        if (TryDeleteRecycleBinItemPermanently(path, out string? error))
+                        {
+                            deletedAny = true;
+                            continue;
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(error))
+                        {
+                            string displayName = displayNames.TryGetValue(path, out string? name) &&
+                                !string.IsNullOrWhiteSpace(name)
+                                ? name
+                                : GetPathLeafName(path);
+                            failures.Add($"{displayName}: {error}");
+                        }
+                    }
+
+                    return (DeletedAny: deletedAny, Failures: failures);
+                });
+
+                if (deleteResult.DeletedAny)
+                {
+                    QueueRecycleBinRefresh(immediate: true);
+                    changed = true;
+                }
+
+                if (deleteResult.Failures.Count > 0)
+                {
+                    System.Windows.MessageBox.Show(
+                        string.Format(MainWindow.GetString("Loc.MsgDeletePermanentError"), string.Join(Environment.NewLine, deleteResult.Failures)),
+                        MainWindow.GetString("Loc.MsgError"),
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Windows.MessageBox.Show(
+                    string.Format(MainWindow.GetString("Loc.MsgDeletePermanentError"), ex.Message),
+                    MainWindow.GetString("Loc.MsgError"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            finally
+            {
+                SetDeleteOperationState(false);
+            }
+
+            if (changed)
+            {
+                MainWindow.SaveSettings();
+                MainWindow.NotifyPanelsChanged();
+            }
+        }
+
+        private async Task DeletePathsToRecycleBinAsync(
+            IReadOnlyList<string> realPaths,
+            IReadOnlyDictionary<string, string> displayNames,
+            bool hadPanelOnlyChanges)
+        {
+            string folderPathAtStart = currentFolderPath;
+            bool refreshCurrentFolder =
+                PanelType == PanelKind.Folder &&
+                !string.IsNullOrWhiteSpace(folderPathAtStart) &&
+                Directory.Exists(folderPathAtStart);
+
+            SetDeleteOperationState(true);
+            bool changed = hadPanelOnlyChanges;
+
+            try
+            {
+                var deleteResult = await RunStaFileOperationAsync(() =>
+                {
+                    var deletedPaths = new List<string>();
+                    var failures = new List<string>();
+
+                    foreach (string path in realPaths)
+                    {
+                        if (TryMovePathToRecycleBin(path, out string? error))
+                        {
+                            deletedPaths.Add(path);
+                            continue;
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(error))
+                        {
+                            string displayName = displayNames.TryGetValue(path, out string? name) &&
+                                !string.IsNullOrWhiteSpace(name)
+                                ? name
+                                : GetPathLeafName(path);
+                            failures.Add($"{displayName}: {error}");
+                        }
+                    }
+
+                    return (DeletedPaths: deletedPaths, Failures: failures);
+                });
+
+                if (deleteResult.DeletedPaths.Count > 0)
+                {
+                    changed = true;
+
+                    if (refreshCurrentFolder &&
+                        PanelType == PanelKind.Folder &&
+                        string.Equals(currentFolderPath, folderPathAtStart, StringComparison.OrdinalIgnoreCase))
+                    {
+                        InvalidateFolderSearchIndex(folderPathAtStart, rebuildInBackground: true, rerunActiveSearch: true);
+                        foreach (string deletedPath in deleteResult.DeletedPaths)
+                        {
+                            ShellPropertyReader.InvalidatePath(deletedPath);
+                            ExplorerDetailsColumnProvider.InvalidatePath(deletedPath);
+                            EnqueueFolderWatcherChange(FolderWatcherChangeKind.Deleted, deletedPath);
+                        }
+
+                        QueueFolderRefreshFromWatcher(immediate: true);
+                    }
+                }
+
+                if (deleteResult.Failures.Count > 0)
+                {
+                    System.Windows.MessageBox.Show(
+                        string.Format(MainWindow.GetString("Loc.MsgDeletePathError"), string.Join(Environment.NewLine, deleteResult.Failures)),
+                        MainWindow.GetString("Loc.MsgError"),
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Windows.MessageBox.Show(
+                    string.Format(MainWindow.GetString("Loc.MsgDeletePathError"), ex.Message),
+                    MainWindow.GetString("Loc.MsgError"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            finally
+            {
+                SetDeleteOperationState(false);
+            }
+
+            if (changed)
+            {
+                MainWindow.SaveSettings();
+                MainWindow.NotifyPanelsChanged();
+            }
         }
 
         private bool TryHandleSelectAllVisibleItems()
@@ -1538,51 +2046,13 @@ namespace DesktopPlus
                 return false;
             }
 
-            if (string.Equals(normalizedMode, SearchVisibilityExpanded, StringComparison.OrdinalIgnoreCase) &&
-                !isContentVisible &&
-                !_isCollapseAnimationRunning)
+            if (ShouldUseCompactSearchPresentation(normalizedMode))
             {
-                ToggleCollapseAnimated();
+                ExpandCompactSearch(selectAll: true);
+                return true;
             }
 
-            _ = Dispatcher.BeginInvoke(new Action(() =>
-            {
-                if (SearchBox == null)
-                {
-                    return;
-                }
-
-                SearchBox.Focus();
-                SearchBox.SelectAll();
-
-                if (SearchBox.IsKeyboardFocusWithin)
-                {
-                    return;
-                }
-
-                var retryTimer = new System.Windows.Threading.DispatcherTimer(
-                    TimeSpan.FromMilliseconds(SearchVisibilityAnimationMs + 140),
-                    System.Windows.Threading.DispatcherPriority.Input,
-                    (s, _) =>
-                    {
-                        if (s is not System.Windows.Threading.DispatcherTimer timer)
-                        {
-                            return;
-                        }
-
-                        timer.Stop();
-                        if (SearchBox == null)
-                        {
-                            return;
-                        }
-
-                        SearchBox.Focus();
-                        SearchBox.SelectAll();
-                    },
-                    Dispatcher);
-                retryTimer.Start();
-            }), System.Windows.Threading.DispatcherPriority.Input);
-
+            FocusSearchBoxDeferred(selectAll: true);
             return true;
         }
 
@@ -1985,6 +2455,8 @@ namespace DesktopPlus
                             dataObject,
                             DragDropEffects.Copy | DragDropEffects.Move | DragDropEffects.Link);
 
+                        ClearFileListReorderPreviewAcrossPanels();
+
                         if (sourceItem?.Content is UIElement releasedElement)
                         {
                             releasedElement.Opacity = 1.0;
@@ -2053,27 +2525,25 @@ namespace DesktopPlus
                 string.Equals(payload.SourcePanelId, PanelId, StringComparison.OrdinalIgnoreCase))
             {
                 var sourceItem = payload.SourceItem;
-                var target = e.OriginalSource as FrameworkElement;
-
-                while (target != null && !(target.DataContext is ListBoxItem) && target is not ListBoxItem)
+                bool reordered = false;
+                if (sourceItem != null && FileList != null)
                 {
-                    target = VisualTreeHelper.GetParent(target) as FrameworkElement;
+                    int insertIndex = _fileListReorderInsertIndex;
+                    if (insertIndex < 0 &&
+                        TryGetFileListReorderInsertIndex(sourceItem, e.GetPosition(FileList), out int resolvedInsertIndex))
+                    {
+                        insertIndex = resolvedInsertIndex;
+                    }
+
+                    reordered = insertIndex >= 0 && TryReorderFileListItem(sourceItem, insertIndex);
                 }
 
-                var targetItem = target as ListBoxItem ?? (target?.DataContext as ListBoxItem);
-
-                if (sourceItem != null && targetItem != null && !ReferenceEquals(sourceItem, targetItem))
+                if (reordered)
                 {
-                    int targetIndex = FileList.Items.IndexOf(targetItem);
-
-                    FileList.Items.Remove(sourceItem);
-                    FileList.Items.Insert(targetIndex, sourceItem);
-
-                    FileList.SelectedItem = sourceItem;
                     if (PanelType == PanelKind.List)
                     {
                         PinnedItems.Clear();
-                        foreach (var entry in FileList.Items.OfType<ListBoxItem>())
+                        foreach (var entry in FileList?.Items.OfType<ListBoxItem>() ?? Enumerable.Empty<ListBoxItem>())
                         {
                             if (entry.Tag is string path)
                             {
@@ -2081,11 +2551,18 @@ namespace DesktopPlus
                             }
                         }
                     }
+
+                    ClearFileListReorderPreview();
                     MainWindow.SaveSettings();
-                    _internalReorderDropHandled = true;
                     e.Effects = DragDropEffects.Move;
                 }
+                else
+                {
+                    ClearFileListReorderPreview();
+                    e.Effects = DragDropEffects.None;
+                }
 
+                _internalReorderDropHandled = true;
                 e.Handled = true;
                 return;
             }
@@ -2162,6 +2639,13 @@ namespace DesktopPlus
                     {
                         defaultFolderPath = initialFolder;
                         LoadFolder(initialFolder, saveSettings: false, renamePanelTitle: true);
+                        string initialFolderName = GetFolderDisplayName(initialFolder);
+                        if (ActiveTab != null && !string.IsNullOrWhiteSpace(initialFolderName))
+                        {
+                            ActiveTab.TabName = initialFolderName;
+                            SyncSingleTabHeaderTitle();
+                            RebuildTabBar();
+                        }
                         effectiveType = PanelKind.Folder;
                         folderChanged = true;
                     }
@@ -2371,12 +2855,57 @@ namespace DesktopPlus
             e.Effects = changed ? requestedEffect : DragDropEffects.None;
         }
 
+        private void FileList_DragOver(object sender, DragEventArgs e)
+        {
+            if (TryGetDataObjectValue<InternalListReorderPayload>(e.Data, InternalListReorderFormat, out var payload) &&
+                payload != null &&
+                string.Equals(payload.SourcePanelId, PanelId, StringComparison.OrdinalIgnoreCase))
+            {
+                e.Effects = DragDropEffects.Move;
+                if (FileList != null &&
+                    payload.SourceItem != null &&
+                    IsPointWithinElementBounds(FileList, e.GetPosition(FileList), tolerance: 8) &&
+                    TryGetFileListReorderInsertIndex(payload.SourceItem, e.GetPosition(FileList), out int insertIndex))
+                {
+                    ApplyFileListReorderPreview(payload.SourceItem, insertIndex);
+                }
+                else
+                {
+                    ClearFileListReorderPreview();
+                }
+
+                e.Handled = true;
+            }
+        }
+
+        private void FileList_DragLeave(object sender, DragEventArgs e)
+        {
+            if (TryGetDataObjectValue<InternalListReorderPayload>(e.Data, InternalListReorderFormat, out var payload) &&
+                payload != null &&
+                string.Equals(payload.SourcePanelId, PanelId, StringComparison.OrdinalIgnoreCase))
+            {
+                // WPF fires DragLeave when entering child elements within the FileList
+                // (it's a bubbling event). Only clear the preview when the mouse has
+                // actually left the FileList bounds. Window_DragOver also handles clearing
+                // when the mouse moves outside FileList within the same window.
+                if (FileList != null && IsPointWithinElementBounds(FileList, e.GetPosition(FileList), tolerance: 12))
+                {
+                    e.Handled = true;
+                    return;
+                }
+
+                ClearFileListReorderPreview();
+                e.Handled = true;
+            }
+        }
+
         private void Window_DragOver(object sender, DragEventArgs e)
         {
             // For tab drags: set Move effect but don't mark as handled,
             // so the HeaderBar's DragOver can still fire for insert indicator positioning.
             if (TryDataObjectHasFormat(e.Data, TabDragFormat))
             {
+                ClearFileListReorderPreview();
                 e.Effects = DragDropEffects.Move;
                 // Don't set e.Handled — let TabBar_DragOver handle positioning
                 return;
@@ -2386,10 +2915,21 @@ namespace DesktopPlus
                 payload != null &&
                 string.Equals(payload.SourcePanelId, PanelId, StringComparison.OrdinalIgnoreCase))
             {
+                if (FileList != null &&
+                    IsPointWithinElementBounds(FileList, e.GetPosition(FileList), tolerance: 8))
+                {
+                    e.Effects = DragDropEffects.Move;
+                    return;
+                }
+
+                ClearFileListReorderPreview();
                 e.Effects = DragDropEffects.Move;
+                e.Handled = true;
+                return;
             }
             else if (TryDataObjectHasFormat(e.Data, DataFormats.FileDrop))
             {
+                ClearFileListReorderPreview();
                 var droppedItems = ExtractFileDropPaths(e.Data);
                 if (droppedItems.Count == 0)
                 {
@@ -2402,9 +2942,22 @@ namespace DesktopPlus
             }
             else
             {
+                ClearFileListReorderPreview();
                 e.Effects = DragDropEffects.None;
             }
             e.Handled = true;
+        }
+
+        private void Window_DragLeave(object sender, DragEventArgs e)
+        {
+            if (TryGetDataObjectValue<InternalListReorderPayload>(e.Data, InternalListReorderFormat, out var payload) &&
+                payload != null &&
+                string.Equals(payload.SourcePanelId, PanelId, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            ClearFileListReorderPreview();
         }
 
         private void Window_MouseEnter(object sender, MouseEventArgs e)

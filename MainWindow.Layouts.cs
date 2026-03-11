@@ -13,12 +13,13 @@ namespace DesktopPlus
         {
             public bool ShowHidden { get; set; }
             public bool ShowParentNavigationItem { get; set; } = true;
+            public string IconViewParentNavigationMode { get; set; } = DesktopPanel.IconParentNavigationModeItem;
             public bool ShowFileExtensions { get; set; } = true;
             public bool ExpandOnHover { get; set; } = false;
             public bool OpenFoldersExternally { get; set; }
             public bool OpenItemsOnSingleClick { get; set; }
             public bool ShowSettingsButton { get; set; } = true;
-            public bool ShowEmptyRecycleBinButton { get; set; } = true;
+            public bool ShowEmptyRecycleBinButton { get; set; } = false;
             public string MovementMode { get; set; } = "titlebar";
             public string SearchVisibilityMode { get; set; } = DesktopPanel.SearchVisibilityAlways;
             public string ViewMode { get; set; } = DesktopPanel.ViewModeIcons;
@@ -60,6 +61,9 @@ namespace DesktopPlus
             layout.PanelDefaultMovementMode = NormalizePanelMovementMode(layout.PanelDefaultMovementMode);
             layout.PanelDefaultSearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(layout.PanelDefaultSearchVisibilityMode);
             layout.PanelDefaultViewMode = DesktopPanel.NormalizeViewMode(layout.PanelDefaultViewMode);
+            layout.PanelDefaultIconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
+                layout.PanelDefaultIconViewParentNavigationMode,
+                layout.PanelDefaultShowParentNavigationItem);
             layout.PanelDefaultMetadataOrder = DesktopPanel.NormalizeMetadataOrder(layout.PanelDefaultMetadataOrder);
             layout.PanelDefaultMetadataWidths = DesktopPanel.NormalizeMetadataWidths(layout.PanelDefaultMetadataWidths);
         }
@@ -71,6 +75,9 @@ namespace DesktopPlus
             {
                 ShowHidden = layout.PanelDefaultShowHidden,
                 ShowParentNavigationItem = layout.PanelDefaultShowParentNavigationItem,
+                IconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
+                    layout.PanelDefaultIconViewParentNavigationMode,
+                    layout.PanelDefaultShowParentNavigationItem),
                 ShowFileExtensions = layout.PanelDefaultShowFileExtensions,
                 ExpandOnHover = layout.PanelDefaultExpandOnHover,
                 OpenFoldersExternally = layout.PanelDefaultOpenFoldersExternally,
@@ -98,6 +105,9 @@ namespace DesktopPlus
         {
             layout.PanelDefaultShowHidden = defaults.ShowHidden;
             layout.PanelDefaultShowParentNavigationItem = defaults.ShowParentNavigationItem;
+            layout.PanelDefaultIconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
+                defaults.IconViewParentNavigationMode,
+                defaults.ShowParentNavigationItem);
             layout.PanelDefaultShowFileExtensions = defaults.ShowFileExtensions;
             layout.PanelDefaultExpandOnHover = defaults.ExpandOnHover;
             layout.PanelDefaultOpenFoldersExternally = defaults.OpenFoldersExternally;
@@ -133,6 +143,14 @@ namespace DesktopPlus
             if (panel.ShowParentNavigationItem == oldDefaults.ShowParentNavigationItem)
             {
                 panel.ShowParentNavigationItem = newDefaults.ShowParentNavigationItem;
+            }
+
+            if (string.Equals(
+                DesktopPanel.NormalizeIconViewParentNavigationMode(panel.IconViewParentNavigationMode, panel.ShowParentNavigationItem),
+                oldDefaults.IconViewParentNavigationMode,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                panel.IconViewParentNavigationMode = newDefaults.IconViewParentNavigationMode;
             }
 
             if (panel.ShowFileExtensions == oldDefaults.ShowFileExtensions)
@@ -254,6 +272,14 @@ namespace DesktopPlus
                 tab.ShowParentNavigationItem = newDefaults.ShowParentNavigationItem;
             }
 
+            if (string.Equals(
+                DesktopPanel.NormalizeIconViewParentNavigationMode(tab.IconViewParentNavigationMode, tab.ShowParentNavigationItem),
+                oldDefaults.IconViewParentNavigationMode,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                tab.IconViewParentNavigationMode = newDefaults.IconViewParentNavigationMode;
+            }
+
             if (tab.ShowFileExtensions == oldDefaults.ShowFileExtensions)
             {
                 tab.ShowFileExtensions = newDefaults.ShowFileExtensions;
@@ -361,6 +387,9 @@ namespace DesktopPlus
         {
             target.ShowHidden = source.ShowHidden;
             target.ShowParentNavigationItem = source.ShowParentNavigationItem;
+            target.IconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
+                source.IconViewParentNavigationMode,
+                source.ShowParentNavigationItem);
             target.ShowFileExtensions = source.ShowFileExtensions;
             target.OpenFoldersExternally = source.OpenFoldersExternally;
             target.OpenItemsOnSingleClick = source.OpenItemsOnSingleClick;
@@ -453,6 +482,9 @@ namespace DesktopPlus
             target.PresetName = source.PresetName;
             target.ShowHidden = source.ShowHidden;
             target.ShowParentNavigationItem = source.ShowParentNavigationItem;
+            target.IconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
+                source.IconViewParentNavigationMode,
+                source.ShowParentNavigationItem);
             target.ShowFileExtensions = source.ShowFileExtensions;
             target.ExpandOnHover = source.ExpandOnHover;
             target.OpenFoldersExternally = source.OpenFoldersExternally;
@@ -480,6 +512,10 @@ namespace DesktopPlus
         {
             bool hiddenChanged = panel.showHiddenItems != source.ShowHidden;
             bool parentNavigationChanged = panel.showParentNavigationItem != source.ShowParentNavigationItem;
+            bool iconParentNavigationModeChanged = !string.Equals(
+                DesktopPanel.NormalizeIconViewParentNavigationMode(panel.iconViewParentNavigationMode, panel.showParentNavigationItem),
+                DesktopPanel.NormalizeIconViewParentNavigationMode(source.IconViewParentNavigationMode, source.ShowParentNavigationItem),
+                StringComparison.OrdinalIgnoreCase);
             bool fileExtensionsChanged = panel.showFileExtensions != source.ShowFileExtensions;
             string sourcePresetName = string.IsNullOrWhiteSpace(source.PresetName) ? DefaultPresetName : source.PresetName;
 
@@ -491,12 +527,17 @@ namespace DesktopPlus
 
             panel.showHiddenItems = source.ShowHidden;
             panel.showParentNavigationItem = source.ShowParentNavigationItem;
+            panel.iconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
+                source.IconViewParentNavigationMode,
+                source.ShowParentNavigationItem);
             panel.showFileExtensions = source.ShowFileExtensions;
             panel.SetExpandOnHover(source.ExpandOnHover);
             panel.openFoldersExternally = source.OpenFoldersExternally;
             panel.openItemsOnSingleClick = source.OpenItemsOnSingleClick;
             panel.showSettingsButton = source.ShowSettingsButton;
+            panel.showEmptyRecycleBinButton = source.ShowEmptyRecycleBinButton;
             panel.ApplySettingsButtonVisibility();
+            panel.UpdateEmptyRecycleBinButtonVisibility();
             panel.ApplyMovementMode(NormalizePanelMovementMode(source.MovementMode));
             panel.SetSearchVisibilityMode(source.SearchVisibilityMode);
             panel.ApplyViewSettings(
@@ -515,7 +556,7 @@ namespace DesktopPlus
                 persistSettings: false);
             ApplyPanelTabBehaviorToOpenPanel(panel, source);
 
-            if ((hiddenChanged || parentNavigationChanged || fileExtensionsChanged) &&
+            if ((hiddenChanged || parentNavigationChanged || iconParentNavigationModeChanged || fileExtensionsChanged) &&
                 !string.IsNullOrWhiteSpace(panel.currentFolderPath))
             {
                 panel.LoadFolder(panel.currentFolderPath, false);
@@ -619,6 +660,7 @@ namespace DesktopPlus
             {
                 PanelKind.Folder => !string.IsNullOrWhiteSpace(data.FolderPath),
                 PanelKind.List => data.PinnedItems != null && data.PinnedItems.Count > 0,
+                PanelKind.RecycleBin => true,
                 _ => false
             };
         }
@@ -676,12 +718,13 @@ namespace DesktopPlus
                 DefaultPanelPresetName = layoutDefaultPresetName,
                 PanelDefaultShowHidden = false,
                 PanelDefaultShowParentNavigationItem = true,
+                PanelDefaultIconViewParentNavigationMode = DesktopPanel.IconParentNavigationModeItem,
                 PanelDefaultShowFileExtensions = true,
                 PanelDefaultExpandOnHover = false,
                 PanelDefaultOpenFoldersExternally = false,
                 PanelDefaultOpenItemsOnSingleClick = false,
                 PanelDefaultShowSettingsButton = true,
-                PanelDefaultShowEmptyRecycleBinButton = true,
+                PanelDefaultShowEmptyRecycleBinButton = false,
                 PanelDefaultMovementMode = "titlebar",
                 PanelDefaultSearchVisibilityMode = DesktopPanel.SearchVisibilityAlways,
                 PanelDefaultViewMode = DesktopPanel.ViewModeIcons,
@@ -719,12 +762,13 @@ namespace DesktopPlus
                 DefaultPanelPresetName = GetSelectedLayoutDefaultPresetName(),
                 PanelDefaultShowHidden = false,
                 PanelDefaultShowParentNavigationItem = true,
+                PanelDefaultIconViewParentNavigationMode = DesktopPanel.IconParentNavigationModeItem,
                 PanelDefaultShowFileExtensions = true,
                 PanelDefaultExpandOnHover = false,
                 PanelDefaultOpenFoldersExternally = false,
                 PanelDefaultOpenItemsOnSingleClick = false,
                 PanelDefaultShowSettingsButton = true,
-                PanelDefaultShowEmptyRecycleBinButton = true,
+                PanelDefaultShowEmptyRecycleBinButton = false,
                 PanelDefaultMovementMode = "titlebar",
                 PanelDefaultSearchVisibilityMode = DesktopPanel.SearchVisibilityAlways,
                 PanelDefaultViewMode = DesktopPanel.ViewModeIcons,
@@ -763,6 +807,7 @@ namespace DesktopPlus
             LayoutDefinition layout,
             bool showHidden,
             bool showParentNavigationItem,
+            string iconViewParentNavigationMode,
             bool showFileExtensions,
             bool expandOnHover,
             bool openFoldersExternally,
@@ -805,6 +850,9 @@ namespace DesktopPlus
             {
                 ShowHidden = showHidden,
                 ShowParentNavigationItem = showParentNavigationItem,
+                IconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
+                    iconViewParentNavigationMode,
+                    showParentNavigationItem),
                 ShowFileExtensions = showFileExtensions,
                 ExpandOnHover = expandOnHover,
                 OpenFoldersExternally = openFoldersExternally,

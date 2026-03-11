@@ -102,8 +102,12 @@ It performs:
 
 ## Windows startup behavior
 
-The "Start with Windows" option writes/removes:
+The "Start with Windows" option prefers a per-user logon scheduled task:
+
+`DesktopPlus Startup`
+
+If scheduled-task registration is unavailable, DesktopPlus falls back to:
 
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\DesktopPlus`
 
-DesktopPlus re-syncs this entry on startup when enabled.
+DesktopPlus re-syncs the preferred startup registration on startup when enabled.

@@ -123,9 +123,10 @@ namespace DesktopPlus
                 {
                     _closeBehavior = CloseBehaviorMinimize;
                 }
-                bool registryStartup = IsStartWithWindowsEnabled();
-                _startWithWindows = state.StartWithWindows || registryStartup;
-                if (_startWithWindows && !registryStartup)
+                bool startupRegistrationPresent = IsStartWithWindowsEnabled();
+                bool preferredStartupRegistrationPresent = HasPreferredStartupRegistration();
+                _startWithWindows = state.StartWithWindows || startupRegistrationPresent;
+                if (_startWithWindows && !preferredStartupRegistrationPresent)
                 {
                     SetStartWithWindows(true);
                 }

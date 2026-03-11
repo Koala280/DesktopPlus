@@ -211,6 +211,7 @@ namespace DesktopPlus
             tab.DefaultFolderPath = defaultFolderPath ?? "";
             tab.ShowHidden = showHiddenItems;
             tab.ShowParentNavigationItem = showParentNavigationItem;
+            tab.IconViewParentNavigationMode = NormalizeIconViewParentNavigationMode(iconViewParentNavigationMode, showParentNavigationItem);
             tab.ShowFileExtensions = showFileExtensions;
             tab.OpenFoldersExternally = openFoldersExternally;
             tab.OpenItemsOnSingleClick = openItemsOnSingleClick;
@@ -240,6 +241,7 @@ namespace DesktopPlus
 
             showHiddenItems = tab.ShowHidden;
             showParentNavigationItem = tab.ShowParentNavigationItem;
+            iconViewParentNavigationMode = NormalizeIconViewParentNavigationMode(tab.IconViewParentNavigationMode, tab.ShowParentNavigationItem);
             showFileExtensions = tab.ShowFileExtensions;
             openFoldersExternally = tab.OpenFoldersExternally;
             openItemsOnSingleClick = tab.OpenItemsOnSingleClick;
@@ -381,6 +383,7 @@ namespace DesktopPlus
                 DefaultFolderPath = folderPath ?? "",
                 ShowHidden = showHiddenItems,
                 ShowParentNavigationItem = showParentNavigationItem,
+                IconViewParentNavigationMode = NormalizeIconViewParentNavigationMode(iconViewParentNavigationMode, showParentNavigationItem),
                 ShowFileExtensions = showFileExtensions,
                 OpenFoldersExternally = openFoldersExternally,
                 OpenItemsOnSingleClick = openItemsOnSingleClick,
@@ -443,11 +446,6 @@ namespace DesktopPlus
         {
             if (index < 0 || index >= _tabs.Count) return null;
             if (_tabs.Count <= 1) return null;
-            if (Enum.TryParse<PanelKind>(_tabs[index].PanelType, true, out var kind) &&
-                kind == PanelKind.RecycleBin)
-            {
-                return null;
-            }
 
             // Make sure the tab data is current if it's the active one
             if (index == _activeTabIndex)
@@ -626,6 +624,7 @@ namespace DesktopPlus
                 DefaultFolderPath = defaultFolderPath ?? "",
                 ShowHidden = showHiddenItems,
                 ShowParentNavigationItem = showParentNavigationItem,
+                IconViewParentNavigationMode = NormalizeIconViewParentNavigationMode(iconViewParentNavigationMode, showParentNavigationItem),
                 ShowFileExtensions = showFileExtensions,
                 OpenFoldersExternally = openFoldersExternally,
                 OpenItemsOnSingleClick = openItemsOnSingleClick,
@@ -667,6 +666,7 @@ namespace DesktopPlus
                     }
                 }
                 UpdateHeaderBottomBorderForCurrentState(collapsed: isCollapsedVisual);
+                ApplySearchVisibility(animate: false);
                 return;
             }
 
@@ -675,6 +675,7 @@ namespace DesktopPlus
                 PanelTitle.Visibility = Visibility.Collapsed;
             // Keep border behavior in sync with collapsed/expanded visual state.
             UpdateHeaderBottomBorderForCurrentState(collapsed: isCollapsedVisual);
+            ApplySearchVisibility(animate: false);
 
             int animateIndex = _animateNewTabIndex;
             _animateNewTabIndex = -1;
@@ -687,7 +688,11 @@ namespace DesktopPlus
                     continue;
                 }
 
-                var tabItem = CreateTabBarItem(_tabs[i], i, showActiveSelection && i == _activeTabIndex);
+                var tabItem = CreateTabBarItem(
+                    _tabs[i],
+                    i,
+                    showActiveSelection && i == _activeTabIndex,
+                    showActiveSelection);
                 TabBarPanel.Children.Add(tabItem);
 
                 if (i == animateIndex)
@@ -697,7 +702,7 @@ namespace DesktopPlus
             }
         }
 
-        private Border CreateTabBarItem(PanelTabData tab, int index, bool isActive)
+        private Border CreateTabBarItem(PanelTabData tab, int index, bool isActive, bool allowActiveSelection)
         {
             Brush activeTextBrush = (Brush)FindResource("PanelText");
             Brush inactiveTextBrush = (Brush)FindResource("PanelMuted");
@@ -819,12 +824,12 @@ namespace DesktopPlus
 
             border.Loaded += (_, __) =>
             {
-                if (isActive || (int)border.Tag == _activeTabIndex)
+                if (isActive || (allowActiveSelection && (int)border.Tag == _activeTabIndex))
                     tabFill.Data = BuildChromeTabShape(border.ActualWidth, border.ActualHeight);
             };
             border.SizeChanged += (_, sizeArgs) =>
             {
-                if ((int)border.Tag == _activeTabIndex)
+                if (allowActiveSelection && (int)border.Tag == _activeTabIndex)
                     tabFill.Data = BuildChromeTabShape(sizeArgs.NewSize.Width, sizeArgs.NewSize.Height);
             };
 
@@ -885,7 +890,16 @@ namespace DesktopPlus
 
                 if (shouldActivateTab)
                 {
-                    SwitchToTab(switchIndex);
+                    bool shouldExpandPanel = !isContentVisible && !_isCollapseAnimationRunning;
+                    if (switchIndex != _activeTabIndex)
+                    {
+                        SwitchToTab(switchIndex);
+                    }
+
+                    if (shouldExpandPanel)
+                    {
+                        ToggleCollapseAnimated();
+                    }
                 }
 
                 e.Handled = true;
@@ -935,12 +949,12 @@ namespace DesktopPlus
             border.MouseEnter += (_, __) =>
             {
                 isHovering = true;
-                ApplyVisualState(switchIndex == _activeTabIndex);
+                ApplyVisualState(allowActiveSelection && switchIndex == _activeTabIndex);
             };
             border.MouseLeave += (_, __) =>
             {
                 isHovering = false;
-                ApplyVisualState(switchIndex == _activeTabIndex);
+                ApplyVisualState(allowActiveSelection && switchIndex == _activeTabIndex);
             };
 
             // Right-click context menu (styled to match panel theme)
@@ -1192,11 +1206,6 @@ namespace DesktopPlus
         {
             if (tabIndex < 0 || tabIndex >= _tabs.Count) return;
             if (GetVisibleTabCount() <= 1) return;
-            if (Enum.TryParse<PanelKind>(_tabs[tabIndex].PanelType, true, out var kind) &&
-                kind == PanelKind.RecycleBin)
-            {
-                return;
-            }
 
             _isTabReorderDragging = true;
             _tabReorderSource = sourceBorder;
@@ -1327,11 +1336,6 @@ namespace DesktopPlus
         {
             if (tabIndex < 0 || tabIndex >= _tabs.Count) return;
             if (GetVisibleTabCount() <= 1) return; // can't detach the only visible tab
-            if (Enum.TryParse<PanelKind>(_tabs[tabIndex].PanelType, true, out var kind) &&
-                kind == PanelKind.RecycleBin)
-            {
-                return;
-            }
 
             SaveActiveTabState();
             var tabData = _tabs[tabIndex];
@@ -1521,11 +1525,6 @@ namespace DesktopPlus
 
         private void AddTabButton_Click(object sender, RoutedEventArgs e)
         {
-            if (HasRecycleBinTab())
-            {
-                return;
-            }
-
             var dlg = new WinForms.FolderBrowserDialog();
             var result = dlg.ShowDialog();
             if (result == WinForms.DialogResult.OK && !string.IsNullOrWhiteSpace(dlg.SelectedPath))
@@ -2004,7 +2003,13 @@ namespace DesktopPlus
                         PanelType = PanelKind.Folder.ToString(),
                         FolderPath = path,
                         DefaultFolderPath = path,
+                        ShowHidden = showHiddenItems,
+                        ShowParentNavigationItem = showParentNavigationItem,
+                        IconViewParentNavigationMode = NormalizeIconViewParentNavigationMode(iconViewParentNavigationMode, showParentNavigationItem),
+                        ShowFileExtensions = showFileExtensions,
+                        OpenFoldersExternally = openFoldersExternally,
                         OpenItemsOnSingleClick = openItemsOnSingleClick,
+                        ViewMode = viewMode,
                     };
                     InsertTab(tab, dropIndex, switchTo: true);
                     break;

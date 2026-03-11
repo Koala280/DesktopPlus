@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -22,22 +24,19 @@ namespace DesktopPlus
     public sealed class DetailColumnsWindow : Window
     {
         private readonly DetailColumnSelectionState _initialState;
-        private readonly CheckBox _typeToggle;
-        private readonly CheckBox _sizeToggle;
-        private readonly CheckBox _createdToggle;
-        private readonly CheckBox _modifiedToggle;
-        private readonly CheckBox _dimensionsToggle;
-        private readonly CheckBox _authorsToggle;
-        private readonly CheckBox _categoriesToggle;
-        private readonly CheckBox _tagsToggle;
-        private readonly CheckBox _titleToggle;
+        private readonly Dictionary<string, CheckBox> _togglesByKey =
+            new Dictionary<string, CheckBox>(StringComparer.OrdinalIgnoreCase);
+        private readonly IReadOnlyList<DetailColumnOption> _availableColumns;
         private readonly StackPanel _columnsListHost = new StackPanel();
 
         public DetailColumnSelectionState? ResultState { get; private set; }
 
-        public DetailColumnsWindow(DetailColumnSelectionState state)
+        public DetailColumnsWindow(
+            DetailColumnSelectionState state,
+            IReadOnlyList<DetailColumnOption> availableColumns)
         {
             _initialState = state ?? new DetailColumnSelectionState();
+            _availableColumns = availableColumns ?? Array.Empty<DetailColumnOption>();
 
             Resources.MergedDictionaries.Add(new ResourceDictionary
             {
@@ -83,16 +82,6 @@ namespace DesktopPlus
             root.Children.Add(contentHost);
 
             Content = root;
-
-            _modifiedToggle = CreateColumnToggle(MainWindow.GetString("Loc.PanelSettingsMetaModified"), _initialState.ShowModified);
-            _typeToggle = CreateColumnToggle(MainWindow.GetString("Loc.PanelSettingsMetaType"), _initialState.ShowType);
-            _sizeToggle = CreateColumnToggle(MainWindow.GetString("Loc.PanelSettingsMetaSize"), _initialState.ShowSize);
-            _createdToggle = CreateColumnToggle(MainWindow.GetString("Loc.PanelSettingsMetaCreated"), _initialState.ShowCreated);
-            _dimensionsToggle = CreateColumnToggle(MainWindow.GetString("Loc.PanelSettingsMetaDimensions"), _initialState.ShowDimensions);
-            _authorsToggle = CreateColumnToggle(MainWindow.GetString("Loc.PanelSettingsMetaAuthors"), _initialState.ShowAuthors);
-            _categoriesToggle = CreateColumnToggle(MainWindow.GetString("Loc.PanelSettingsMetaCategories"), _initialState.ShowCategories);
-            _tagsToggle = CreateColumnToggle(MainWindow.GetString("Loc.PanelSettingsMetaTags"), _initialState.ShowTags);
-            _titleToggle = CreateColumnToggle(MainWindow.GetString("Loc.PanelSettingsMetaTitle"), _initialState.ShowTitle);
 
             PopulateColumnList();
         }
@@ -270,36 +259,65 @@ namespace DesktopPlus
 
         private void PopulateColumnList()
         {
-            _columnsListHost.Children.Add(CreateColumnToggle(
-                MainWindow.GetString("Loc.DetailColumnName"),
-                isChecked: true,
-                isEnabled: false));
+            _columnsListHost.Children.Clear();
+            _togglesByKey.Clear();
 
-            _columnsListHost.Children.Add(_modifiedToggle);
-            _columnsListHost.Children.Add(_typeToggle);
-            _columnsListHost.Children.Add(_sizeToggle);
-            _columnsListHost.Children.Add(_createdToggle);
-            _columnsListHost.Children.Add(_dimensionsToggle);
-            _columnsListHost.Children.Add(_authorsToggle);
-            _columnsListHost.Children.Add(_categoriesToggle);
-            _columnsListHost.Children.Add(_tagsToggle);
-            _columnsListHost.Children.Add(_titleToggle);
+            foreach (DetailColumnOption option in _availableColumns)
+            {
+                var toggle = CreateColumnToggle(option.Label, option.IsChecked, option.IsEnabled);
+                _columnsListHost.Children.Add(toggle);
+                _togglesByKey[option.Key] = toggle;
+            }
         }
 
         private DetailColumnSelectionState BuildResultState()
         {
+            var selectedExplorerKeys = _availableColumns
+                .Where(option =>
+                    ExplorerDetailsColumnProvider.IsExplorerMetadataKey(option.Key) &&
+                    _togglesByKey.TryGetValue(option.Key, out CheckBox? toggle) &&
+                    toggle.IsChecked == true)
+                .Select(option => option.Key)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var reorderedMetadata = DesktopPanel.NormalizeMetadataOrder(_initialState.MetadataOrder)
+                .Where(key => !ExplorerDetailsColumnProvider.IsExplorerMetadataKey(key))
+                .ToList();
+
+            foreach (string key in _initialState.MetadataOrder
+                .Where(ExplorerDetailsColumnProvider.IsExplorerMetadataKey)
+                .Where(selectedExplorerKeys.Contains))
+            {
+                if (!reorderedMetadata.Any(existing => string.Equals(existing, key, StringComparison.OrdinalIgnoreCase)))
+                {
+                    reorderedMetadata.Add(key);
+                }
+            }
+
+            foreach (string key in _availableColumns
+                .Where(option =>
+                    ExplorerDetailsColumnProvider.IsExplorerMetadataKey(option.Key) &&
+                    selectedExplorerKeys.Contains(option.Key))
+                .Select(option => option.Key))
+            {
+                if (!reorderedMetadata.Any(existing => string.Equals(existing, key, StringComparison.OrdinalIgnoreCase)))
+                {
+                    reorderedMetadata.Add(key);
+                }
+            }
+
             return new DetailColumnSelectionState
             {
-                ShowType = _typeToggle.IsChecked == true,
-                ShowSize = _sizeToggle.IsChecked == true,
-                ShowCreated = _createdToggle.IsChecked == true,
-                ShowModified = _modifiedToggle.IsChecked == true,
-                ShowDimensions = _dimensionsToggle.IsChecked == true,
-                ShowAuthors = _authorsToggle.IsChecked == true,
-                ShowCategories = _categoriesToggle.IsChecked == true,
-                ShowTags = _tagsToggle.IsChecked == true,
-                ShowTitle = _titleToggle.IsChecked == true,
-                MetadataOrder = DesktopPanel.NormalizeMetadataOrder(_initialState.MetadataOrder),
+                ShowType = IsChecked(DesktopPanel.MetadataType),
+                ShowSize = IsChecked(DesktopPanel.MetadataSize),
+                ShowCreated = IsChecked(DesktopPanel.MetadataCreated),
+                ShowModified = IsChecked(DesktopPanel.MetadataModified),
+                ShowDimensions = IsChecked(DesktopPanel.MetadataDimensions),
+                ShowAuthors = IsChecked(DesktopPanel.MetadataAuthors),
+                ShowCategories = IsChecked(DesktopPanel.MetadataCategories),
+                ShowTags = IsChecked(DesktopPanel.MetadataTags),
+                ShowTitle = IsChecked(DesktopPanel.MetadataTitle),
+                MetadataOrder = DesktopPanel.NormalizeMetadataOrder(reorderedMetadata),
                 MetadataWidths = DesktopPanel.NormalizeMetadataWidths(_initialState.MetadataWidths)
             };
         }
@@ -317,6 +335,11 @@ namespace DesktopPlus
             };
         }
 
+        private bool IsChecked(string key)
+        {
+            return _togglesByKey.TryGetValue(key, out CheckBox? toggle) && toggle.IsChecked == true;
+        }
+
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (e.ButtonState == MouseButtonState.Pressed)
@@ -324,5 +347,21 @@ namespace DesktopPlus
                 DragMove();
             }
         }
+    }
+
+    public sealed class DetailColumnOption
+    {
+        public DetailColumnOption(string key, string label, bool isChecked, bool isEnabled)
+        {
+            Key = key;
+            Label = label;
+            IsChecked = isChecked;
+            IsEnabled = isEnabled;
+        }
+
+        public string Key { get; }
+        public string Label { get; }
+        public bool IsChecked { get; }
+        public bool IsEnabled { get; }
     }
 }

@@ -159,6 +159,8 @@ namespace DesktopPlus
 
             ShellPropertyReader.InvalidatePath(fullPath);
             ShellPropertyReader.InvalidatePath(oldFullPath);
+            ExplorerDetailsColumnProvider.InvalidatePath(fullPath);
+            ExplorerDetailsColumnProvider.InvalidatePath(oldFullPath);
             InvalidateFolderSearchIndex(currentFolderPath, rebuildInBackground: true, rerunActiveSearch: true);
 
             bool refreshVisibleItems =

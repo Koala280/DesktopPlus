@@ -1,6 +1,7 @@
 ﻿using System;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Collections.Generic;
@@ -41,7 +42,9 @@ namespace DesktopPlus
         private const string StartupRegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
         private const string StartupApprovedRegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
         private const string StartupRegistryValue = "DesktopPlus";
+        private const string StartupScheduledTaskName = "DesktopPlus Startup";
         private const string StartupLaunchArgument = "--startup";
+        private static bool? _scheduledStartupRegistrationSupported;
         public static string CurrentLanguageCode { get; private set; } = DefaultLanguageCode;
 
         private string _languageCode = DefaultLanguageCode;
@@ -222,6 +225,9 @@ namespace DesktopPlus
             data.PinnedItems ??= new List<string>();
             data.SearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(data.SearchVisibilityMode);
             data.ViewMode = DesktopPanel.NormalizeViewMode(data.ViewMode);
+            data.IconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
+                data.IconViewParentNavigationMode,
+                data.ShowParentNavigationItem);
             data.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(data.MetadataOrder);
             data.MetadataWidths = DesktopPanel.NormalizeMetadataWidths(data.MetadataWidths);
             if (!data.IsCollapsed)
@@ -267,6 +273,9 @@ namespace DesktopPlus
 
                     tab.PinnedItems ??= new List<string>();
                     tab.ViewMode = DesktopPanel.NormalizeViewMode(tab.ViewMode);
+                    tab.IconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
+                        tab.IconViewParentNavigationMode,
+                        tab.ShowParentNavigationItem);
                     tab.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(tab.MetadataOrder);
                     tab.MetadataWidths = DesktopPanel.NormalizeMetadataWidths(tab.MetadataWidths);
                 }
@@ -335,6 +344,9 @@ namespace DesktopPlus
                 PresetName = string.IsNullOrWhiteSpace(panel.assignedPresetName) ? DefaultPresetName : panel.assignedPresetName,
                 ShowHidden = panel.showHiddenItems,
                 ShowParentNavigationItem = panel.showParentNavigationItem,
+                IconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
+                    panel.iconViewParentNavigationMode,
+                    panel.showParentNavigationItem),
                 ShowFileExtensions = panel.showFileExtensions,
                 ShowSettingsButton = panel.showSettingsButton,
                 ShowEmptyRecycleBinButton = panel.showEmptyRecycleBinButton,
@@ -371,6 +383,9 @@ namespace DesktopPlus
                     DefaultFolderPath = t.DefaultFolderPath,
                     ShowHidden = t.ShowHidden,
                     ShowParentNavigationItem = t.ShowParentNavigationItem,
+                    IconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
+                        t.IconViewParentNavigationMode,
+                        t.ShowParentNavigationItem),
                     ShowFileExtensions = t.ShowFileExtensions,
                     OpenFoldersExternally = t.OpenFoldersExternally,
                     OpenItemsOnSingleClick = t.OpenItemsOnSingleClick,
@@ -689,20 +704,179 @@ namespace DesktopPlus
             }
         }
 
-        private static bool IsStartupLaunch()
+        private static string EscapePowerShellSingleQuotedString(string value)
         {
+            return (value ?? string.Empty).Replace("'", "''");
+        }
+
+        private static bool TryExecutePowerShellScript(string script, out string output, out string error)
+        {
+            output = string.Empty;
+            error = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(script))
+            {
+                return false;
+            }
+
             try
             {
-                return Environment.GetCommandLineArgs()
-                    .Any(arg => string.Equals(arg, StartupLaunchArgument, StringComparison.OrdinalIgnoreCase));
+                string encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+                using var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "powershell.exe",
+                        Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encodedScript}",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true,
+                        WindowStyle = ProcessWindowStyle.Hidden
+                    }
+                };
+
+                process.Start();
+                output = process.StandardOutput.ReadToEnd();
+                error = process.StandardError.ReadToEnd();
+                process.WaitForExit(10000);
+                if (!process.HasExited)
+                {
+                    try
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+                    catch
+                    {
+                    }
+
+                    error = string.IsNullOrWhiteSpace(error)
+                        ? "PowerShell command timed out."
+                        : error;
+                    return false;
+                }
+
+                return process.ExitCode == 0;
             }
-            catch
+            catch (Exception ex)
             {
+                error = ex.Message;
                 return false;
             }
         }
 
-        private static bool IsStartWithWindowsEnabled()
+        private static bool SupportsScheduledStartupRegistration()
+        {
+            if (_scheduledStartupRegistrationSupported.HasValue)
+            {
+                return _scheduledStartupRegistrationSupported.Value;
+            }
+
+            const string script = @"
+$cmd = Get-Command Register-ScheduledTask -ErrorAction SilentlyContinue
+if ($null -eq $cmd) { exit 1 }
+exit 0";
+
+            _scheduledStartupRegistrationSupported = TryExecutePowerShellScript(script, out _, out _);
+            return _scheduledStartupRegistrationSupported.Value;
+        }
+
+        private static bool TrySetScheduledStartupRegistration(bool enabled, out string? errorMessage)
+        {
+            errorMessage = null;
+
+            if (!SupportsScheduledStartupRegistration())
+            {
+                return false;
+            }
+
+            string exePath = GetPreferredStartupExecutablePath();
+            if (enabled && (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath)))
+            {
+                errorMessage = $"Executable path for startup registration is invalid: {exePath}";
+                return false;
+            }
+
+            string escapedTaskName = EscapePowerShellSingleQuotedString(StartupScheduledTaskName);
+            string script;
+            if (enabled)
+            {
+                string escapedExePath = EscapePowerShellSingleQuotedString(exePath);
+                string escapedArgs = EscapePowerShellSingleQuotedString(StartupLaunchArgument);
+                script = $@"
+$taskName = '{escapedTaskName}'
+$exePath = '{escapedExePath}'
+$startupArgs = '{escapedArgs}'
+$userId = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$action = New-ScheduledTaskAction -Execute $exePath -Argument $startupArgs
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
+$principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Limited
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Starts DesktopPlus when the user signs in.' -Force | Out-Null
+exit 0";
+            }
+            else
+            {
+                script = $@"
+$task = Get-ScheduledTask -TaskName '{escapedTaskName}' -ErrorAction SilentlyContinue
+if ($null -ne $task) {{
+    Unregister-ScheduledTask -TaskName '{escapedTaskName}' -Confirm:$false | Out-Null
+}}
+exit 0";
+            }
+
+            if (TryExecutePowerShellScript(script, out _, out string error))
+            {
+                return true;
+            }
+
+            errorMessage = string.IsNullOrWhiteSpace(error)
+                ? "Scheduled-task startup registration failed."
+                : error.Trim();
+            return false;
+        }
+
+        private static bool IsScheduledStartupRegistrationEnabled()
+        {
+            if (!SupportsScheduledStartupRegistration())
+            {
+                return false;
+            }
+
+            string expectedPath = GetPreferredStartupExecutablePath();
+            if (string.IsNullOrWhiteSpace(expectedPath))
+            {
+                return false;
+            }
+
+            string escapedTaskName = EscapePowerShellSingleQuotedString(StartupScheduledTaskName);
+            string escapedExpectedPath = EscapePowerShellSingleQuotedString(expectedPath);
+            string escapedArgument = EscapePowerShellSingleQuotedString(StartupLaunchArgument);
+            string script = $@"
+$task = Get-ScheduledTask -TaskName '{escapedTaskName}' -ErrorAction SilentlyContinue
+if ($null -eq $task) {{ exit 1 }}
+$expectedPath = '{escapedExpectedPath}'
+$expectedArgs = '{escapedArgument}'
+try {{ $expectedPath = [System.IO.Path]::GetFullPath($expectedPath) }} catch {{}}
+$isMatch = $false
+foreach ($action in @($task.Actions)) {{
+    if ($null -eq $action -or [string]::IsNullOrWhiteSpace($action.Execute)) {{ continue }}
+    $executePath = $action.Execute.Trim('""')
+    try {{ $executePath = [Environment]::ExpandEnvironmentVariables($executePath) }} catch {{}}
+    try {{ $executePath = [System.IO.Path]::GetFullPath($executePath) }} catch {{}}
+    $arguments = if ($null -eq $action.Arguments) {{ '' }} else {{ [string]$action.Arguments }}
+    if ([string]::Equals($executePath, $expectedPath, [System.StringComparison]::OrdinalIgnoreCase) -and
+        $arguments -match ('(^|\s)' + [Regex]::Escape($expectedArgs) + '(\s|$)')) {{
+        $isMatch = $true
+        break
+    }}
+}}
+if ($isMatch) {{ exit 0 }} else {{ exit 1 }}";
+
+            return TryExecutePowerShellScript(script, out _, out _);
+        }
+
+        private static bool IsRunKeyStartupEnabled()
         {
             try
             {
@@ -734,8 +908,10 @@ namespace DesktopPlus
             }
         }
 
-        private void SetStartWithWindows(bool enabled)
+        private static bool TrySetRunKeyStartup(bool enabled, out string? errorMessage)
         {
+            errorMessage = null;
+
             try
             {
                 if (enabled)
@@ -754,8 +930,6 @@ namespace DesktopPlus
 
                     string startupValue = $"\"{exePath}\" {StartupLaunchArgument}";
                     key.SetValue(StartupRegistryValue, startupValue, RegistryValueKind.String);
-
-                    // If Windows marked this startup item as disabled, clear that override when user enables it in-app.
                     DeleteStartupApprovedState();
                 }
                 else
@@ -763,6 +937,81 @@ namespace DesktopPlus
                     using var key = Registry.CurrentUser.OpenSubKey(StartupRegistryKey, true);
                     key?.DeleteValue(StartupRegistryValue, false);
                     DeleteStartupApprovedState();
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                errorMessage = ex.Message;
+                return false;
+            }
+        }
+
+        private static bool HasPreferredStartupRegistration()
+        {
+            return SupportsScheduledStartupRegistration()
+                ? IsScheduledStartupRegistrationEnabled()
+                : IsRunKeyStartupEnabled();
+        }
+
+        private static bool IsStartupLaunch()
+        {
+            try
+            {
+                return Environment.GetCommandLineArgs()
+                    .Any(arg => string.Equals(arg, StartupLaunchArgument, StringComparison.OrdinalIgnoreCase));
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsStartWithWindowsEnabled()
+        {
+            return IsScheduledStartupRegistrationEnabled() || IsRunKeyStartupEnabled();
+        }
+
+        private void SetStartWithWindows(bool enabled)
+        {
+            try
+            {
+                if (enabled)
+                {
+                    if (TrySetScheduledStartupRegistration(true, out _))
+                    {
+                        TrySetRunKeyStartup(false, out _);
+                        return;
+                    }
+
+                    if (TrySetRunKeyStartup(true, out string? runKeyError))
+                    {
+                        return;
+                    }
+
+                    throw new InvalidOperationException(runKeyError ?? "Startup registration could not be updated.");
+                }
+                else
+                {
+                    var errors = new List<string>();
+
+                    if (!TrySetScheduledStartupRegistration(false, out string? scheduledTaskError) &&
+                        !string.IsNullOrWhiteSpace(scheduledTaskError))
+                    {
+                        errors.Add(scheduledTaskError);
+                    }
+
+                    if (!TrySetRunKeyStartup(false, out string? runKeyError) &&
+                        !string.IsNullOrWhiteSpace(runKeyError))
+                    {
+                        errors.Add(runKeyError);
+                    }
+
+                    if (errors.Count > 0)
+                    {
+                        throw new InvalidOperationException(string.Join(Environment.NewLine, errors.Distinct()));
+                    }
                 }
             }
             catch (Exception ex)
@@ -1235,6 +1484,9 @@ namespace DesktopPlus
                 PresetName = source.PresetName ?? "",
                 ShowHidden = source.ShowHidden,
                 ShowParentNavigationItem = source.ShowParentNavigationItem,
+                IconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
+                    source.IconViewParentNavigationMode,
+                    source.ShowParentNavigationItem),
                 ShowFileExtensions = source.ShowFileExtensions,
                 ShowSettingsButton = source.ShowSettingsButton,
                 ShowEmptyRecycleBinButton = source.ShowEmptyRecycleBinButton,
@@ -1282,6 +1534,9 @@ namespace DesktopPlus
             target.PresetName = source.PresetName ?? "";
             target.ShowHidden = source.ShowHidden;
             target.ShowParentNavigationItem = source.ShowParentNavigationItem;
+            target.IconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
+                source.IconViewParentNavigationMode,
+                source.ShowParentNavigationItem);
             target.ShowFileExtensions = source.ShowFileExtensions;
             target.ShowSettingsButton = source.ShowSettingsButton;
             target.ShowEmptyRecycleBinButton = source.ShowEmptyRecycleBinButton;
@@ -1320,6 +1575,9 @@ namespace DesktopPlus
                 DefaultFolderPath = source.DefaultFolderPath ?? "",
                 ShowHidden = source.ShowHidden,
                 ShowParentNavigationItem = source.ShowParentNavigationItem,
+                IconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
+                    source.IconViewParentNavigationMode,
+                    source.ShowParentNavigationItem),
                 ShowFileExtensions = source.ShowFileExtensions,
                 OpenFoldersExternally = source.OpenFoldersExternally,
                 OpenItemsOnSingleClick = source.OpenItemsOnSingleClick,

@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Text;
@@ -1269,7 +1270,9 @@ namespace DesktopPlus
 
         private string GetDisplayNameForPath(string path)
         {
-            string displayName = GetPathLeafName(path);
+            string displayName = TryGetRecycleBinDisplayNameForDataPath(path, out string recycleBinDisplayName)
+                ? recycleBinDisplayName
+                : GetPathLeafName(path);
             if (string.IsNullOrWhiteSpace(displayName) || showFileExtensions)
             {
                 return displayName;
@@ -1323,7 +1326,6 @@ namespace DesktopPlus
             _useLightweightItemVisuals = false;
             PinnedItems.Clear();
 
-            string? parentFolderPath = Path.GetDirectoryName(folderPath);
             this.Title = $"{GetFolderDisplayName(folderPath)}";
             if (renamePanelTitle)
             {
@@ -1336,20 +1338,7 @@ namespace DesktopPlus
             _searchInjectedItems.Clear();
             _searchInjectedPaths.Clear();
 
-            if (showParentNavigationItem && parentFolderPath != null)
-            {
-                string parentFolderName = BuildParentNavigationDisplayName(parentFolderPath);
-                ListBoxItem backItem = CreateFileListBoxItem(
-                    parentFolderName,
-                    parentFolderPath,
-                    isBackButton: true,
-                    _currentAppearance);
-                backItem.Visibility = ShouldShowParentNavigationListItem()
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
-                FileList.Items.Add(backItem);
-                _baseItemPaths.Add(parentFolderPath);
-            }
+            EnsureParentNavigationItemState();
 
             RefreshDetailsHeader();
             _ = Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Loaded);
@@ -1881,6 +1870,13 @@ namespace DesktopPlus
             SearchBox.Focus();
         }
 
+        private void SearchBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            _ = Dispatcher.BeginInvoke(
+                new Action(CollapseCompactSearchIfPossible),
+                System.Windows.Threading.DispatcherPriority.Input);
+        }
+
         private void BeginSearch(string rawFilter)
         {
             var previousCts = _searchCts;
@@ -1971,10 +1967,12 @@ namespace DesktopPlus
             _searchCts = null;
             pendingSearchCts?.Cancel();
             _deferSortUntilSearchComplete = false;
+            _isSearchExpandedFromCompactButton = false;
             RemoveInjectedSearchItems();
 
             if (!clearSearchBox || SearchBox == null || string.IsNullOrEmpty(SearchBox.Text))
             {
+                ApplySearchVisibility(animate: false);
                 return;
             }
 
@@ -1987,6 +1985,8 @@ namespace DesktopPlus
             {
                 _suppressSearchTextChanged = false;
             }
+
+            ApplySearchVisibility(animate: false);
         }
 
         private void RestoreUnfilteredPanelItems()

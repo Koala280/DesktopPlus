@@ -934,6 +934,7 @@ namespace DesktopPlus
                 DefaultFolderPath = folderPath,
                 ShowHidden = false,
                 ShowParentNavigationItem = true,
+                IconViewParentNavigationMode = DesktopPanel.IconParentNavigationModeItem,
                 ShowFileExtensions = true,
                 OpenFoldersExternally = false,
                 ViewMode = "icons",

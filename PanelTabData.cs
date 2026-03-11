@@ -13,6 +13,7 @@ namespace DesktopPlus
         public string DefaultFolderPath { get; set; } = "";
         public bool ShowHidden { get; set; }
         public bool ShowParentNavigationItem { get; set; } = true;
+        public string IconViewParentNavigationMode { get; set; } = DesktopPanel.IconParentNavigationModeItem;
         public bool ShowFileExtensions { get; set; } = true;
         public bool OpenFoldersExternally { get; set; }
         public bool OpenItemsOnSingleClick { get; set; }
