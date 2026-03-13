@@ -237,8 +237,8 @@
                                   Content="{DynamicResource Loc.PanelSettingsShowFileExtensions}"
                                   Style="{StaticResource AccentCheckBox}"
                                   Margin="0,8,0,0"/>
-                        <CheckBox x:Name="SettingsButtonToggle"
-                                  Content="{DynamicResource Loc.PanelSettingsShowSettingsButton}"
+                        <CheckBox x:Name="CloseButtonToggle"
+                                  Content="{DynamicResource Loc.PanelSettingsShowCloseButton}"
                                   Style="{StaticResource AccentCheckBox}"
                                   Margin="0,8,0,0"/>
                         <CheckBox x:Name="EmptyRecycleBinToggle"
@@ -266,6 +266,9 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
                             <TextBlock Grid.Row="0" Grid.Column="0"
@@ -291,13 +294,47 @@
                                       Margin="0,4,0,0">
                                 <ComboBoxItem x:Name="SearchVisibilityFieldItem"
                                               Content="{DynamicResource Loc.PanelSettingsSearchAlways}"
-                                              Tag="always"
+                                              Tag="field"
                                               ToolTip="{DynamicResource Loc.PanelSettingsSearchFieldUnavailable}"
                                               ToolTipService.ShowOnDisabled="True"/>
                                 <ComboBoxItem x:Name="SearchVisibilityButtonItem"
-                                              Content="{DynamicResource Loc.PanelSettingsSearchExpandedOnly}"
+                                              Content="{DynamicResource Loc.PanelSettingsSearchButtonOnly}"
                                               Tag="button"/>
                                 <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSearchHidden}" Tag="hidden"/>
+                            </ComboBox>
+
+                            <CheckBox x:Name="SearchExpandedOnlyToggle"
+                                      Grid.Row="2" Grid.Column="2"
+                                      Content="{DynamicResource Loc.PanelSettingsSearchExpandedOnly}"
+                                      Style="{StaticResource AccentCheckBox}"
+                                      Margin="0,8,0,0"/>
+
+                            <TextBlock Grid.Row="3" Grid.Column="0"
+                                       Text="{DynamicResource Loc.PanelSettingsSettingsVisibility}"
+                                       Foreground="{StaticResource Muted}" FontSize="12"
+                                       Margin="0,10,0,0"/>
+                            <ComboBox x:Name="SettingsVisibilitySelect"
+                                      Grid.Row="4" Grid.Column="0"
+                                      Height="34"
+                                      Style="{StaticResource FlatCombo}"
+                                      Margin="0,4,0,0">
+                                <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSettingsAlways}" Tag="always"/>
+                                <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSettingsExpandedOnly}" Tag="expandedonly"/>
+                                <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsSettingsHidden}" Tag="hidden"/>
+                            </ComboBox>
+
+                            <TextBlock Grid.Row="3" Grid.Column="2"
+                                       Text="{DynamicResource Loc.PanelSettingsHeaderAlignment}"
+                                       Foreground="{StaticResource Muted}" FontSize="12"
+                                       Margin="0,10,0,0"/>
+                            <ComboBox x:Name="HeaderAlignmentSelect"
+                                      Grid.Row="4" Grid.Column="2"
+                                      Height="34"
+                                      Style="{StaticResource FlatCombo}"
+                                      Margin="0,4,0,0">
+                                <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsAlignLeft}" Tag="left"/>
+                                <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsAlignCenter}" Tag="center"/>
+                                <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsAlignRight}" Tag="right"/>
                             </ComboBox>
                         </Grid>
 
@@ -384,18 +421,40 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
 
                             <TextBlock Grid.Row="0"
+                                       Grid.Column="0"
                                        Text="{DynamicResource Loc.PanelSettingsMovement}"
                                        Foreground="{StaticResource Muted}" FontSize="12"/>
                             <ComboBox x:Name="MovementModeSelect"
                                       Grid.Row="1"
+                                      Grid.Column="0"
                                       Height="34"
                                       Style="{StaticResource FlatCombo}"
                                       Margin="0,4,0,0">
                                 <ComboBoxItem Content="{DynamicResource Loc.MovementTitlebar}" Tag="titlebar"/>
                                 <ComboBoxItem Content="{DynamicResource Loc.MovementButton}" Tag="button"/>
                                 <ComboBoxItem Content="{DynamicResource Loc.MovementLocked}" Tag="locked"/>
+                            </ComboBox>
+
+                            <TextBlock Grid.Row="0"
+                                       Grid.Column="2"
+                                       Text="{DynamicResource Loc.PanelSettingsCollapseBehavior}"
+                                       Foreground="{StaticResource Muted}" FontSize="12"/>
+                            <ComboBox x:Name="CollapseBehaviorSelect"
+                                      Grid.Row="1"
+                                      Grid.Column="2"
+                                      Height="34"
+                                      Style="{StaticResource FlatCombo}"
+                                      Margin="0,4,0,0">
+                                <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsCollapseDoubleClick}" Tag="doubleclick"/>
+                                <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsCollapseButton}" Tag="button"/>
+                                <ComboBoxItem Content="{DynamicResource Loc.PanelSettingsCollapseBoth}" Tag="both"/>
                             </ComboBox>
                         </Grid>
 

@@ -21,15 +21,18 @@ namespace DesktopPlus
         public bool IsBottomAnchored { get; set; }
         public string PanelTitle { get; set; } = "";
         public string PresetName { get; set; } = "";
-        public bool ShowHidden { get; set; }
+        public bool ShowHidden { get; set; } = true;
         public bool ShowParentNavigationItem { get; set; } = true;
-        public string IconViewParentNavigationMode { get; set; } = DesktopPanel.IconParentNavigationModeItem;
+        public string IconViewParentNavigationMode { get; set; } = DesktopPanel.IconParentNavigationModeHeader;
         public bool ShowSettingsButton { get; set; } = true;
+        public string SettingsButtonVisibilityMode { get; set; } = DesktopPanel.SettingsButtonVisibilityExpandedOnly;
+        public bool ShowCloseButton { get; set; } = true;
         public bool ShowEmptyRecycleBinButton { get; set; } = false;
-        public bool ExpandOnHover { get; set; } = false;
+        public bool ExpandOnHover { get; set; } = true;
         public bool OpenFoldersExternally { get; set; }
         public bool OpenItemsOnSingleClick { get; set; }
-        public bool ShowFileExtensions { get; set; } = true;
+        public string CollapseBehavior { get; set; } = DesktopPanel.CollapseBehaviorBoth;
+        public bool ShowFileExtensions { get; set; } = false;
         public string ViewMode { get; set; } = "icons";
         public bool ShowMetadataType { get; set; } = true;
         public bool ShowMetadataSize { get; set; } = true;
@@ -54,7 +57,9 @@ namespace DesktopPlus
         };
         public Dictionary<string, double> MetadataWidths { get; set; } = DesktopPanel.NormalizeMetadataWidths(null);
         public string MovementMode { get; set; } = "titlebar";
-        public string SearchVisibilityMode { get; set; } = "always";
+        public string SearchVisibilityMode { get; set; } = DesktopPanel.SearchVisibilityButton;
+        public bool? SearchVisibleOnlyExpanded { get; set; } = null;
+        public string HeaderContentAlignment { get; set; } = DesktopPanel.HeaderContentAlignmentLeft;
         public List<string> PinnedItems { get; set; } = new List<string>();
         public List<PanelTabData>? Tabs { get; set; }
         public int ActiveTabIndex { get; set; } = 0;

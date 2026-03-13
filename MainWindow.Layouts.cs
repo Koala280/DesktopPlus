@@ -11,17 +11,22 @@ namespace DesktopPlus
     {
         private sealed class LayoutPanelDefaultsSnapshot
         {
-            public bool ShowHidden { get; set; }
+            public bool ShowHidden { get; set; } = true;
             public bool ShowParentNavigationItem { get; set; } = true;
-            public string IconViewParentNavigationMode { get; set; } = DesktopPanel.IconParentNavigationModeItem;
-            public bool ShowFileExtensions { get; set; } = true;
-            public bool ExpandOnHover { get; set; } = false;
+            public string IconViewParentNavigationMode { get; set; } = DesktopPanel.IconParentNavigationModeHeader;
+            public bool ShowFileExtensions { get; set; } = false;
+            public bool ExpandOnHover { get; set; } = true;
             public bool OpenFoldersExternally { get; set; }
             public bool OpenItemsOnSingleClick { get; set; }
             public bool ShowSettingsButton { get; set; } = true;
+            public string SettingsButtonVisibilityMode { get; set; } = DesktopPanel.SettingsButtonVisibilityExpandedOnly;
+            public bool ShowCloseButton { get; set; } = true;
             public bool ShowEmptyRecycleBinButton { get; set; } = false;
+            public string CollapseBehavior { get; set; } = DesktopPanel.CollapseBehaviorBoth;
             public string MovementMode { get; set; } = "titlebar";
-            public string SearchVisibilityMode { get; set; } = DesktopPanel.SearchVisibilityAlways;
+            public string SearchVisibilityMode { get; set; } = DesktopPanel.SearchVisibilityButton;
+            public bool SearchVisibleOnlyExpanded { get; set; } = true;
+            public string HeaderContentAlignment { get; set; } = DesktopPanel.HeaderContentAlignmentLeft;
             public string ViewMode { get; set; } = DesktopPanel.ViewModeIcons;
             public bool ShowMetadataType { get; set; } = true;
             public bool ShowMetadataSize { get; set; } = true;
@@ -59,8 +64,21 @@ namespace DesktopPlus
             }
 
             layout.PanelDefaultMovementMode = NormalizePanelMovementMode(layout.PanelDefaultMovementMode);
+            layout.PanelDefaultSettingsButtonVisibilityMode = DesktopPanel.NormalizeSettingsButtonVisibilityMode(
+                layout.PanelDefaultSettingsButtonVisibilityMode,
+                layout.PanelDefaultShowSettingsButton);
+            layout.PanelDefaultShowSettingsButton = !string.Equals(
+                layout.PanelDefaultSettingsButtonVisibilityMode,
+                DesktopPanel.SettingsButtonVisibilityHidden,
+                StringComparison.OrdinalIgnoreCase);
+            string rawSearchVisibilityMode = layout.PanelDefaultSearchVisibilityMode;
             layout.PanelDefaultSearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(layout.PanelDefaultSearchVisibilityMode);
+            layout.PanelDefaultSearchVisibleOnlyExpanded = DesktopPanel.NormalizeSearchVisibleOnlyExpanded(
+                layout.PanelDefaultSearchVisibleOnlyExpanded,
+                rawSearchVisibilityMode);
+            layout.PanelDefaultHeaderContentAlignment = DesktopPanel.NormalizeHeaderContentAlignment(layout.PanelDefaultHeaderContentAlignment);
             layout.PanelDefaultViewMode = DesktopPanel.NormalizeViewMode(layout.PanelDefaultViewMode);
+            layout.PanelDefaultCollapseBehavior = DesktopPanel.NormalizeCollapseBehavior(layout.PanelDefaultCollapseBehavior);
             layout.PanelDefaultIconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
                 layout.PanelDefaultIconViewParentNavigationMode,
                 layout.PanelDefaultShowParentNavigationItem);
@@ -83,9 +101,16 @@ namespace DesktopPlus
                 OpenFoldersExternally = layout.PanelDefaultOpenFoldersExternally,
                 OpenItemsOnSingleClick = layout.PanelDefaultOpenItemsOnSingleClick,
                 ShowSettingsButton = layout.PanelDefaultShowSettingsButton,
+                SettingsButtonVisibilityMode = DesktopPanel.NormalizeSettingsButtonVisibilityMode(
+                    layout.PanelDefaultSettingsButtonVisibilityMode,
+                    layout.PanelDefaultShowSettingsButton),
+                ShowCloseButton = layout.PanelDefaultShowCloseButton,
                 ShowEmptyRecycleBinButton = layout.PanelDefaultShowEmptyRecycleBinButton,
+                CollapseBehavior = DesktopPanel.NormalizeCollapseBehavior(layout.PanelDefaultCollapseBehavior),
                 MovementMode = layout.PanelDefaultMovementMode,
                 SearchVisibilityMode = layout.PanelDefaultSearchVisibilityMode,
+                SearchVisibleOnlyExpanded = layout.PanelDefaultSearchVisibleOnlyExpanded == true,
+                HeaderContentAlignment = DesktopPanel.NormalizeHeaderContentAlignment(layout.PanelDefaultHeaderContentAlignment),
                 ViewMode = layout.PanelDefaultViewMode,
                 ShowMetadataType = layout.PanelDefaultShowMetadataType,
                 ShowMetadataSize = layout.PanelDefaultShowMetadataSize,
@@ -113,9 +138,16 @@ namespace DesktopPlus
             layout.PanelDefaultOpenFoldersExternally = defaults.OpenFoldersExternally;
             layout.PanelDefaultOpenItemsOnSingleClick = defaults.OpenItemsOnSingleClick;
             layout.PanelDefaultShowSettingsButton = defaults.ShowSettingsButton;
+            layout.PanelDefaultSettingsButtonVisibilityMode = DesktopPanel.NormalizeSettingsButtonVisibilityMode(
+                defaults.SettingsButtonVisibilityMode,
+                defaults.ShowSettingsButton);
+            layout.PanelDefaultShowCloseButton = defaults.ShowCloseButton;
             layout.PanelDefaultShowEmptyRecycleBinButton = defaults.ShowEmptyRecycleBinButton;
+            layout.PanelDefaultCollapseBehavior = DesktopPanel.NormalizeCollapseBehavior(defaults.CollapseBehavior);
             layout.PanelDefaultMovementMode = NormalizePanelMovementMode(defaults.MovementMode);
             layout.PanelDefaultSearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(defaults.SearchVisibilityMode);
+            layout.PanelDefaultSearchVisibleOnlyExpanded = defaults.SearchVisibleOnlyExpanded;
+            layout.PanelDefaultHeaderContentAlignment = DesktopPanel.NormalizeHeaderContentAlignment(defaults.HeaderContentAlignment);
             layout.PanelDefaultViewMode = DesktopPanel.NormalizeViewMode(defaults.ViewMode);
             layout.PanelDefaultShowMetadataType = defaults.ShowMetadataType;
             layout.PanelDefaultShowMetadataSize = defaults.ShowMetadataSize;
@@ -178,9 +210,28 @@ namespace DesktopPlus
                 panel.ShowSettingsButton = newDefaults.ShowSettingsButton;
             }
 
+            if (string.Equals(
+                DesktopPanel.NormalizeSettingsButtonVisibilityMode(panel.SettingsButtonVisibilityMode, panel.ShowSettingsButton),
+                oldDefaults.SettingsButtonVisibilityMode,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                panel.SettingsButtonVisibilityMode = newDefaults.SettingsButtonVisibilityMode;
+                panel.ShowSettingsButton = newDefaults.ShowSettingsButton;
+            }
+
+            if (panel.ShowCloseButton == oldDefaults.ShowCloseButton)
+            {
+                panel.ShowCloseButton = newDefaults.ShowCloseButton;
+            }
+
             if (panel.ShowEmptyRecycleBinButton == oldDefaults.ShowEmptyRecycleBinButton)
             {
                 panel.ShowEmptyRecycleBinButton = newDefaults.ShowEmptyRecycleBinButton;
+            }
+
+            if (string.Equals(DesktopPanel.NormalizeCollapseBehavior(panel.CollapseBehavior), oldDefaults.CollapseBehavior, StringComparison.OrdinalIgnoreCase))
+            {
+                panel.CollapseBehavior = newDefaults.CollapseBehavior;
             }
 
             if (string.Equals(NormalizePanelMovementMode(panel.MovementMode), oldDefaults.MovementMode, StringComparison.OrdinalIgnoreCase))
@@ -188,9 +239,19 @@ namespace DesktopPlus
                 panel.MovementMode = newDefaults.MovementMode;
             }
 
-            if (string.Equals(DesktopPanel.NormalizeSearchVisibilityMode(panel.SearchVisibilityMode), oldDefaults.SearchVisibilityMode, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(
+                    DesktopPanel.NormalizeSearchVisibilityMode(panel.SearchVisibilityMode),
+                    oldDefaults.SearchVisibilityMode,
+                    StringComparison.OrdinalIgnoreCase) &&
+                DesktopPanel.NormalizeSearchVisibleOnlyExpanded(panel.SearchVisibleOnlyExpanded, panel.SearchVisibilityMode) == oldDefaults.SearchVisibleOnlyExpanded)
             {
                 panel.SearchVisibilityMode = newDefaults.SearchVisibilityMode;
+                panel.SearchVisibleOnlyExpanded = newDefaults.SearchVisibleOnlyExpanded;
+            }
+
+            if (string.Equals(DesktopPanel.NormalizeHeaderContentAlignment(panel.HeaderContentAlignment), oldDefaults.HeaderContentAlignment, StringComparison.OrdinalIgnoreCase))
+            {
+                panel.HeaderContentAlignment = newDefaults.HeaderContentAlignment;
             }
 
             if (string.Equals(DesktopPanel.NormalizeViewMode(panel.ViewMode), oldDefaults.ViewMode, StringComparison.OrdinalIgnoreCase))
@@ -490,7 +551,12 @@ namespace DesktopPlus
             target.OpenFoldersExternally = source.OpenFoldersExternally;
             target.OpenItemsOnSingleClick = source.OpenItemsOnSingleClick;
             target.ShowSettingsButton = source.ShowSettingsButton;
+            target.SettingsButtonVisibilityMode = DesktopPanel.NormalizeSettingsButtonVisibilityMode(
+                source.SettingsButtonVisibilityMode,
+                source.ShowSettingsButton);
+            target.ShowCloseButton = source.ShowCloseButton;
             target.ShowEmptyRecycleBinButton = source.ShowEmptyRecycleBinButton;
+            target.CollapseBehavior = DesktopPanel.NormalizeCollapseBehavior(source.CollapseBehavior);
             target.ViewMode = DesktopPanel.NormalizeViewMode(source.ViewMode);
             target.ShowMetadataType = source.ShowMetadataType;
             target.ShowMetadataSize = source.ShowMetadataSize;
@@ -505,6 +571,10 @@ namespace DesktopPlus
             target.MetadataWidths = DesktopPanel.NormalizeMetadataWidths(source.MetadataWidths);
             target.MovementMode = NormalizePanelMovementMode(source.MovementMode);
             target.SearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(source.SearchVisibilityMode);
+            target.SearchVisibleOnlyExpanded = DesktopPanel.NormalizeSearchVisibleOnlyExpanded(
+                source.SearchVisibleOnlyExpanded,
+                source.SearchVisibilityMode);
+            target.HeaderContentAlignment = DesktopPanel.NormalizeHeaderContentAlignment(source.HeaderContentAlignment);
             CopyPanelTabBehaviorSettings(source, target);
         }
 
@@ -534,12 +604,17 @@ namespace DesktopPlus
             panel.SetExpandOnHover(source.ExpandOnHover);
             panel.openFoldersExternally = source.OpenFoldersExternally;
             panel.openItemsOnSingleClick = source.OpenItemsOnSingleClick;
-            panel.showSettingsButton = source.ShowSettingsButton;
+            panel.SetSettingsButtonVisibilityMode(source.SettingsButtonVisibilityMode);
+            panel.showCloseButton = source.ShowCloseButton;
             panel.showEmptyRecycleBinButton = source.ShowEmptyRecycleBinButton;
-            panel.ApplySettingsButtonVisibility();
+            panel.ApplyCollapseBehavior(source.CollapseBehavior);
+            panel.ApplyCloseButtonVisibility();
             panel.UpdateEmptyRecycleBinButtonVisibility();
             panel.ApplyMovementMode(NormalizePanelMovementMode(source.MovementMode));
-            panel.SetSearchVisibilityMode(source.SearchVisibilityMode);
+            panel.SetSearchVisibility(
+                source.SearchVisibilityMode,
+                DesktopPanel.NormalizeSearchVisibleOnlyExpanded(source.SearchVisibleOnlyExpanded, source.SearchVisibilityMode));
+            panel.ApplyHeaderContentAlignment(source.HeaderContentAlignment);
             panel.ApplyViewSettings(
                 source.ViewMode,
                 source.ShowMetadataType,
@@ -716,17 +791,22 @@ namespace DesktopPlus
                 Name = name,
                 ThemePresetName = GetSelectedPresetName(),
                 DefaultPanelPresetName = layoutDefaultPresetName,
-                PanelDefaultShowHidden = false,
+                PanelDefaultShowHidden = true,
                 PanelDefaultShowParentNavigationItem = true,
-                PanelDefaultIconViewParentNavigationMode = DesktopPanel.IconParentNavigationModeItem,
-                PanelDefaultShowFileExtensions = true,
-                PanelDefaultExpandOnHover = false,
+                PanelDefaultIconViewParentNavigationMode = DesktopPanel.IconParentNavigationModeHeader,
+                PanelDefaultShowFileExtensions = false,
+                PanelDefaultExpandOnHover = true,
                 PanelDefaultOpenFoldersExternally = false,
                 PanelDefaultOpenItemsOnSingleClick = false,
                 PanelDefaultShowSettingsButton = true,
+                PanelDefaultSettingsButtonVisibilityMode = DesktopPanel.SettingsButtonVisibilityExpandedOnly,
+                PanelDefaultShowCloseButton = true,
                 PanelDefaultShowEmptyRecycleBinButton = false,
+                PanelDefaultCollapseBehavior = DesktopPanel.CollapseBehaviorBoth,
                 PanelDefaultMovementMode = "titlebar",
-                PanelDefaultSearchVisibilityMode = DesktopPanel.SearchVisibilityAlways,
+                PanelDefaultSearchVisibilityMode = DesktopPanel.SearchVisibilityButton,
+                PanelDefaultSearchVisibleOnlyExpanded = true,
+                PanelDefaultHeaderContentAlignment = DesktopPanel.HeaderContentAlignmentLeft,
                 PanelDefaultViewMode = DesktopPanel.ViewModeIcons,
                 PanelDefaultShowMetadataType = true,
                 PanelDefaultShowMetadataSize = true,
@@ -760,17 +840,22 @@ namespace DesktopPlus
                 Name = name,
                 ThemePresetName = GetSelectedPresetName(),
                 DefaultPanelPresetName = GetSelectedLayoutDefaultPresetName(),
-                PanelDefaultShowHidden = false,
+                PanelDefaultShowHidden = true,
                 PanelDefaultShowParentNavigationItem = true,
-                PanelDefaultIconViewParentNavigationMode = DesktopPanel.IconParentNavigationModeItem,
-                PanelDefaultShowFileExtensions = true,
-                PanelDefaultExpandOnHover = false,
+                PanelDefaultIconViewParentNavigationMode = DesktopPanel.IconParentNavigationModeHeader,
+                PanelDefaultShowFileExtensions = false,
+                PanelDefaultExpandOnHover = true,
                 PanelDefaultOpenFoldersExternally = false,
                 PanelDefaultOpenItemsOnSingleClick = false,
                 PanelDefaultShowSettingsButton = true,
+                PanelDefaultSettingsButtonVisibilityMode = DesktopPanel.SettingsButtonVisibilityExpandedOnly,
+                PanelDefaultShowCloseButton = true,
                 PanelDefaultShowEmptyRecycleBinButton = false,
+                PanelDefaultCollapseBehavior = DesktopPanel.CollapseBehaviorBoth,
                 PanelDefaultMovementMode = "titlebar",
-                PanelDefaultSearchVisibilityMode = DesktopPanel.SearchVisibilityAlways,
+                PanelDefaultSearchVisibilityMode = DesktopPanel.SearchVisibilityButton,
+                PanelDefaultSearchVisibleOnlyExpanded = true,
+                PanelDefaultHeaderContentAlignment = DesktopPanel.HeaderContentAlignmentLeft,
                 PanelDefaultViewMode = DesktopPanel.ViewModeIcons,
                 PanelDefaultShowMetadataType = true,
                 PanelDefaultShowMetadataSize = true,
@@ -812,9 +897,13 @@ namespace DesktopPlus
             bool expandOnHover,
             bool openFoldersExternally,
             bool openItemsOnSingleClick,
-            bool showSettingsButton,
+            string collapseBehavior,
+            string settingsButtonVisibilityMode,
+            bool showCloseButton,
             string movementMode,
             string searchVisibilityMode,
+            bool searchVisibleOnlyExpanded,
+            string headerContentAlignment,
             string viewMode,
             bool showMetadataType,
             bool showMetadataSize,
@@ -857,9 +946,17 @@ namespace DesktopPlus
                 ExpandOnHover = expandOnHover,
                 OpenFoldersExternally = openFoldersExternally,
                 OpenItemsOnSingleClick = openItemsOnSingleClick,
-                ShowSettingsButton = showSettingsButton,
+                CollapseBehavior = DesktopPanel.NormalizeCollapseBehavior(collapseBehavior),
+                SettingsButtonVisibilityMode = DesktopPanel.NormalizeSettingsButtonVisibilityMode(settingsButtonVisibilityMode),
+                ShowSettingsButton = !string.Equals(
+                    DesktopPanel.NormalizeSettingsButtonVisibilityMode(settingsButtonVisibilityMode),
+                    DesktopPanel.SettingsButtonVisibilityHidden,
+                    StringComparison.OrdinalIgnoreCase),
+                ShowCloseButton = showCloseButton,
                 MovementMode = NormalizePanelMovementMode(movementMode),
                 SearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(searchVisibilityMode),
+                SearchVisibleOnlyExpanded = searchVisibleOnlyExpanded,
+                HeaderContentAlignment = DesktopPanel.NormalizeHeaderContentAlignment(headerContentAlignment),
                 ViewMode = DesktopPanel.NormalizeViewMode(viewMode),
                 ShowMetadataType = showMetadataType,
                 ShowMetadataSize = showMetadataSize,

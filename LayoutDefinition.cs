@@ -7,17 +7,22 @@ namespace DesktopPlus
         public string Name { get; set; } = "";
         public string ThemePresetName { get; set; } = "";
         public string DefaultPanelPresetName { get; set; } = "";
-        public bool PanelDefaultShowHidden { get; set; }
+        public bool PanelDefaultShowHidden { get; set; } = true;
         public bool PanelDefaultShowParentNavigationItem { get; set; } = true;
-        public string PanelDefaultIconViewParentNavigationMode { get; set; } = DesktopPanel.IconParentNavigationModeItem;
-        public bool PanelDefaultShowFileExtensions { get; set; } = true;
-        public bool PanelDefaultExpandOnHover { get; set; } = false;
+        public string PanelDefaultIconViewParentNavigationMode { get; set; } = DesktopPanel.IconParentNavigationModeHeader;
+        public bool PanelDefaultShowFileExtensions { get; set; } = false;
+        public bool PanelDefaultExpandOnHover { get; set; } = true;
         public bool PanelDefaultOpenFoldersExternally { get; set; }
         public bool PanelDefaultOpenItemsOnSingleClick { get; set; }
         public bool PanelDefaultShowSettingsButton { get; set; } = true;
+        public string PanelDefaultSettingsButtonVisibilityMode { get; set; } = DesktopPanel.SettingsButtonVisibilityExpandedOnly;
+        public bool PanelDefaultShowCloseButton { get; set; } = true;
         public bool PanelDefaultShowEmptyRecycleBinButton { get; set; } = false;
+        public string PanelDefaultCollapseBehavior { get; set; } = DesktopPanel.CollapseBehaviorBoth;
         public string PanelDefaultMovementMode { get; set; } = "titlebar";
-        public string PanelDefaultSearchVisibilityMode { get; set; } = "always";
+        public string PanelDefaultSearchVisibilityMode { get; set; } = DesktopPanel.SearchVisibilityButton;
+        public bool? PanelDefaultSearchVisibleOnlyExpanded { get; set; } = null;
+        public string PanelDefaultHeaderContentAlignment { get; set; } = DesktopPanel.HeaderContentAlignmentLeft;
         public string PanelDefaultViewMode { get; set; } = "icons";
         public bool PanelDefaultShowMetadataType { get; set; } = true;
         public bool PanelDefaultShowMetadataSize { get; set; } = true;

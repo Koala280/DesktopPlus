@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-03-13
+
+### Added
+
+- Panel settings and layout defaults now include collapse behavior, settings button visibility, close button visibility, search expansion behavior, and header alignment controls.
+- Saved panels and layouts now persist the new header/search controls so cloned panels and restored layouts keep the same behavior.
+
+### Changed
+
+- Panel headers now use a reworked layout that better coordinates tabs, back navigation, adaptive search, and header alignment.
+- New panel and layout defaults now use the updated header/search behavior set introduced with the new panel controls.
+
+### Fixed
+
+- Compact search expansion no longer leaves empty tab/title spacing in narrow multi-tab headers.
+- Header cutout and active tab rendering now stay in sync more reliably while tabs resize and header states change.
+- Layout restore and panel duplication now carry forward the extended panel behavior settings consistently.
+
 ## [1.3.0] - 2026-03-11
 
 ### Added

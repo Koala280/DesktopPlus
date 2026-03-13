@@ -1231,12 +1231,17 @@ namespace DesktopPlus
             panel.SetExpandOnHover(data.ExpandOnHover);
             panel.openFoldersExternally = data.OpenFoldersExternally;
             panel.openItemsOnSingleClick = data.OpenItemsOnSingleClick;
-            panel.showSettingsButton = data.ShowSettingsButton;
+            panel.ApplyCollapseBehavior(data.CollapseBehavior);
+            panel.SetSettingsButtonVisibilityMode(data.SettingsButtonVisibilityMode);
+            panel.showCloseButton = data.ShowCloseButton;
             panel.showEmptyRecycleBinButton = data.ShowEmptyRecycleBinButton;
             panel.ApplyMovementMode(string.IsNullOrWhiteSpace(data.MovementMode) ? "titlebar" : data.MovementMode);
-            panel.ApplySettingsButtonVisibility();
+            panel.ApplyCloseButtonVisibility();
             panel.UpdateEmptyRecycleBinButtonVisibility();
-            panel.SetSearchVisibilityMode(data.SearchVisibilityMode);
+            panel.SetSearchVisibility(
+                data.SearchVisibilityMode,
+                DesktopPanel.NormalizeSearchVisibleOnlyExpanded(data.SearchVisibleOnlyExpanded, data.SearchVisibilityMode));
+            panel.ApplyHeaderContentAlignment(data.HeaderContentAlignment);
 
             double storedTop = data.Top;
             double storedBaseTop = (Math.Abs(data.BaseTop) < 0.01 && Math.Abs(storedTop) > 0.01) ? storedTop : data.BaseTop;
@@ -1767,7 +1772,11 @@ namespace DesktopPlus
             var panel = new DesktopPanel();
             var appearance = GetPresetSettings(presetName);
             panel.ApplyAppearance(appearance);
-            panel.SetExpandOnHover(false);
+            panel.showHiddenItems = true;
+            panel.showFileExtensions = false;
+            panel.SetExpandOnHover(true);
+            panel.SetSettingsButtonVisibilityMode(DesktopPanel.SettingsButtonVisibilityExpandedOnly);
+            panel.SetSearchVisibility(DesktopPanel.SearchVisibilityButton, true);
             panel.assignedPresetName = string.IsNullOrWhiteSpace(presetName) ? DefaultPresetName : presetName;
             return panel;
         }
@@ -1932,12 +1941,15 @@ namespace DesktopPlus
             panel.assignedPresetName = sourcePanel.assignedPresetName;
             panel.ApplyAppearance(GetPresetSettings(panel.assignedPresetName));
             panel.SetExpandOnHover(sourcePanel.expandOnHover);
-            panel.showSettingsButton = sourcePanel.showSettingsButton;
+            panel.ApplyCollapseBehavior(sourcePanel.collapseBehavior);
+            panel.SetSettingsButtonVisibilityMode(sourcePanel.settingsButtonVisibilityMode);
+            panel.showCloseButton = sourcePanel.showCloseButton;
             panel.showEmptyRecycleBinButton = sourcePanel.showEmptyRecycleBinButton;
-            panel.ApplySettingsButtonVisibility();
+            panel.ApplyCloseButtonVisibility();
             panel.UpdateEmptyRecycleBinButtonVisibility();
             panel.ApplyMovementMode(sourcePanel.movementMode);
-            panel.SetSearchVisibilityMode(sourcePanel.searchVisibilityMode);
+            panel.SetSearchVisibility(sourcePanel.searchVisibilityMode, sourcePanel.searchVisibleOnlyExpanded);
+            panel.ApplyHeaderContentAlignment(sourcePanel.headerContentAlignment);
 
             // Position at mouse
             panel.Left = screenPos.X - 100;

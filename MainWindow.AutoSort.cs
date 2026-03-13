@@ -1846,13 +1846,17 @@ namespace DesktopPlus
                 PresetName = DefaultPresetName,
                 IsCollapsed = false,
                 IsHidden = false,
-                ShowHidden = false,
-                ShowFileExtensions = true,
+                ShowHidden = true,
+                ShowFileExtensions = false,
                 ShowSettingsButton = true,
-                ExpandOnHover = false,
+                SettingsButtonVisibilityMode = DesktopPanel.SettingsButtonVisibilityExpandedOnly,
+                ShowCloseButton = true,
+                ExpandOnHover = true,
                 OpenFoldersExternally = false,
+                CollapseBehavior = DesktopPanel.CollapseBehaviorBoth,
                 MovementMode = "titlebar",
-                SearchVisibilityMode = DesktopPanel.SearchVisibilityAlways,
+                SearchVisibilityMode = DesktopPanel.SearchVisibilityButton,
+                SearchVisibleOnlyExpanded = true,
                 PinnedItems = useFolderTarget
                     ? new List<string>()
                     : MergeDistinctPaths(Array.Empty<string>(), initialItems)

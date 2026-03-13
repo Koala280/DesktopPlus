@@ -646,12 +646,12 @@ namespace DesktopPlus
             RefreshTabPresentation(reloadActiveState: false, persist: false);
         }
 
-        private void RebuildTabBar(bool? collapsedOverride = null)
+        private void RebuildTabBar(bool? collapsedOverride = null, bool animateSearch = false)
         {
             if (TabBarPanel == null || TabBarContainer == null) return;
 
             TabBarPanel.Children.Clear();
-            bool isCollapsedVisual = collapsedOverride ?? !isContentVisible;
+            bool isCollapsedVisual = collapsedOverride ?? _isCollapsedVisualState;
             int visibleTabCount = GetVisibleTabCount();
 
             if (visibleTabCount <= 1)
@@ -666,7 +666,9 @@ namespace DesktopPlus
                     }
                 }
                 UpdateHeaderBottomBorderForCurrentState(collapsed: isCollapsedVisual);
-                ApplySearchVisibility(animate: false);
+                UpdateHeaderBackgroundCutout();
+                ApplySearchVisibility(animate: animateSearch);
+                ApplyHeaderContentAlignment(headerContentAlignment);
                 return;
             }
 
@@ -675,7 +677,7 @@ namespace DesktopPlus
                 PanelTitle.Visibility = Visibility.Collapsed;
             // Keep border behavior in sync with collapsed/expanded visual state.
             UpdateHeaderBottomBorderForCurrentState(collapsed: isCollapsedVisual);
-            ApplySearchVisibility(animate: false);
+            ApplySearchVisibility(animate: animateSearch);
 
             int animateIndex = _animateNewTabIndex;
             _animateNewTabIndex = -1;
@@ -700,28 +702,14 @@ namespace DesktopPlus
                     AnimateNewTab(tabItem);
                 }
             }
+
+            UpdateHeaderBackgroundCutout();
+            ApplyHeaderContentAlignment(headerContentAlignment);
         }
 
         private Border CreateTabBarItem(PanelTabData tab, int index, bool isActive, bool allowActiveSelection)
         {
-            Brush activeTextBrush = (Brush)FindResource("PanelText");
-            Brush inactiveTextBrush = (Brush)FindResource("PanelMuted");
             var appearance = _currentAppearance ?? MainWindow.Appearance ?? new AppearanceSettings();
-            var activeColor = MainWindow.ResolvePanelTabActiveColor(appearance);
-            var inactiveColor = MainWindow.ResolvePanelTabInactiveColor(appearance);
-            var hoverColor = MainWindow.ResolvePanelTabHoverColor(appearance);
-            static System.Windows.Media.Color ParseColor(string? value, System.Windows.Media.Color fallback)
-            {
-                if (string.IsNullOrWhiteSpace(value)) return fallback;
-                try
-                {
-                    return (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(value);
-                }
-                catch
-                {
-                    return fallback;
-                }
-            }
 
             static System.Windows.Media.Color Blend(System.Windows.Media.Color from, System.Windows.Media.Color to, double amount)
             {
@@ -737,26 +725,34 @@ namespace DesktopPlus
                 return new SolidColorBrush(System.Windows.Media.Color.FromArgb(alpha, color.R, color.G, color.B));
             }
 
-            var headerColor = ParseColor(appearance.HeaderColor, System.Windows.Media.Color.FromRgb(42, 48, 59));
-            var bodyColor = ParseColor(appearance.BackgroundColor, System.Windows.Media.Color.FromRgb(31, 36, 46));
+            var contentBrush = ContentFrame?.Background?.CloneCurrentValue() ?? MainWindow.BuildPanelContentBrush(appearance);
 
             var white = System.Windows.Media.Color.FromRgb(255, 255, 255);
-            // Active tab: use body color so it blends seamlessly into content
-            var chromeActiveColor = bodyColor;
-            var chromeActiveBorderColor = Blend(bodyColor, white, 0.12);
-            // Hover pill for inactive tabs
-            var hoverPillColor = Blend(headerColor, white, 0.10);
-            var separatorColor = Blend(headerColor, white, 0.12);
+            var accentColor = MainWindow.ParseColorOrFallback(appearance.AccentColor, System.Windows.Media.Color.FromRgb(90, 200, 250));
+            var mutedColor = MainWindow.ParseColorOrFallback(appearance.MutedTextColor, System.Windows.Media.Color.FromRgb(167, 176, 192));
+            var activeBorderBaseColor = MainWindow.ResolvePanelTabActiveColor(appearance);
+            var hoverPillBaseColor = MainWindow.ResolvePanelTabHoverColor(appearance);
+            var separatorBaseColor = MainWindow.ResolvePanelTabInactiveColor(appearance);
+            var chromeActiveColor = contentBrush is SolidColorBrush solidContentBrush
+                ? System.Windows.Media.Color.FromRgb(solidContentBrush.Color.R, solidContentBrush.Color.G, solidContentBrush.Color.B)
+                : activeBorderBaseColor;
+            // Active tab: use the same brush as the content body so both surfaces merge cleanly.
+            var chromeActiveBorderColor = Blend(chromeActiveColor, white, 0.12);
+            var hoverPillColor = Blend(hoverPillBaseColor, white, 0.08);
+            var separatorColor = Blend(separatorBaseColor, white, 0.10);
+            var inactiveTitleColor = Blend(mutedColor, accentColor, 0.38);
 
-            var activeBackgroundBrush = CreateBrush(chromeActiveColor, 255);
+            var activeBackgroundBrush = contentBrush;
             var activeBorderBrush = CreateBrush(chromeActiveBorderColor, 160);
-            var hoverPillBrush = CreateBrush(hoverPillColor, 255);
-            var separatorBrush = CreateBrush(separatorColor, 160);
+            var hoverPillBrush = CreateBrush(hoverPillColor, 188);
+            var separatorBrush = CreateBrush(separatorColor, 132);
+            var activeTextBrush = CreateBrush(accentColor, 255);
+            var inactiveTextBrush = CreateBrush(inactiveTitleColor, 228);
 
             var tabNameBlock = new TextBlock
             {
                 Text = tab.TabName,
-                FontSize = Math.Max(10, Math.Min(16, appearance.ItemFontSize - 1)),
+                FontSize = Math.Min(18, Math.Max(12, appearance.TitleFontSize - 1)),
                 FontWeight = FontWeights.SemiBold,
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
@@ -764,6 +760,7 @@ namespace DesktopPlus
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 MaxWidth = 156,
                 Foreground = isActive ? activeTextBrush : inactiveTextBrush,
+                Opacity = 0.95,
                 IsHitTestVisible = false,
             };
 
@@ -780,17 +777,42 @@ namespace DesktopPlus
             };
 
             // Active tab: Chrome-style shape drawn via Path on a Canvas
+            var tabBleed = new System.Windows.Shapes.Path
+            {
+                Fill = activeBackgroundBrush,
+                Stroke = activeBackgroundBrush,
+                StrokeThickness = 1.35,
+                StrokeLineJoin = PenLineJoin.Round,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round,
+                SnapsToDevicePixels = true,
+                Stretch = Stretch.None,
+                Visibility = isActive ? Visibility.Visible : Visibility.Collapsed,
+            };
             var tabFill = new System.Windows.Shapes.Path
             {
                 Fill = activeBackgroundBrush,
+                StrokeThickness = 0,
+                SnapsToDevicePixels = true,
+                Stretch = Stretch.None,
+                Visibility = isActive ? Visibility.Visible : Visibility.Collapsed,
+            };
+            var tabOutline = new System.Windows.Shapes.Path
+            {
+                Fill = System.Windows.Media.Brushes.Transparent,
                 Stroke = activeBorderBrush,
                 StrokeThickness = 1,
+                StrokeLineJoin = PenLineJoin.Round,
+                StrokeStartLineCap = PenLineCap.Flat,
+                StrokeEndLineCap = PenLineCap.Flat,
                 SnapsToDevicePixels = true,
                 Stretch = Stretch.None,
                 Visibility = isActive ? Visibility.Visible : Visibility.Collapsed,
             };
             var tabCanvas = new Canvas { SnapsToDevicePixels = true, ClipToBounds = false };
+            tabCanvas.Children.Add(tabBleed);
             tabCanvas.Children.Add(tabFill);
+            tabCanvas.Children.Add(tabOutline);
 
             // Inactive hover pill: simple rounded border behind text
             var hoverPill = new Border
@@ -822,15 +844,29 @@ namespace DesktopPlus
                 RenderTransform = new TranslateTransform()
             };
 
+            void UpdateActiveTabGeometry(double width, double height)
+            {
+                var tabShape = BuildChromeTabShape(width, height);
+                tabBleed.Data = tabShape;
+                tabFill.Data = tabShape;
+                tabOutline.Data = BuildChromeTabOutline(width, height);
+            }
+
             border.Loaded += (_, __) =>
             {
                 if (isActive || (allowActiveSelection && (int)border.Tag == _activeTabIndex))
-                    tabFill.Data = BuildChromeTabShape(border.ActualWidth, border.ActualHeight);
+                {
+                    UpdateActiveTabGeometry(border.ActualWidth, border.ActualHeight);
+                    UpdateHeaderBackgroundCutout();
+                }
             };
             border.SizeChanged += (_, sizeArgs) =>
             {
                 if (allowActiveSelection && (int)border.Tag == _activeTabIndex)
-                    tabFill.Data = BuildChromeTabShape(sizeArgs.NewSize.Width, sizeArgs.NewSize.Height);
+                {
+                    UpdateActiveTabGeometry(sizeArgs.NewSize.Width, sizeArgs.NewSize.Height);
+                    UpdateHeaderBackgroundCutout();
+                }
             };
 
             bool isHovering = false;
@@ -839,15 +875,19 @@ namespace DesktopPlus
             {
                 if (activeState)
                 {
+                    tabBleed.Visibility = Visibility.Visible;
                     tabFill.Visibility = Visibility.Visible;
-                    tabFill.Data = BuildChromeTabShape(border.ActualWidth, border.ActualHeight);
+                    tabOutline.Visibility = Visibility.Visible;
+                    UpdateActiveTabGeometry(border.ActualWidth, border.ActualHeight);
                     hoverPill.Background = System.Windows.Media.Brushes.Transparent;
                     separatorRight.Opacity = 0;
                     tabNameBlock.Foreground = activeTextBrush;
                     return;
                 }
 
+                tabBleed.Visibility = Visibility.Collapsed;
                 tabFill.Visibility = Visibility.Collapsed;
+                tabOutline.Visibility = Visibility.Collapsed;
                 hoverPill.Background = isHovering ? hoverPillBrush : System.Windows.Media.Brushes.Transparent;
                 separatorRight.Opacity = (!isHovering && ShouldShowSeparator(switchIndex, false)) ? 1.0 : 0.0;
                 tabNameBlock.Foreground = isHovering ? activeTextBrush : inactiveTextBrush;
@@ -1078,7 +1118,7 @@ namespace DesktopPlus
             if (index >= _tabs.Count - 1) return false; // last tab, no right separator
             if (thisTabIsActive) return false;           // active tab hides separators
             // When collapsed (no active selection visible), always show separators
-            if (!isContentVisible) return true;
+            if (_isCollapsedVisualState) return true;
             // Hide separator if neighbor to the right is the active tab
             if (index + 1 == _activeTabIndex) return false;
             return true;
@@ -1141,6 +1181,45 @@ namespace DesktopPlus
                 new Point(w + footW, bottomY - footH * 0.55),
                 new Point(w + footW, bottomY),
                 true));
+
+            var geometry = new PathGeometry(new[] { figure });
+            geometry.Freeze();
+            return geometry;
+        }
+
+        private static Geometry BuildChromeTabOutline(double width, double height)
+        {
+            if (width <= 2 || height <= 2)
+            {
+                return Geometry.Empty;
+            }
+
+            double w = Math.Max(24, width);
+            double h = Math.Max(12, height);
+            double topY = 6.0;
+            double cornerR = 8.0;
+            double footH = 10.0;
+            double inset = 4.0;
+            double sideBottomY = h - footH;
+
+            var figure = new PathFigure
+            {
+                StartPoint = new Point(inset, sideBottomY),
+                IsFilled = false,
+                IsClosed = false
+            };
+
+            figure.Segments.Add(new LineSegment(new Point(inset, topY + cornerR), true));
+            figure.Segments.Add(new ArcSegment(
+                new Point(inset + cornerR, topY),
+                new System.Windows.Size(cornerR, cornerR),
+                0, false, SweepDirection.Clockwise, true));
+            figure.Segments.Add(new LineSegment(new Point(w - inset - cornerR, topY), true));
+            figure.Segments.Add(new ArcSegment(
+                new Point(w - inset, topY + cornerR),
+                new System.Windows.Size(cornerR, cornerR),
+                0, false, SweepDirection.Clockwise, true));
+            figure.Segments.Add(new LineSegment(new Point(w - inset, sideBottomY), true));
 
             var geometry = new PathGeometry(new[] { figure });
             geometry.Freeze();

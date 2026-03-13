@@ -223,7 +223,20 @@ namespace DesktopPlus
         {
             if (data == null) return;
             data.PinnedItems ??= new List<string>();
+            string rawSearchVisibilityMode = data.SearchVisibilityMode;
+            data.CollapseBehavior = DesktopPanel.NormalizeCollapseBehavior(data.CollapseBehavior);
+            data.SettingsButtonVisibilityMode = DesktopPanel.NormalizeSettingsButtonVisibilityMode(
+                data.SettingsButtonVisibilityMode,
+                data.ShowSettingsButton);
+            data.ShowSettingsButton = !string.Equals(
+                data.SettingsButtonVisibilityMode,
+                DesktopPanel.SettingsButtonVisibilityHidden,
+                StringComparison.OrdinalIgnoreCase);
             data.SearchVisibilityMode = DesktopPanel.NormalizeSearchVisibilityMode(data.SearchVisibilityMode);
+            data.SearchVisibleOnlyExpanded = DesktopPanel.NormalizeSearchVisibleOnlyExpanded(
+                data.SearchVisibleOnlyExpanded,
+                rawSearchVisibilityMode);
+            data.HeaderContentAlignment = DesktopPanel.NormalizeHeaderContentAlignment(data.HeaderContentAlignment);
             data.ViewMode = DesktopPanel.NormalizeViewMode(data.ViewMode);
             data.IconViewParentNavigationMode = DesktopPanel.NormalizeIconViewParentNavigationMode(
                 data.IconViewParentNavigationMode,
@@ -349,10 +362,13 @@ namespace DesktopPlus
                     panel.showParentNavigationItem),
                 ShowFileExtensions = panel.showFileExtensions,
                 ShowSettingsButton = panel.showSettingsButton,
+                SettingsButtonVisibilityMode = panel.settingsButtonVisibilityMode,
+                ShowCloseButton = panel.showCloseButton,
                 ShowEmptyRecycleBinButton = panel.showEmptyRecycleBinButton,
                 ExpandOnHover = panel.expandOnHover,
                 OpenFoldersExternally = panel.openFoldersExternally,
                 OpenItemsOnSingleClick = panel.openItemsOnSingleClick,
+                CollapseBehavior = panel.collapseBehavior,
                 ViewMode = panel.viewMode,
                 ShowMetadataType = panel.showMetadataType,
                 ShowMetadataSize = panel.showMetadataSize,
@@ -367,6 +383,8 @@ namespace DesktopPlus
                 MetadataWidths = DesktopPanel.NormalizeMetadataWidths(panel.metadataWidths),
                 MovementMode = panel.movementMode,
                 SearchVisibilityMode = panel.searchVisibilityMode,
+                SearchVisibleOnlyExpanded = panel.searchVisibleOnlyExpanded,
+                HeaderContentAlignment = panel.headerContentAlignment,
                 PinnedItems = pinnedItems
             };
 
@@ -1489,10 +1507,15 @@ if ($isMatch) {{ exit 0 }} else {{ exit 1 }}";
                     source.ShowParentNavigationItem),
                 ShowFileExtensions = source.ShowFileExtensions,
                 ShowSettingsButton = source.ShowSettingsButton,
+                SettingsButtonVisibilityMode = DesktopPanel.NormalizeSettingsButtonVisibilityMode(
+                    source.SettingsButtonVisibilityMode,
+                    source.ShowSettingsButton),
+                ShowCloseButton = source.ShowCloseButton,
                 ShowEmptyRecycleBinButton = source.ShowEmptyRecycleBinButton,
                 ExpandOnHover = source.ExpandOnHover,
                 OpenFoldersExternally = source.OpenFoldersExternally,
                 OpenItemsOnSingleClick = source.OpenItemsOnSingleClick,
+                CollapseBehavior = DesktopPanel.NormalizeCollapseBehavior(source.CollapseBehavior),
                 ViewMode = source.ViewMode ?? DesktopPanel.ViewModeIcons,
                 ShowMetadataType = source.ShowMetadataType,
                 ShowMetadataSize = source.ShowMetadataSize,
@@ -1506,7 +1529,11 @@ if ($isMatch) {{ exit 0 }} else {{ exit 1 }}";
                 MetadataOrder = DesktopPanel.NormalizeMetadataOrder(source.MetadataOrder),
                 MetadataWidths = DesktopPanel.NormalizeMetadataWidths(source.MetadataWidths),
                 MovementMode = source.MovementMode ?? "titlebar",
-                SearchVisibilityMode = source.SearchVisibilityMode ?? DesktopPanel.SearchVisibilityAlways,
+                SearchVisibilityMode = source.SearchVisibilityMode ?? DesktopPanel.SearchVisibilityButton,
+                SearchVisibleOnlyExpanded = DesktopPanel.NormalizeSearchVisibleOnlyExpanded(
+                    source.SearchVisibleOnlyExpanded,
+                    source.SearchVisibilityMode),
+                HeaderContentAlignment = DesktopPanel.NormalizeHeaderContentAlignment(source.HeaderContentAlignment),
                 PinnedItems = source.PinnedItems?.ToList() ?? new List<string>(),
                 Tabs = source.Tabs?.Select(ClonePanelTabData).ToList(),
                 ActiveTabIndex = source.ActiveTabIndex
@@ -1539,10 +1566,15 @@ if ($isMatch) {{ exit 0 }} else {{ exit 1 }}";
                 source.ShowParentNavigationItem);
             target.ShowFileExtensions = source.ShowFileExtensions;
             target.ShowSettingsButton = source.ShowSettingsButton;
+            target.SettingsButtonVisibilityMode = DesktopPanel.NormalizeSettingsButtonVisibilityMode(
+                source.SettingsButtonVisibilityMode,
+                source.ShowSettingsButton);
+            target.ShowCloseButton = source.ShowCloseButton;
             target.ShowEmptyRecycleBinButton = source.ShowEmptyRecycleBinButton;
             target.ExpandOnHover = source.ExpandOnHover;
             target.OpenFoldersExternally = source.OpenFoldersExternally;
             target.OpenItemsOnSingleClick = source.OpenItemsOnSingleClick;
+            target.CollapseBehavior = DesktopPanel.NormalizeCollapseBehavior(source.CollapseBehavior);
             target.ViewMode = source.ViewMode ?? DesktopPanel.ViewModeIcons;
             target.ShowMetadataType = source.ShowMetadataType;
             target.ShowMetadataSize = source.ShowMetadataSize;
@@ -1556,7 +1588,11 @@ if ($isMatch) {{ exit 0 }} else {{ exit 1 }}";
             target.MetadataOrder = DesktopPanel.NormalizeMetadataOrder(source.MetadataOrder);
             target.MetadataWidths = DesktopPanel.NormalizeMetadataWidths(source.MetadataWidths);
             target.MovementMode = source.MovementMode ?? "titlebar";
-            target.SearchVisibilityMode = source.SearchVisibilityMode ?? DesktopPanel.SearchVisibilityAlways;
+            target.SearchVisibilityMode = source.SearchVisibilityMode ?? DesktopPanel.SearchVisibilityButton;
+            target.SearchVisibleOnlyExpanded = DesktopPanel.NormalizeSearchVisibleOnlyExpanded(
+                source.SearchVisibleOnlyExpanded,
+                source.SearchVisibilityMode);
+            target.HeaderContentAlignment = DesktopPanel.NormalizeHeaderContentAlignment(source.HeaderContentAlignment);
             target.PinnedItems = source.PinnedItems?.ToList() ?? new List<string>();
             target.Tabs = source.Tabs?.Select(ClonePanelTabData).ToList();
             target.ActiveTabIndex = source.ActiveTabIndex;

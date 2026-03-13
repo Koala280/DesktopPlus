@@ -52,7 +52,11 @@ namespace DesktopPlus
                 BodyShadow.Opacity = MainWindow.ResolveBodyShadowOpacity(appearance);
             }
 
-            HeaderBar.Background = MainWindow.BuildPanelHeaderBrush(appearance);
+            HeaderBar.Background = System.Windows.Media.Brushes.Transparent;
+            if (HeaderBackgroundLayer != null)
+            {
+                HeaderBackgroundLayer.Background = MainWindow.BuildPanelHeaderBrush(appearance);
+            }
             UpdateTabBarFade(appearance);
             if (ContentFrame != null)
             {

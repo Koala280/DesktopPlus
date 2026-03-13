@@ -24,19 +24,24 @@ namespace DesktopPlus
         public double baseTopPosition;
         private Point _dragStartPoint;
         public static bool StartCollapsedByDefault = true;
-        public static bool ExpandOnHover = false;
+        public static bool ExpandOnHover = true;
         public string assignedPresetName = "";
-        public bool showHiddenItems = false;
+        public bool showHiddenItems = true;
         public bool showParentNavigationItem = true;
-        public string iconViewParentNavigationMode = IconParentNavigationModeItem;
-        public bool showFileExtensions = true;
-        public bool expandOnHover = false;
+        public string iconViewParentNavigationMode = IconParentNavigationModeHeader;
+        public bool showFileExtensions = false;
+        public bool expandOnHover = true;
         public bool openFoldersExternally = false;
         public bool openItemsOnSingleClick = false;
+        public string collapseBehavior = CollapseBehaviorBoth;
         public bool showSettingsButton = true;
+        public string settingsButtonVisibilityMode = SettingsButtonVisibilityExpandedOnly;
+        public bool showCloseButton = true;
         public string defaultFolderPath = "";
         public string movementMode = "titlebar";
-        public string searchVisibilityMode = SearchVisibilityAlways;
+        public string searchVisibilityMode = SearchVisibilityButton;
+        public bool searchVisibleOnlyExpanded = true;
+        public string headerContentAlignment = HeaderContentAlignmentLeft;
         public string viewMode = ViewModeIcons;
         public bool showMetadataType = true;
         public bool showMetadataSize = true;
@@ -69,6 +74,7 @@ namespace DesktopPlus
         private bool _isDragMoveActive = false;
         private bool _isManualResizeActive = false;
         private bool _wrapPanelWidthUpdateQueued = false;
+        private bool _isUpdatingHeaderIdentityLayout = false;
         private long _panelZOrderToken = Interlocked.Increment(ref _nextPanelZOrderToken);
         private UIElement? _dragHandle;
         private Point _dragStartMouseScreen;
@@ -103,10 +109,21 @@ namespace DesktopPlus
         private EventHandler? _headerCornerAnimationHandler;
         private double _headerTopCornerRadius = 14;
         private double _headerBottomCornerRadius = 0;
+        public const string SearchVisibilityField = "field";
         public const string SearchVisibilityAlways = "always";
         public const string SearchVisibilityButton = "button";
         public const string SearchVisibilityExpanded = "expanded"; // legacy
+        public const string SearchVisibilityExpandedOnly = "expandedonly";
         public const string SearchVisibilityHidden = "hidden";
+        public const string SettingsButtonVisibilityAlways = "always";
+        public const string SettingsButtonVisibilityExpandedOnly = "expandedonly";
+        public const string SettingsButtonVisibilityHidden = "hidden";
+        public const string HeaderContentAlignmentLeft = "left";
+        public const string HeaderContentAlignmentCenter = "center";
+        public const string HeaderContentAlignmentRight = "right";
+        public const string CollapseBehaviorDoubleClick = "doubleclick";
+        public const string CollapseBehaviorButton = "button";
+        public const string CollapseBehaviorBoth = "both";
         public const string IconParentNavigationModeHeader = "header";
         public const string IconParentNavigationModeItem = "item";
         public const string IconParentNavigationModeNone = "none";
@@ -152,9 +169,9 @@ namespace DesktopPlus
             MetadataTags,
             MetadataTitle
         };
-        private const double HeaderSearchWidth = 154;
+        private const double HeaderSearchWidth = 128;
         private const double HeaderSearchButtonWidth = 24;
-        private const double HeaderInlineSearchMinimumWidth = 104;
+        private const double HeaderInlineSearchMinimumWidth = 96;
         private const double HeaderSearchSpacerWidth = 8;
         private const double HeaderBackButtonWidth = 24;
         private const int HeaderBackButtonAnimationMs = 220;
@@ -162,7 +179,7 @@ namespace DesktopPlus
         private static readonly Thickness HeaderBackButtonHiddenMargin = new Thickness(0);
         private const double HeaderTitleMinWidth = 96;
         private const double HeaderHorizontalPadding = 24;
-        private const double HeaderCoreFixedWidth = 64; // fixed spacer (8) + collapse (28) + close (28)
+        private const double HeaderCoreFixedWidth = 8; // fixed spacer between header content and trailing actions
         private const int SearchVisibilityAnimationMs = 170;
         private const double BottomAnchorTolerance = 3.0;
         private const double ResizeGripHitSize = 18.0;
@@ -230,6 +247,55 @@ namespace DesktopPlus
             {
                 // Receive handled header clicks too (e.g. from ScrollViewer) so titlebar drag still works.
                 HeaderBar.AddHandler(UIElement.MouseLeftButtonDownEvent, new MouseButtonEventHandler(HeaderBar_MouseLeftButtonDown), true);
+                HeaderBar.SizeChanged += (_, __) =>
+                {
+                    UpdateHeaderBackgroundCutout();
+                    UpdateHeaderIdentityLayout();
+                };
+            }
+            if (HeaderLayoutRoot != null)
+            {
+                HeaderLayoutRoot.SizeChanged += (_, __) => UpdateHeaderIdentityLayout();
+            }
+            if (TabBarScroll != null)
+            {
+                TabBarScroll.SizeChanged += (_, __) => UpdateHeaderIdentityLayout();
+            }
+            if (TabBarPanel != null)
+            {
+                TabBarPanel.SizeChanged += (_, __) =>
+                {
+                    UpdateTabBarOverflowVisuals();
+                    UpdateHeaderBackgroundCutout();
+                };
+            }
+            if (MoveButton != null)
+            {
+                MoveButton.SizeChanged += (_, __) => UpdateHeaderIdentityLayout();
+            }
+            if (SettingsButton != null)
+            {
+                SettingsButton.SizeChanged += (_, __) => UpdateHeaderIdentityLayout();
+            }
+            if (SearchHost != null)
+            {
+                SearchHost.SizeChanged += (_, __) => UpdateHeaderIdentityLayout();
+            }
+            if (SearchSpacer != null)
+            {
+                SearchSpacer.SizeChanged += (_, __) => UpdateHeaderIdentityLayout();
+            }
+            if (CollapseButton != null)
+            {
+                CollapseButton.SizeChanged += (_, __) => UpdateHeaderIdentityLayout();
+            }
+            if (CloseButton != null)
+            {
+                CloseButton.SizeChanged += (_, __) => UpdateHeaderIdentityLayout();
+            }
+            if (HeaderBackButton != null)
+            {
+                HeaderBackButton.SizeChanged += (_, __) => UpdateHeaderIdentityLayout();
             }
             expandedHeight = this.Height;
             collapsedTopPosition = this.Top;
@@ -295,7 +361,10 @@ namespace DesktopPlus
             this.MouseLeave += Window_MouseLeave;
             this.PreviewKeyDown += DesktopPanel_PreviewKeyDown;
             ApplySettingsButtonVisibility();
+            ApplyCloseButtonVisibility();
+            ApplyCollapseBehavior(collapseBehavior);
             ApplySearchVisibility();
+            ApplyHeaderContentAlignment(headerContentAlignment);
             ApplyCollapsedVisualState(collapsed: false, animateCorners: false);
             UpdateDropZoneVisibility();
         }
@@ -582,12 +651,146 @@ namespace DesktopPlus
             double clamped = Math.Max(0, Math.Min(_headerTopCornerRadius, bottomRadius));
             _headerBottomCornerRadius = clamped;
             HeaderBar.CornerRadius = new CornerRadius(_headerTopCornerRadius, _headerTopCornerRadius, clamped, clamped);
+            if (HeaderBackgroundLayer != null)
+            {
+                HeaderBackgroundLayer.CornerRadius = HeaderBar.CornerRadius;
+            }
             if (HeaderShadowHost != null)
             {
                 double outerTop = _headerTopCornerRadius + 2;
                 double outerBottom = clamped + 2;
                 HeaderShadowHost.CornerRadius = new CornerRadius(outerTop, outerTop, outerBottom, outerBottom);
             }
+
+            UpdateHeaderBackgroundCutout();
+        }
+
+        private void UpdateHeaderBackgroundCutout()
+        {
+            if (HeaderBackgroundLayer == null)
+            {
+                return;
+            }
+
+            bool hasMultipleTabs = GetVisibleTabCount() > 1;
+            bool showActiveSelection = hasMultipleTabs && !_isCollapsedVisualState;
+            if (!showActiveSelection ||
+                IsCompactSearchOverlayActive() ||
+                TabBarPanel == null ||
+                HeaderBackgroundLayer.ActualWidth <= 0 ||
+                HeaderBackgroundLayer.ActualHeight <= 0)
+            {
+                HeaderBackgroundLayer.Clip = null;
+                return;
+            }
+
+            var activeTabElement = TabBarPanel.Children
+                .OfType<System.Windows.Controls.Border>()
+                .FirstOrDefault(child => child.Tag is int tag && tag == _activeTabIndex && child.Visibility == Visibility.Visible);
+
+            if (activeTabElement == null ||
+                activeTabElement.ActualWidth <= 0 ||
+                activeTabElement.ActualHeight <= 0 ||
+                PanelChrome == null)
+            {
+                HeaderBackgroundLayer.Clip = null;
+                return;
+            }
+
+            Rect tabBoundsInChrome = activeTabElement.TransformToAncestor(PanelChrome)
+                .TransformBounds(new Rect(0, 0, activeTabElement.ActualWidth, activeTabElement.ActualHeight));
+
+            Rect headerBoundsInChrome = HeaderBackgroundLayer.TransformToAncestor(PanelChrome)
+                .TransformBounds(new Rect(0, 0, HeaderBackgroundLayer.ActualWidth, HeaderBackgroundLayer.ActualHeight));
+
+            Rect tabBounds = new Rect(
+                tabBoundsInChrome.Left - headerBoundsInChrome.Left,
+                tabBoundsInChrome.Top - headerBoundsInChrome.Top,
+                tabBoundsInChrome.Width,
+                tabBoundsInChrome.Height);
+
+            var headerGeometry = CreateCornerRadiusGeometry(
+                new Rect(0, 0, HeaderBackgroundLayer.ActualWidth, HeaderBackgroundLayer.ActualHeight),
+                HeaderBackgroundLayer.CornerRadius);
+
+            var activeTabGeometry = BuildChromeTabShape(tabBounds.Width, tabBounds.Height).CloneCurrentValue();
+            activeTabGeometry.Transform = new TranslateTransform(tabBounds.Left, tabBounds.Top);
+
+            var clippedHeaderGeometry = new CombinedGeometry(GeometryCombineMode.Exclude, headerGeometry, activeTabGeometry);
+            clippedHeaderGeometry.Freeze();
+            HeaderBackgroundLayer.Clip = clippedHeaderGeometry;
+        }
+
+        private static Geometry CreateCornerRadiusGeometry(Rect bounds, CornerRadius radius)
+        {
+            if (bounds.Width <= 0 || bounds.Height <= 0)
+            {
+                return Geometry.Empty;
+            }
+
+            double topLeft = Math.Max(0, Math.Min(Math.Min(bounds.Width / 2, bounds.Height / 2), radius.TopLeft));
+            double topRight = Math.Max(0, Math.Min(Math.Min(bounds.Width / 2, bounds.Height / 2), radius.TopRight));
+            double bottomRight = Math.Max(0, Math.Min(Math.Min(bounds.Width / 2, bounds.Height / 2), radius.BottomRight));
+            double bottomLeft = Math.Max(0, Math.Min(Math.Min(bounds.Width / 2, bounds.Height / 2), radius.BottomLeft));
+
+            var figure = new PathFigure
+            {
+                StartPoint = new Point(bounds.Left + topLeft, bounds.Top),
+                IsClosed = true,
+                IsFilled = true
+            };
+
+            figure.Segments.Add(new LineSegment(new Point(bounds.Right - topRight, bounds.Top), true));
+            if (topRight > 0)
+            {
+                figure.Segments.Add(new ArcSegment(
+                    new Point(bounds.Right, bounds.Top + topRight),
+                    new System.Windows.Size(topRight, topRight),
+                    0,
+                    false,
+                    SweepDirection.Clockwise,
+                    true));
+            }
+
+            figure.Segments.Add(new LineSegment(new Point(bounds.Right, bounds.Bottom - bottomRight), true));
+            if (bottomRight > 0)
+            {
+                figure.Segments.Add(new ArcSegment(
+                    new Point(bounds.Right - bottomRight, bounds.Bottom),
+                    new System.Windows.Size(bottomRight, bottomRight),
+                    0,
+                    false,
+                    SweepDirection.Clockwise,
+                    true));
+            }
+
+            figure.Segments.Add(new LineSegment(new Point(bounds.Left + bottomLeft, bounds.Bottom), true));
+            if (bottomLeft > 0)
+            {
+                figure.Segments.Add(new ArcSegment(
+                    new Point(bounds.Left, bounds.Bottom - bottomLeft),
+                    new System.Windows.Size(bottomLeft, bottomLeft),
+                    0,
+                    false,
+                    SweepDirection.Clockwise,
+                    true));
+            }
+
+            figure.Segments.Add(new LineSegment(new Point(bounds.Left, bounds.Top + topLeft), true));
+            if (topLeft > 0)
+            {
+                figure.Segments.Add(new ArcSegment(
+                    new Point(bounds.Left + topLeft, bounds.Top),
+                    new System.Windows.Size(topLeft, topLeft),
+                    0,
+                    false,
+                    SweepDirection.Clockwise,
+                    true));
+            }
+
+            var geometry = new PathGeometry(new[] { figure });
+            geometry.Freeze();
+            return geometry;
         }
 
         private void AnimateHeaderBottomCorners(double targetBottomRadius, TimeSpan duration, IEasingFunction? easing = null)
@@ -628,7 +831,7 @@ namespace DesktopPlus
             CompositionTarget.Rendering += _headerCornerAnimationHandler;
         }
 
-        private void ApplyCollapsedVisualState(bool collapsed, bool animateCorners, TimeSpan? duration = null)
+        private void ApplyCollapsedVisualState(bool collapsed, bool animateCorners, TimeSpan? duration = null, bool animateSearch = false)
         {
             _isCollapsedVisualState = collapsed;
             ResizeMode = ResizeMode.NoResize;
@@ -645,7 +848,8 @@ namespace DesktopPlus
             {
                 BodyShadowHost.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
             }
-            RebuildTabBar(collapsed);
+            RebuildTabBar(collapsed, animateSearch);
+            ApplySettingsButtonVisibility(animateSearch);
             ApplyHeaderBackButtonVisualState(ShouldShowHeaderBackButtonVisual(), animateCorners, duration);
             UpdateHeaderBottomBorderForCurrentState(collapsed);
 
@@ -1787,6 +1991,11 @@ namespace DesktopPlus
                 return;
             }
 
+            if (!SupportsHeaderDoubleClickCollapse())
+            {
+                return;
+            }
+
             if (ShouldIgnoreHeaderDoubleClick(e.OriginalSource as DependencyObject))
             {
                 return;
@@ -1850,7 +2059,7 @@ namespace DesktopPlus
                     };
                     ContentFrame.BeginAnimation(OpacityProperty, contentFade);
                 }
-                ApplyCollapsedVisualState(collapsed: true, animateCorners: true, duration);
+                ApplyCollapsedVisualState(collapsed: true, animateCorners: true, duration, animateSearch: true);
                 AnimateShadow(expanding: false);
 
                 Action onComplete = () =>
@@ -1868,7 +2077,7 @@ namespace DesktopPlus
                     _isExpandedShiftedByBounds = false;
                     _hasForcedCollapseReturnTop = false;
                     ApplyCollapsedVisualState(collapsed: true, animateCorners: false);
-                    ApplySearchVisibility();
+                    ApplySearchVisibility(animate: false);
                     ClearHoverRestoreState();
                     _isCollapseAnimationRunning = false;
                     ProcessQueuedHoverState();
@@ -1907,7 +2116,7 @@ namespace DesktopPlus
                 _hasForcedCollapseReturnTop = true;
                 _forcedCollapseReturnTop = referenceTop;
 
-                ApplyCollapsedVisualState(collapsed: false, animateCorners: true, duration);
+                ApplyCollapsedVisualState(collapsed: false, animateCorners: true, duration, animateSearch: true);
                 AnimateShadow(expanding: true);
 
                 // Make content visible immediately but transparent, so it fades in WITH the height animation
@@ -1934,7 +2143,7 @@ namespace DesktopPlus
                         baseTopPosition = collapsedTopPosition;
                     }
                     ApplyCollapsedVisualState(collapsed: false, animateCorners: false);
-                    ApplySearchVisibility();
+                    ApplySearchVisibility(animate: false);
                     _isCollapseAnimationRunning = false;
                     ProcessQueuedHoverState();
                     MainWindow.SaveSettings();
@@ -1996,19 +2205,85 @@ namespace DesktopPlus
             {
                 moveBtn.Visibility = mode == "button" ? Visibility.Visible : Visibility.Collapsed;
             }
+
+            ApplySearchVisibility();
         }
 
-        public void ApplySettingsButtonVisibility()
+        public void SetSettingsButtonVisibilityMode(string? mode)
         {
-            var settingsButton = FindName("SettingsButton") as System.Windows.Controls.Button;
-            if (settingsButton != null)
+            settingsButtonVisibilityMode = NormalizeSettingsButtonVisibilityMode(mode, showSettingsButton);
+            showSettingsButton = !string.Equals(settingsButtonVisibilityMode, SettingsButtonVisibilityHidden, StringComparison.OrdinalIgnoreCase);
+            ApplySettingsButtonVisibility();
+        }
+
+        public void ApplySettingsButtonVisibility(bool animate = true)
+        {
+            settingsButtonVisibilityMode = NormalizeSettingsButtonVisibilityMode(settingsButtonVisibilityMode, showSettingsButton);
+            showSettingsButton = !string.Equals(settingsButtonVisibilityMode, SettingsButtonVisibilityHidden, StringComparison.OrdinalIgnoreCase);
+
+            if (SettingsButton != null)
             {
-                settingsButton.Visibility = showSettingsButton ? Visibility.Visible : Visibility.Collapsed;
+                bool show = ShouldShowSettingsButton();
+                ApplyAnimatedWidthAndOpacity(SettingsButton, show, show ? 24 : 0, animate);
             }
+
+            ApplySearchVisibility();
+        }
+
+        public void ApplyCloseButtonVisibility()
+        {
+            if (CloseButton != null)
+            {
+                CloseButton.Visibility = showCloseButton ? Visibility.Visible : Visibility.Collapsed;
+            }
+
+            ApplySearchVisibility();
+        }
+
+        public void ApplyHeaderContentAlignment(string? alignment)
+        {
+            headerContentAlignment = NormalizeHeaderContentAlignment(alignment);
+            System.Windows.HorizontalAlignment resolvedAlignment = ResolveHeaderContentHorizontalAlignment(headerContentAlignment);
+            TextAlignment resolvedTextAlignment = ResolveHeaderContentTextAlignment(headerContentAlignment);
+
+            if (PanelTitle != null)
+            {
+                PanelTitle.HorizontalAlignment = resolvedAlignment;
+                PanelTitle.TextAlignment = resolvedTextAlignment;
+            }
+
+            if (TabBarPanel != null)
+            {
+                TabBarPanel.HorizontalAlignment = resolvedAlignment;
+                TabBarPanel.Margin = string.Equals(headerContentAlignment, HeaderContentAlignmentLeft, StringComparison.OrdinalIgnoreCase)
+                    ? new Thickness(-2, 0, 0, 0)
+                    : new Thickness(0);
+            }
+
+            UpdateHeaderIdentityLayout();
+            UpdateHeaderBackgroundCutout();
+        }
+
+        public void ApplyCollapseBehavior(string? mode)
+        {
+            collapseBehavior = NormalizeCollapseBehavior(mode);
+            if (CollapseButton != null)
+            {
+                CollapseButton.Visibility = SupportsCollapseButton() ? Visibility.Visible : Visibility.Collapsed;
+            }
+
+            ApplySearchVisibility();
         }
 
         public static string NormalizeSearchVisibilityMode(string? mode)
         {
+            if (string.Equals(mode, SearchVisibilityField, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(mode, SearchVisibilityAlways, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(mode, SearchVisibilityExpandedOnly, StringComparison.OrdinalIgnoreCase))
+            {
+                return SearchVisibilityField;
+            }
+
             if (string.Equals(mode, SearchVisibilityButton, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(mode, SearchVisibilityExpanded, StringComparison.OrdinalIgnoreCase))
             {
@@ -2020,7 +2295,301 @@ namespace DesktopPlus
                 return SearchVisibilityHidden;
             }
 
-            return SearchVisibilityAlways;
+            return SearchVisibilityField;
+        }
+
+        public static bool NormalizeSearchVisibleOnlyExpanded(bool? onlyExpanded, string? legacyMode = null)
+        {
+            if (onlyExpanded.HasValue)
+            {
+                return onlyExpanded.Value;
+            }
+
+            return string.Equals(legacyMode, SearchVisibilityExpandedOnly, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static string NormalizeSettingsButtonVisibilityMode(string? mode, bool legacyShowSettingsButton = true)
+        {
+            if (string.Equals(mode, SettingsButtonVisibilityExpandedOnly, StringComparison.OrdinalIgnoreCase))
+            {
+                return SettingsButtonVisibilityExpandedOnly;
+            }
+
+            if (string.Equals(mode, SettingsButtonVisibilityHidden, StringComparison.OrdinalIgnoreCase))
+            {
+                return SettingsButtonVisibilityHidden;
+            }
+
+            if (string.Equals(mode, SettingsButtonVisibilityAlways, StringComparison.OrdinalIgnoreCase))
+            {
+                return SettingsButtonVisibilityAlways;
+            }
+
+            return legacyShowSettingsButton ? SettingsButtonVisibilityAlways : SettingsButtonVisibilityHidden;
+        }
+
+        public static string NormalizeHeaderContentAlignment(string? alignment)
+        {
+            if (string.Equals(alignment, HeaderContentAlignmentCenter, StringComparison.OrdinalIgnoreCase))
+            {
+                return HeaderContentAlignmentCenter;
+            }
+
+            if (string.Equals(alignment, HeaderContentAlignmentRight, StringComparison.OrdinalIgnoreCase))
+            {
+                return HeaderContentAlignmentRight;
+            }
+
+            return HeaderContentAlignmentLeft;
+        }
+
+        public static string NormalizeCollapseBehavior(string? mode)
+        {
+            if (string.Equals(mode, CollapseBehaviorDoubleClick, StringComparison.OrdinalIgnoreCase))
+            {
+                return CollapseBehaviorDoubleClick;
+            }
+
+            if (string.Equals(mode, CollapseBehaviorButton, StringComparison.OrdinalIgnoreCase))
+            {
+                return CollapseBehaviorButton;
+            }
+
+            return CollapseBehaviorBoth;
+        }
+
+        private bool SupportsHeaderDoubleClickCollapse()
+        {
+            return string.Equals(collapseBehavior, CollapseBehaviorDoubleClick, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(collapseBehavior, CollapseBehaviorBoth, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool SupportsCollapseButton()
+        {
+            return string.Equals(collapseBehavior, CollapseBehaviorButton, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(collapseBehavior, CollapseBehaviorBoth, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool ShouldShowSettingsButton()
+        {
+            string normalized = NormalizeSettingsButtonVisibilityMode(settingsButtonVisibilityMode, showSettingsButton);
+            if (string.Equals(normalized, SettingsButtonVisibilityHidden, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (string.Equals(normalized, SettingsButtonVisibilityExpandedOnly, StringComparison.OrdinalIgnoreCase))
+            {
+                return !_isCollapsedVisualState;
+            }
+
+            return true;
+        }
+
+        private static System.Windows.HorizontalAlignment ResolveHeaderContentHorizontalAlignment(string alignment)
+        {
+            if (string.Equals(alignment, HeaderContentAlignmentCenter, StringComparison.OrdinalIgnoreCase))
+            {
+                return System.Windows.HorizontalAlignment.Center;
+            }
+
+            if (string.Equals(alignment, HeaderContentAlignmentRight, StringComparison.OrdinalIgnoreCase))
+            {
+                return System.Windows.HorizontalAlignment.Right;
+            }
+
+            return System.Windows.HorizontalAlignment.Left;
+        }
+
+        private static TextAlignment ResolveHeaderContentTextAlignment(string alignment)
+        {
+            if (string.Equals(alignment, HeaderContentAlignmentCenter, StringComparison.OrdinalIgnoreCase))
+            {
+                return TextAlignment.Center;
+            }
+
+            if (string.Equals(alignment, HeaderContentAlignmentRight, StringComparison.OrdinalIgnoreCase))
+            {
+                return TextAlignment.Right;
+            }
+
+            return TextAlignment.Left;
+        }
+
+        private void UpdateHeaderIdentityLayout()
+        {
+            if (_isUpdatingHeaderIdentityLayout ||
+                HeaderIdentityViewport == null ||
+                HeaderLayoutRoot == null)
+            {
+                return;
+            }
+
+            if (!TryGetHeaderIdentityLayoutMetrics(
+                    GetReservedColumnWidth(SearchColumn),
+                    GetReservedColumnWidth(SearchSpacerColumn),
+                    out double targetWidth,
+                    out Thickness targetMargin,
+                    out System.Windows.HorizontalAlignment horizontalAlignment))
+            {
+                return;
+            }
+
+            _isUpdatingHeaderIdentityLayout = true;
+            try
+            {
+                HeaderIdentityViewport.HorizontalAlignment = horizontalAlignment;
+                HeaderIdentityViewport.Margin = targetMargin;
+                HeaderIdentityViewport.Width = targetWidth;
+
+                if (PanelTitle != null)
+                {
+                    PanelTitle.MaxWidth = Math.Max(0, targetWidth);
+                }
+
+                UpdateAdaptiveTabItemWidths();
+                UpdateTabBarOverflowVisuals();
+                UpdateHeaderBackgroundCutout();
+            }
+            finally
+            {
+                _isUpdatingHeaderIdentityLayout = false;
+            }
+        }
+
+        private bool TryGetHeaderIdentityLayoutMetrics(
+            double reservedSearchWidth,
+            double reservedSearchSpacerWidth,
+            out double targetWidth,
+            out Thickness targetMargin,
+            out System.Windows.HorizontalAlignment horizontalAlignment)
+        {
+            targetWidth = 0;
+            targetMargin = new Thickness(0);
+            horizontalAlignment = System.Windows.HorizontalAlignment.Left;
+
+            if (HeaderLayoutRoot == null)
+            {
+                return false;
+            }
+
+            double layoutWidth = HeaderLayoutRoot.ActualWidth;
+            if (layoutWidth <= 1)
+            {
+                return false;
+            }
+
+            double leftUtilityWidth =
+                GetVisibleElementWidth(MoveButton, 34) +
+                GetReservedSettingsButtonWidth() +
+                GetReservedHeaderBackButtonWidth();
+
+            if (leftUtilityWidth > 0.5)
+            {
+                leftUtilityWidth += 8;
+            }
+
+            double rightUtilityWidth =
+                Math.Max(0, reservedSearchWidth) +
+                Math.Max(0, reservedSearchSpacerWidth) +
+                GetVisibleElementWidth(CollapseButton, 28) +
+                GetVisibleElementWidth(CloseButton, 28);
+
+            string normalizedAlignment = NormalizeHeaderContentAlignment(headerContentAlignment);
+            if (string.Equals(normalizedAlignment, HeaderContentAlignmentCenter, StringComparison.OrdinalIgnoreCase))
+            {
+                double sideReservation = Math.Max(leftUtilityWidth, rightUtilityWidth);
+                targetWidth = Math.Max(0, layoutWidth - (sideReservation * 2));
+                horizontalAlignment = System.Windows.HorizontalAlignment.Center;
+                return true;
+            }
+
+            targetWidth = Math.Max(0, layoutWidth - leftUtilityWidth - rightUtilityWidth);
+            targetMargin = new Thickness(leftUtilityWidth, 0, rightUtilityWidth, 0);
+            horizontalAlignment = ResolveHeaderContentHorizontalAlignment(normalizedAlignment);
+            return true;
+        }
+
+        private void UpdateAdaptiveTabItemWidths()
+        {
+            if (TabBarScroll == null || TabBarPanel == null)
+            {
+                return;
+            }
+
+            var tabBorders = TabBarPanel.Children
+                .OfType<System.Windows.Controls.Border>()
+                .Where(border => border.Tag is int)
+                .ToList();
+
+            if (tabBorders.Count == 0)
+            {
+                return;
+            }
+
+            const double BaseMinTabWidth = 120;
+            const double MinimumFilledTabWidth = 132;
+
+            double availableWidth = TabBarScroll.ActualWidth;
+            bool shouldFillTabs =
+                string.Equals(headerContentAlignment, HeaderContentAlignmentCenter, StringComparison.OrdinalIgnoreCase) &&
+                availableWidth > 1;
+
+            double filledTabWidth = shouldFillTabs ? availableWidth / tabBorders.Count : 0;
+            bool canFillTabs = shouldFillTabs && filledTabWidth >= MinimumFilledTabWidth;
+
+            foreach (var border in tabBorders)
+            {
+                border.MinWidth = BaseMinTabWidth;
+                border.Width = canFillTabs ? filledTabWidth : double.NaN;
+            }
+        }
+
+        private double GetReservedSettingsButtonWidth()
+        {
+            if (SettingsButton == null)
+            {
+                return 0;
+            }
+
+            bool shouldReserve = SettingsButton.Visibility == Visibility.Visible || ShouldShowSettingsButton();
+            if (!shouldReserve)
+            {
+                return 0;
+            }
+
+            return 24 + SettingsButton.Margin.Left + SettingsButton.Margin.Right;
+        }
+
+        private double GetReservedHeaderBackButtonWidth()
+        {
+            if (HeaderBackButton == null)
+            {
+                return 0;
+            }
+
+            bool shouldReserve = HeaderBackButton.Visibility == Visibility.Visible || ShouldShowHeaderBackButtonVisual();
+            if (!shouldReserve)
+            {
+                return 0;
+            }
+
+            return HeaderBackButtonWidth + HeaderBackButton.Margin.Left + HeaderBackButton.Margin.Right;
+        }
+
+        private static double GetReservedColumnWidth(System.Windows.Controls.ColumnDefinition? column)
+        {
+            if (column == null)
+            {
+                return 0;
+            }
+
+            if (column.Width.IsAbsolute)
+            {
+                return Math.Max(0, column.Width.Value);
+            }
+
+            return Math.Max(0, column.ActualWidth);
         }
 
         public static string NormalizeViewMode(string? mode)
@@ -2323,9 +2892,20 @@ namespace DesktopPlus
 
         public void SetSearchVisibilityMode(string? mode)
         {
+            SetSearchVisibility(mode, searchVisibleOnlyExpanded);
+        }
+
+        public void SetSearchVisibleOnlyExpanded(bool onlyExpanded)
+        {
+            SetSearchVisibility(searchVisibilityMode, onlyExpanded);
+        }
+
+        public void SetSearchVisibility(string? mode, bool onlyExpanded)
+        {
             string normalized = NormalizeSearchVisibilityMode(mode);
             bool changed = !string.Equals(searchVisibilityMode, normalized, StringComparison.OrdinalIgnoreCase);
             searchVisibilityMode = normalized;
+            searchVisibleOnlyExpanded = onlyExpanded;
 
             if (changed && string.Equals(searchVisibilityMode, SearchVisibilityHidden, StringComparison.OrdinalIgnoreCase))
             {
@@ -2339,7 +2919,17 @@ namespace DesktopPlus
         private bool ShouldShowSearch()
         {
             string normalized = NormalizeSearchVisibilityMode(searchVisibilityMode);
-            return !string.Equals(normalized, SearchVisibilityHidden, StringComparison.OrdinalIgnoreCase);
+            if (string.Equals(normalized, SearchVisibilityHidden, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (searchVisibleOnlyExpanded)
+            {
+                return !_isCollapsedVisualState;
+            }
+
+            return true;
         }
 
         public bool CanDisplayInlineSearchFieldInCurrentHeader()
@@ -2372,33 +2962,55 @@ namespace DesktopPlus
             return _isSearchExpandedFromCompactButton;
         }
 
+        private bool IsCompactSearchOverlayActive()
+        {
+            if (_isCollapsedVisualState || !ShouldShowSearch())
+            {
+                return false;
+            }
+
+            string normalizedMode = NormalizeSearchVisibilityMode(searchVisibilityMode);
+            return ShouldUseCompactSearchPresentation(normalizedMode) &&
+                   ShouldShowExpandedSearchFieldInCompactMode();
+        }
+
+        private void UpdateSearchHostLayout(
+            bool overlayHeaderIdentity,
+            Thickness overlayMargin,
+            System.Windows.HorizontalAlignment overlayAlignment)
+        {
+            if (SearchHost == null)
+            {
+                return;
+            }
+
+            System.Windows.Controls.Grid.SetColumn(SearchHost, overlayHeaderIdentity ? 0 : 5);
+            System.Windows.Controls.Grid.SetColumnSpan(SearchHost, overlayHeaderIdentity ? 9 : 1);
+            SearchHost.Margin = overlayHeaderIdentity ? overlayMargin : new Thickness(0);
+            SearchHost.HorizontalAlignment = overlayHeaderIdentity ? overlayAlignment : System.Windows.HorizontalAlignment.Left;
+        }
+
         private void ApplySearchVisibility(bool animate = true)
         {
             string normalizedMode = NormalizeSearchVisibilityMode(searchVisibilityMode);
             bool showSearch = ShouldShowSearch();
             bool shouldAnimate = animate && IsLoaded;
             bool useCompactPresentation = showSearch && ShouldUseCompactSearchPresentation(normalizedMode);
-            bool showExpandedField = useCompactPresentation && ShouldShowExpandedSearchFieldInCompactMode();
+            bool showExpandedField = useCompactPresentation &&
+                                     !_isCollapsedVisualState &&
+                                     ShouldShowExpandedSearchFieldInCompactMode();
             bool showSearchField = showSearch && (!useCompactPresentation || showExpandedField);
             bool showSearchButton = showSearch && useCompactPresentation && !showExpandedField;
             bool hideHeaderIdentity = showExpandedField;
             double targetSearchWidth = 0;
             double targetButtonWidth = 0;
             double targetSpacerWidth = 0;
+            Thickness searchHostMargin = new Thickness(0);
+            System.Windows.HorizontalAlignment searchHostAlignment = System.Windows.HorizontalAlignment.Left;
 
             if (!useCompactPresentation)
             {
                 _isSearchExpandedFromCompactButton = false;
-            }
-
-            if (SearchColumn != null)
-            {
-                SearchColumn.Width = GridLength.Auto;
-            }
-
-            if (SearchSpacerColumn != null)
-            {
-                SearchSpacerColumn.Width = GridLength.Auto;
             }
 
             if (SearchContainer == null || SearchCompactButton == null || SearchSpacer == null)
@@ -2408,10 +3020,24 @@ namespace DesktopPlus
 
             if (showSearchField)
             {
-                GetAdaptiveHeaderSearchWidths(
-                    reserveTitleWidth: !hideHeaderIdentity,
-                    out targetSearchWidth,
-                    out targetSpacerWidth);
+                if (hideHeaderIdentity &&
+                    TryGetHeaderIdentityLayoutMetrics(
+                        reservedSearchWidth: 0,
+                        reservedSearchSpacerWidth: HeaderSearchSpacerWidth,
+                        out double overlayWidth,
+                        out searchHostMargin,
+                        out searchHostAlignment))
+                {
+                    targetSearchWidth = overlayWidth;
+                    targetSpacerWidth = HeaderSearchSpacerWidth;
+                }
+                else
+                {
+                    GetAdaptiveHeaderSearchWidths(
+                        reserveTitleWidth: !hideHeaderIdentity,
+                        out targetSearchWidth,
+                        out targetSpacerWidth);
+                }
             }
             else if (showSearchButton)
             {
@@ -2419,11 +3045,54 @@ namespace DesktopPlus
                 targetSpacerWidth = HeaderSearchSpacerWidth;
             }
 
+            UpdateSearchHostLayout(hideHeaderIdentity, searchHostMargin, searchHostAlignment);
+
+            if (SearchColumn != null)
+            {
+                double reservedSearchWidth = hideHeaderIdentity
+                    ? 0
+                    : Math.Max(targetSearchWidth, targetButtonWidth);
+                SearchColumn.Width = new GridLength(reservedSearchWidth, GridUnitType.Pixel);
+            }
+
+            if (SearchSpacerColumn != null)
+            {
+                SearchSpacerColumn.Width = new GridLength(targetSpacerWidth, GridUnitType.Pixel);
+            }
+
             ApplyAnimatedWidthAndOpacity(SearchContainer, showSearchField, targetSearchWidth, shouldAnimate);
             ApplyAnimatedWidthAndOpacity(SearchCompactButton, showSearchButton, targetButtonWidth, shouldAnimate);
             ApplyAnimatedWidth(SearchSpacer, showSearchField || showSearchButton, targetSpacerWidth, shouldAnimate);
             ApplyAnimatedOpacity(PanelTitle, !hideHeaderIdentity, shouldAnimate, 0.95);
             ApplyAnimatedOpacity(TabBarContainer, !hideHeaderIdentity, shouldAnimate, 1.0);
+            if (HeaderIdentityViewport != null)
+            {
+                HeaderIdentityViewport.IsHitTestVisible = !hideHeaderIdentity;
+            }
+            UpdateHeaderIdentityLayout();
+        }
+
+        private void UpdateTabBarOverflowVisuals()
+        {
+            if (TabBarFadeRight == null)
+            {
+                return;
+            }
+
+            if (TabBarContainer == null ||
+                TabBarContainer.Visibility != Visibility.Visible ||
+                TabBarScroll == null ||
+                TabBarPanel == null)
+            {
+                TabBarFadeRight.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            double viewportWidth = TabBarScroll.ViewportWidth > 0
+                ? TabBarScroll.ViewportWidth
+                : TabBarScroll.ActualWidth;
+            bool hasOverflow = viewportWidth > 1 && TabBarPanel.ActualWidth > viewportWidth + 1;
+            TabBarFadeRight.Visibility = hasOverflow ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void GetAdaptiveHeaderSearchWidths(bool reserveTitleWidth, out double searchWidth, out double spacerWidth)
@@ -2460,6 +3129,8 @@ namespace DesktopPlus
             double reservedWidth = HeaderHorizontalPadding + HeaderCoreFixedWidth;
             reservedWidth += GetVisibleElementWidth(MoveButton, 34);
             reservedWidth += GetVisibleElementWidth(SettingsButton, 24);
+            reservedWidth += GetVisibleElementWidth(CollapseButton, 28);
+            reservedWidth += GetVisibleElementWidth(CloseButton, 28);
             reservedWidth += GetVisibleElementWidth(HeaderBackButton, 32);
 
             if (reserveTitleWidth)
@@ -2740,6 +3411,11 @@ namespace DesktopPlus
 
         private void Collapse_Click(object sender, RoutedEventArgs e)
         {
+            if (!SupportsCollapseButton())
+            {
+                return;
+            }
+
             ToggleCollapseAnimated();
         }
 

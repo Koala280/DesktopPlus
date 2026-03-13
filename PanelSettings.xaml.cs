@@ -63,19 +63,24 @@ namespace DesktopPlus
             };
             FileExtensionsToggle.Checked += (_, __) => TryAutoApplySettings();
             FileExtensionsToggle.Unchecked += (_, __) => TryAutoApplySettings();
-            SettingsButtonToggle.Checked += (_, __) => TryAutoApplySettings();
-            SettingsButtonToggle.Unchecked += (_, __) => TryAutoApplySettings();
+            CloseButtonToggle.Checked += (_, __) => TryAutoApplySettings();
+            CloseButtonToggle.Unchecked += (_, __) => TryAutoApplySettings();
             EmptyRecycleBinToggle.Checked += (_, __) => TryAutoApplySettings();
             EmptyRecycleBinToggle.Unchecked += (_, __) => TryAutoApplySettings();
 
             FolderActionSelect.SelectionChanged += (_, __) => TryAutoApplySettings();
             OpenClickBehaviorSelect.SelectionChanged += (_, __) => TryAutoApplySettings();
             MovementModeSelect.SelectionChanged += (_, __) => TryAutoApplySettings();
+            CollapseBehaviorSelect.SelectionChanged += (_, __) => TryAutoApplySettings();
+            SettingsVisibilitySelect.SelectionChanged += (_, __) => TryAutoApplySettings();
             SearchVisibilitySelect.SelectionChanged += (_, __) =>
             {
                 UpdateSearchVisibilityOptions();
                 TryAutoApplySettings();
             };
+            SearchExpandedOnlyToggle.Checked += (_, __) => TryAutoApplySettings();
+            SearchExpandedOnlyToggle.Unchecked += (_, __) => TryAutoApplySettings();
+            HeaderAlignmentSelect.SelectionChanged += (_, __) => TryAutoApplySettings();
             ViewModeSelect.SelectionChanged += (_, __) =>
             {
                 UpdateParentNavigationOptionsVisibility();
@@ -202,12 +207,16 @@ namespace DesktopPlus
             HiddenToggle.IsChecked = _panel.showHiddenItems;
             ParentNavigationToggle.IsChecked = _panel.showParentNavigationItem;
             FileExtensionsToggle.IsChecked = _panel.showFileExtensions;
-            SettingsButtonToggle.IsChecked = _panel.showSettingsButton;
+            CloseButtonToggle.IsChecked = _panel.showCloseButton;
             EmptyRecycleBinToggle.IsChecked = _panel.showEmptyRecycleBinButton;
             FolderActionSelect.SelectedIndex = _panel.openFoldersExternally ? 1 : 0;
             SetOpenClickBehaviorSelection(_panel.openItemsOnSingleClick);
             SetMovementModeSelection(_panel.movementMode);
+            SetCollapseBehaviorSelection(_panel.collapseBehavior);
+            SetSettingsVisibilitySelection(_panel.settingsButtonVisibilityMode, _panel.showSettingsButton);
             SetSearchVisibilitySelection(_panel.searchVisibilityMode);
+            SearchExpandedOnlyToggle.IsChecked = _panel.searchVisibleOnlyExpanded;
+            SetHeaderAlignmentSelection(_panel.headerContentAlignment);
             SetViewModeSelection(_panel.viewMode);
             SetIconParentNavigationModeSelection(_panel.iconViewParentNavigationMode, _panel.showParentNavigationItem);
             _detailColumnsState = _panel.CreateDetailColumnSelectionState();
@@ -227,12 +236,18 @@ namespace DesktopPlus
             HiddenToggle.IsChecked = _layout.PanelDefaultShowHidden;
             ParentNavigationToggle.IsChecked = _layout.PanelDefaultShowParentNavigationItem;
             FileExtensionsToggle.IsChecked = _layout.PanelDefaultShowFileExtensions;
-            SettingsButtonToggle.IsChecked = _layout.PanelDefaultShowSettingsButton;
+            CloseButtonToggle.IsChecked = _layout.PanelDefaultShowCloseButton;
             EmptyRecycleBinToggle.IsChecked = _layout.PanelDefaultShowEmptyRecycleBinButton;
             FolderActionSelect.SelectedIndex = _layout.PanelDefaultOpenFoldersExternally ? 1 : 0;
             SetOpenClickBehaviorSelection(_layout.PanelDefaultOpenItemsOnSingleClick);
             SetMovementModeSelection(_layout.PanelDefaultMovementMode);
+            SetCollapseBehaviorSelection(_layout.PanelDefaultCollapseBehavior);
+            SetSettingsVisibilitySelection(_layout.PanelDefaultSettingsButtonVisibilityMode, _layout.PanelDefaultShowSettingsButton);
             SetSearchVisibilitySelection(_layout.PanelDefaultSearchVisibilityMode);
+            SearchExpandedOnlyToggle.IsChecked = DesktopPanel.NormalizeSearchVisibleOnlyExpanded(
+                _layout.PanelDefaultSearchVisibleOnlyExpanded,
+                _layout.PanelDefaultSearchVisibilityMode);
+            SetHeaderAlignmentSelection(_layout.PanelDefaultHeaderContentAlignment);
             SetViewModeSelection(_layout.PanelDefaultViewMode);
             _detailColumnsState = new DetailColumnSelectionState
             {
@@ -295,6 +310,60 @@ namespace DesktopPlus
             }
 
             UpdateSearchVisibilityOptions();
+        }
+
+        private void SetCollapseBehaviorSelection(string? mode)
+        {
+            string normalized = DesktopPanel.NormalizeCollapseBehavior(mode);
+            foreach (ComboBoxItem item in CollapseBehaviorSelect.Items)
+            {
+                if (string.Equals(item.Tag?.ToString(), normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    CollapseBehaviorSelect.SelectedItem = item;
+                    break;
+                }
+            }
+
+            if (CollapseBehaviorSelect.SelectedItem == null)
+            {
+                CollapseBehaviorSelect.SelectedIndex = 0;
+            }
+        }
+
+        private void SetSettingsVisibilitySelection(string? mode, bool legacyShowSettingsButton = true)
+        {
+            string normalized = DesktopPanel.NormalizeSettingsButtonVisibilityMode(mode, legacyShowSettingsButton);
+            foreach (ComboBoxItem item in SettingsVisibilitySelect.Items)
+            {
+                if (string.Equals(item.Tag?.ToString(), normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    SettingsVisibilitySelect.SelectedItem = item;
+                    break;
+                }
+            }
+
+            if (SettingsVisibilitySelect.SelectedItem == null)
+            {
+                SettingsVisibilitySelect.SelectedIndex = 0;
+            }
+        }
+
+        private void SetHeaderAlignmentSelection(string? alignment)
+        {
+            string normalized = DesktopPanel.NormalizeHeaderContentAlignment(alignment);
+            foreach (ComboBoxItem item in HeaderAlignmentSelect.Items)
+            {
+                if (string.Equals(item.Tag?.ToString(), normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    HeaderAlignmentSelect.SelectedItem = item;
+                    break;
+                }
+            }
+
+            if (HeaderAlignmentSelect.SelectedItem == null)
+            {
+                HeaderAlignmentSelect.SelectedIndex = 0;
+            }
         }
 
         private void Panel_SizeChanged(object? sender, SizeChangedEventArgs e)
@@ -494,7 +563,7 @@ namespace DesktopPlus
             {
                 string storedMode = _panel != null
                     ? _panel.iconViewParentNavigationMode
-                    : _layout?.PanelDefaultIconViewParentNavigationMode ?? DesktopPanel.IconParentNavigationModeItem;
+                    : _layout?.PanelDefaultIconViewParentNavigationMode ?? DesktopPanel.IconParentNavigationModeHeader;
                 bool storedShowParentNavigation = _panel != null
                     ? _panel.showParentNavigationItem
                     : _layout?.PanelDefaultShowParentNavigationItem ?? true;
@@ -660,8 +729,15 @@ namespace DesktopPlus
             if (Application.Current?.MainWindow is MainWindow mainWindow)
             {
                 string movementMode = (MovementModeSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "titlebar";
+                string collapseBehavior = (CollapseBehaviorSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString()
+                    ?? DesktopPanel.CollapseBehaviorBoth;
+                string settingsButtonVisibilityMode = (SettingsVisibilitySelect.SelectedItem as ComboBoxItem)?.Tag?.ToString()
+                    ?? DesktopPanel.SettingsButtonVisibilityExpandedOnly;
                 string searchVisibilityMode = (SearchVisibilitySelect.SelectedItem as ComboBoxItem)?.Tag?.ToString()
-                    ?? DesktopPanel.SearchVisibilityAlways;
+                    ?? DesktopPanel.SearchVisibilityButton;
+                bool searchVisibleOnlyExpanded = SearchExpandedOnlyToggle.IsChecked == true;
+                string headerContentAlignment = (HeaderAlignmentSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString()
+                    ?? DesktopPanel.HeaderContentAlignmentLeft;
                 string viewMode = (ViewModeSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString()
                     ?? DesktopPanel.ViewModeIcons;
                 bool showParentNavigationItem = GetSelectedShowParentNavigationItem();
@@ -679,9 +755,13 @@ namespace DesktopPlus
                         (OpenClickBehaviorSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString(),
                         "single",
                         StringComparison.OrdinalIgnoreCase),
-                    showSettingsButton: SettingsButtonToggle.IsChecked != false,
+                    collapseBehavior: collapseBehavior,
+                    settingsButtonVisibilityMode: settingsButtonVisibilityMode,
+                    showCloseButton: CloseButtonToggle.IsChecked != false,
                     movementMode: movementMode,
                     searchVisibilityMode: searchVisibilityMode,
+                    searchVisibleOnlyExpanded: searchVisibleOnlyExpanded,
+                    headerContentAlignment: headerContentAlignment,
                     viewMode: viewMode,
                     showMetadataType: _detailColumnsState.ShowType,
                     showMetadataSize: _detailColumnsState.ShowSize,
@@ -743,9 +823,11 @@ namespace DesktopPlus
             _panel.showParentNavigationItem = selectedShowParentNavigationItem;
             _panel.iconViewParentNavigationMode = selectedIconParentNavigationMode;
             _panel.showFileExtensions = FileExtensionsToggle.IsChecked != false;
-            _panel.showSettingsButton = SettingsButtonToggle.IsChecked != false;
+            _panel.showCloseButton = CloseButtonToggle.IsChecked != false;
             _panel.showEmptyRecycleBinButton = EmptyRecycleBinToggle.IsChecked != false;
-            _panel.ApplySettingsButtonVisibility();
+            _panel.SetSettingsButtonVisibilityMode((SettingsVisibilitySelect.SelectedItem as ComboBoxItem)?.Tag?.ToString());
+            _panel.ApplyCollapseBehavior((CollapseBehaviorSelect.SelectedItem as ComboBoxItem)?.Tag?.ToString());
+            _panel.ApplyCloseButtonVisibility();
             _panel.UpdateEmptyRecycleBinButtonVisibility();
             _panel.openFoldersExternally = FolderActionSelect.SelectedIndex == 1;
             _panel.openItemsOnSingleClick = string.Equals(
@@ -760,7 +842,12 @@ namespace DesktopPlus
 
             if (SearchVisibilitySelect.SelectedItem is ComboBoxItem searchVisibilityItem)
             {
-                _panel.SetSearchVisibilityMode(searchVisibilityItem.Tag?.ToString());
+                _panel.SetSearchVisibility(searchVisibilityItem.Tag?.ToString(), SearchExpandedOnlyToggle.IsChecked == true);
+            }
+
+            if (HeaderAlignmentSelect.SelectedItem is ComboBoxItem headerAlignmentItem)
+            {
+                _panel.ApplyHeaderContentAlignment(headerAlignmentItem.Tag?.ToString());
             }
 
             if (ViewModeSelect.SelectedItem is ComboBoxItem viewModeItem)
@@ -848,13 +935,16 @@ namespace DesktopPlus
                 _panel.iconViewParentNavigationMode,
                 _panel.showParentNavigationItem);
             newPanel.showFileExtensions = _panel.showFileExtensions;
-            newPanel.showSettingsButton = _panel.showSettingsButton;
+            newPanel.SetSettingsButtonVisibilityMode(_panel.settingsButtonVisibilityMode);
+            newPanel.showCloseButton = _panel.showCloseButton;
             newPanel.showEmptyRecycleBinButton = _panel.showEmptyRecycleBinButton;
-            newPanel.ApplySettingsButtonVisibility();
+            newPanel.ApplyCollapseBehavior(_panel.collapseBehavior);
+            newPanel.ApplyCloseButtonVisibility();
             newPanel.openFoldersExternally = _panel.openFoldersExternally;
             newPanel.openItemsOnSingleClick = _panel.openItemsOnSingleClick;
             newPanel.ApplyMovementMode(_panel.movementMode);
-            newPanel.SetSearchVisibilityMode(_panel.searchVisibilityMode);
+            newPanel.SetSearchVisibility(_panel.searchVisibilityMode, _panel.searchVisibleOnlyExpanded);
+            newPanel.ApplyHeaderContentAlignment(_panel.headerContentAlignment);
             newPanel.ApplyViewSettings(
                 _panel.viewMode,
                 _panel.showMetadataType,
