@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-03-15
+
+### Fixed
+
+- Layout global panel settings now persist the recycle-bin empty button default correctly instead of resetting it to disabled on save/restart.
+
 ## [1.4.0] - 2026-03-13
 
 ### Added

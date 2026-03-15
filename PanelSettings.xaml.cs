@@ -758,6 +758,7 @@ namespace DesktopPlus
                     collapseBehavior: collapseBehavior,
                     settingsButtonVisibilityMode: settingsButtonVisibilityMode,
                     showCloseButton: CloseButtonToggle.IsChecked != false,
+                    showEmptyRecycleBinButton: EmptyRecycleBinToggle.IsChecked == true,
                     movementMode: movementMode,
                     searchVisibilityMode: searchVisibilityMode,
                     searchVisibleOnlyExpanded: searchVisibleOnlyExpanded,
