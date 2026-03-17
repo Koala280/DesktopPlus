@@ -26,7 +26,7 @@ namespace DesktopPlus
         private readonly List<FileSystemWatcher> _desktopAutoSortWatchers = new List<FileSystemWatcher>();
         private DispatcherTimer? _desktopAutoSortDebounceTimer;
         private bool _desktopAutoSortInProgress;
-        private bool _suspendDesktopAutoSortHandlers;
+        private bool _suspendDesktopAutoSortHandlers = true;
         private string _desktopAutoSortStatusMessage = "";
         private int _newAutoSortPanelIndex;
         private readonly List<Rect> _autoSortOccupiedRects = new List<Rect>();

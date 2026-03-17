@@ -31,6 +31,7 @@ namespace DesktopPlus
 
         private static DispatcherTimer? _saveDebounceTimer;
         private static readonly object _saveTimerLock = new object();
+        private static bool _isLoadingSettings;
 
         private static void ResetSavedFolderPathsToDefaults(IEnumerable<WindowData>? windows)
         {
@@ -79,12 +80,13 @@ namespace DesktopPlus
 
         private void LoadSettings()
         {
-            _hideMainWindowOnStartup = false;
-            LoadCustomLanguagesFromDisk();
-            if (!File.Exists(settingsFilePath)) return;
-
+            _isLoadingSettings = true;
             try
             {
+                _hideMainWindowOnStartup = false;
+                LoadCustomLanguagesFromDisk();
+                if (!File.Exists(settingsFilePath)) return;
+
                 string json = File.ReadAllText(settingsFilePath);
                 if (string.IsNullOrWhiteSpace(json)) return;
 
@@ -215,6 +217,10 @@ namespace DesktopPlus
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
             }
+            finally
+            {
+                _isLoadingSettings = false;
+            }
         }
 
         private void RestoreSavedPanels(bool onlyWhenNoPanelsOpen)
@@ -278,6 +284,11 @@ namespace DesktopPlus
 
         public static void SaveSettings()
         {
+            if (_isLoadingSettings)
+            {
+                return;
+            }
+
             lock (_saveTimerLock)
             {
                 if (_saveDebounceTimer == null)
@@ -300,6 +311,11 @@ namespace DesktopPlus
 
         public static void SaveSettingsImmediate()
         {
+            if (_isLoadingSettings)
+            {
+                return;
+            }
+
             lock (_saveTimerLock)
             {
                 _saveDebounceTimer?.Stop();

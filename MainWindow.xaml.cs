@@ -31,7 +31,7 @@ namespace DesktopPlus
         public static event Action? PanelsChanged;
         private bool _isUiReady = false;
         private bool _suspendPresetSelection = false;
-        private bool _suspendGeneralHandlers = false;
+        private bool _suspendGeneralHandlers = true;
         private bool _hideMainWindowOnStartup = false;
         private const string DefaultPresetName = "Graphite";
         private const string DefaultLanguageCode = "en";
