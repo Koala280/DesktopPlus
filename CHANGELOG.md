@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-04-09
+
+### Fixed
+
+- Folder-tab search indices now warm up asynchronously after startup so tab switches and search respond immediately more often instead of paying the first-use indexing cost.
+
 ## [1.4.1] - 2026-03-15
 
 ### Fixed
