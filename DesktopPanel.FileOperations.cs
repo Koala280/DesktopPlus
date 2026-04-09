@@ -23,15 +23,21 @@ namespace DesktopPlus
         private const int SearchResultBatchSize = 10;
         private const int GlobalSearchIndexMaxRoots = 32;
         private const int PersistedSearchIndexMagic = 0x44505349;
-        private const int PersistedSearchIndexVersion = 2;
+        private const int PersistedSearchIndexVersion = 3;
         private const int PersistedSearchIndexMaxFiles = 64;
         private const int FolderUiBatchSizeDefault = 8;
         private const int FolderUiBatchSizePhotos = 3;
         private const int FolderUiBatchDelayMs = 1;
         private const int FolderLightweightVisualThreshold = 700;
+        private const int FolderIndexWarmupInitialDelayMs = 900;
+        private const int FolderIndexWarmupPerFolderDelayMs = 120;
+        private const int GlobalFolderSearchIndexMaxConcurrentBuilds = 1;
         private static readonly TimeSpan GlobalSearchIndexRetention = TimeSpan.FromMinutes(30);
         private static readonly TimeSpan PersistedSearchIndexRetention = TimeSpan.FromDays(21);
         private static readonly object GlobalFolderSearchIndexLock = new object();
+        private static readonly SemaphoreSlim GlobalFolderSearchIndexBuildSemaphore = new SemaphoreSlim(
+            GlobalFolderSearchIndexMaxConcurrentBuilds,
+            GlobalFolderSearchIndexMaxConcurrentBuilds);
         private static readonly string GlobalSearchIndexCacheDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "DesktopPlus",
@@ -65,12 +71,14 @@ namespace DesktopPlus
             public bool RequiresRefresh { get; set; }
             public CancellationTokenSource? BuildCts { get; set; }
             public DateTime LastBuildUtc { get; set; }
+            public DateTime RootLastWriteUtc { get; set; }
             public DateTime LastAccessUtc { get; set; } = DateTime.UtcNow;
         }
 
         private sealed class PersistedFolderSearchIndexSnapshot
         {
             public DateTime BuiltUtc { get; init; }
+            public DateTime RootLastWriteUtc { get; init; }
             public List<FolderSearchIndexEntry> Entries { get; init; } = new List<FolderSearchIndexEntry>();
         }
 
@@ -146,6 +154,23 @@ namespace DesktopPlus
             catch
             {
                 return safeFallback;
+            }
+        }
+
+        private static DateTime GetDirectoryLastWriteTimeUtcSafe(string folderPath)
+        {
+            if (string.IsNullOrWhiteSpace(folderPath))
+            {
+                return DateTime.MinValue;
+            }
+
+            try
+            {
+                return Directory.GetLastWriteTimeUtc(folderPath);
+            }
+            catch
+            {
+                return DateTime.MinValue;
             }
         }
 
@@ -227,6 +252,7 @@ namespace DesktopPlus
 
                 int persistedVersion = reader.ReadInt32();
                 if (persistedVersion != 1 &&
+                    persistedVersion != 2 &&
                     persistedVersion != PersistedSearchIndexVersion)
                 {
                     return null;
@@ -239,6 +265,9 @@ namespace DesktopPlus
                 }
 
                 long builtTicks = reader.ReadInt64();
+                long rootLastWriteTicks = persistedVersion >= 3
+                    ? reader.ReadInt64()
+                    : DateTime.MinValue.Ticks;
                 int entryCount = reader.ReadInt32();
                 if (entryCount < 0 || entryCount > 2_000_000)
                 {
@@ -280,9 +309,20 @@ namespace DesktopPlus
                     builtUtc = DateTime.UtcNow;
                 }
 
+                DateTime rootLastWriteUtc;
+                try
+                {
+                    rootLastWriteUtc = new DateTime(rootLastWriteTicks, DateTimeKind.Utc);
+                }
+                catch
+                {
+                    rootLastWriteUtc = DateTime.MinValue;
+                }
+
                 return new PersistedFolderSearchIndexSnapshot
                 {
                     BuiltUtc = builtUtc,
+                    RootLastWriteUtc = rootLastWriteUtc,
                     Entries = entries
                 };
             }
@@ -295,7 +335,8 @@ namespace DesktopPlus
         private static void PersistFolderSearchIndex(
             string folderPath,
             IReadOnlyList<FolderSearchIndexEntry> entries,
-            DateTime builtUtc)
+            DateTime builtUtc,
+            DateTime rootLastWriteUtc)
         {
             try
             {
@@ -311,6 +352,7 @@ namespace DesktopPlus
                     writer.Write(PersistedSearchIndexVersion);
                     writer.Write(folderPath);
                     writer.Write(builtUtc.Ticks);
+                    writer.Write(rootLastWriteUtc.Ticks);
                     writer.Write(entries.Count);
 
                     foreach (var entry in entries)
@@ -499,6 +541,7 @@ namespace DesktopPlus
                         state.IsDirty = false;
                         state.RequiresRefresh = true;
                         state.LastBuildUtc = persistedSnapshot.BuiltUtc;
+                        state.RootLastWriteUtc = persistedSnapshot.RootLastWriteUtc;
                     }
 
                     GlobalFolderSearchIndices[normalizedRoot] = state;
@@ -524,9 +567,14 @@ namespace DesktopPlus
             var token = cts.Token;
             var builtEntries = new List<FolderSearchIndexEntry>();
             DateTime completedUtc;
+            DateTime rootLastWriteUtc = DateTime.MinValue;
+            bool buildLockHeld = false;
 
             try
             {
+                await GlobalFolderSearchIndexBuildSemaphore.WaitAsync(token);
+                buildLockHeld = true;
+
                 foreach (var entry in EnumerateRecursiveSearchEntries(folderPath, token))
                 {
                     token.ThrowIfCancellationRequested();
@@ -534,6 +582,7 @@ namespace DesktopPlus
                 }
 
                 completedUtc = DateTime.UtcNow;
+                rootLastWriteUtc = GetDirectoryLastWriteTimeUtcSafe(folderPath);
                 bool shouldNotify = false;
                 lock (GlobalFolderSearchIndexLock)
                 {
@@ -549,6 +598,7 @@ namespace DesktopPlus
                     state.RequiresRefresh = false;
                     state.BuildCts = null;
                     state.LastBuildUtc = completedUtc;
+                    state.RootLastWriteUtc = rootLastWriteUtc;
                     state.LastAccessUtc = completedUtc;
                     shouldNotify = true;
                 }
@@ -558,7 +608,7 @@ namespace DesktopPlus
                     return;
                 }
 
-                PersistFolderSearchIndex(folderPath, builtEntries, completedUtc);
+                PersistFolderSearchIndex(folderPath, builtEntries, completedUtc, rootLastWriteUtc);
                 await Dispatcher.InvokeAsync(() => RerunSearchForPanelsBoundToFolder(folderPath),
                     System.Windows.Threading.DispatcherPriority.Background,
                     token);
@@ -582,6 +632,11 @@ namespace DesktopPlus
             }
             finally
             {
+                if (buildLockHeld)
+                {
+                    GlobalFolderSearchIndexBuildSemaphore.Release();
+                }
+
                 lock (GlobalFolderSearchIndexLock)
                 {
                     if (GlobalFolderSearchIndices.TryGetValue(folderPath, out var state) &&
@@ -595,11 +650,17 @@ namespace DesktopPlus
             }
         }
 
-        private (List<FolderSearchIndexEntry> Entries, bool HasSnapshot, bool IsComplete) GetFolderSearchIndexSnapshot(string folderPath)
+        private (
+            List<FolderSearchIndexEntry> Entries,
+            bool HasSnapshot,
+            bool IsComplete,
+            bool RequiresRefresh,
+            bool IsBuildInProgress,
+            DateTime RootLastWriteUtc) GetFolderSearchIndexSnapshot(string folderPath)
         {
             if (string.IsNullOrWhiteSpace(folderPath))
             {
-                return (new List<FolderSearchIndexEntry>(), false, false);
+                return (new List<FolderSearchIndexEntry>(), false, false, false, false, DateTime.MinValue);
             }
 
             string normalizedRoot = NormalizeFolderSearchIndexRoot(folderPath);
@@ -608,7 +669,7 @@ namespace DesktopPlus
             {
                 if (!GlobalFolderSearchIndices.TryGetValue(normalizedRoot, out var state))
                 {
-                    return (new List<FolderSearchIndexEntry>(), false, false);
+                    return (new List<FolderSearchIndexEntry>(), false, false, false, false, DateTime.MinValue);
                 }
 
                 state.LastAccessUtc = DateTime.UtcNow;
@@ -618,7 +679,10 @@ namespace DesktopPlus
                 return (
                     new List<FolderSearchIndexEntry>(state.Entries),
                     hasUsableSnapshot,
-                    hasUsableSnapshot && state.IsComplete);
+                    hasUsableSnapshot && state.IsComplete,
+                    state.RequiresRefresh,
+                    state.BuildCts != null,
+                    state.RootLastWriteUtc);
             }
         }
 
@@ -903,6 +967,123 @@ namespace DesktopPlus
                     .Select(entry => TryCreateSearchMatch(entry, filter))
                     .Where(match => match != null)
                     .Cast<FolderSearchMatch>());
+        }
+
+        private List<string>? TryGetIndexedVisibleFolderEntries(string folderPath)
+        {
+            var snapshot = GetFolderSearchIndexSnapshot(folderPath);
+            if (!snapshot.HasSnapshot ||
+                !snapshot.IsComplete ||
+                snapshot.RequiresRefresh ||
+                snapshot.IsBuildInProgress)
+            {
+                return null;
+            }
+
+            DateTime currentRootLastWriteUtc = GetDirectoryLastWriteTimeUtcSafe(folderPath);
+            if (snapshot.RootLastWriteUtc == DateTime.MinValue ||
+                currentRootLastWriteUtc == DateTime.MinValue ||
+                currentRootLastWriteUtc != snapshot.RootLastWriteUtc)
+            {
+                InvalidateFolderSearchIndex(folderPath, rebuildInBackground: true, rerunActiveSearch: false);
+                return null;
+            }
+
+            return snapshot.Entries
+                .Where(entry => entry.Depth == 1 && !string.IsNullOrWhiteSpace(entry.Path))
+                .Select(entry => entry.Path)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(ShouldShowPath)
+                .ToList();
+        }
+
+        private IEnumerable<string> GetFolderPathsForBackgroundIndexWarmup()
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (_tabs.Count > 0)
+            {
+                for (int i = 0; i < _tabs.Count; i++)
+                {
+                    if (i == _activeTabIndex)
+                    {
+                        continue;
+                    }
+
+                    var tab = _tabs[i];
+                    bool isFolderTab = Enum.TryParse<PanelKind>(tab?.PanelType, true, out var kind)
+                        ? kind == PanelKind.Folder
+                        : !string.IsNullOrWhiteSpace(tab?.FolderPath);
+                    if (tab == null ||
+                        !isFolderTab ||
+                        string.IsNullOrWhiteSpace(tab.FolderPath))
+                    {
+                        continue;
+                    }
+
+                    string normalizedRoot = NormalizeFolderSearchIndexRoot(tab.FolderPath);
+                    if (seen.Add(normalizedRoot))
+                    {
+                        yield return normalizedRoot;
+                    }
+                }
+
+                yield break;
+            }
+
+            if (PanelType == PanelKind.Folder && !string.IsNullOrWhiteSpace(currentFolderPath))
+            {
+                string normalizedRoot = NormalizeFolderSearchIndexRoot(currentFolderPath);
+                if (seen.Add(normalizedRoot))
+                {
+                    yield return normalizedRoot;
+                }
+            }
+        }
+
+        private void ScheduleBackgroundFolderIndexWarmup()
+        {
+            var folderPaths = GetFolderPathsForBackgroundIndexWarmup().ToList();
+
+            var previousCts = _folderIndexWarmupCts;
+            _folderIndexWarmupCts = null;
+            previousCts?.Cancel();
+            previousCts?.Dispose();
+
+            if (folderPaths.Count == 0)
+            {
+                return;
+            }
+
+            var currentCts = new CancellationTokenSource();
+            _folderIndexWarmupCts = currentCts;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(FolderIndexWarmupInitialDelayMs, currentCts.Token);
+
+                    foreach (string folderPath in folderPaths)
+                    {
+                        currentCts.Token.ThrowIfCancellationRequested();
+                        EnsureFolderSearchIndexBuild(folderPath);
+                        await Task.Delay(FolderIndexWarmupPerFolderDelayMs, currentCts.Token);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                finally
+                {
+                    if (ReferenceEquals(_folderIndexWarmupCts, currentCts))
+                    {
+                        _folderIndexWarmupCts = null;
+                    }
+
+                    currentCts.Dispose();
+                }
+            }, currentCts.Token);
         }
 
         private static string BuildUniqueDirectoryTargetPath(string destinationDirectory, string requestedName)
@@ -1412,7 +1593,9 @@ namespace DesktopPlus
 
             try
             {
-                List<string> entries = await Task.Run(() => EnumerateVisibleFolderEntries(folderPath, token));
+                List<string>? indexedEntries = TryGetIndexedVisibleFolderEntries(folderPath);
+                List<string> entries = indexedEntries ??
+                    await Task.Run(() => EnumerateVisibleFolderEntries(folderPath, token));
                 if (token.IsCancellationRequested)
                 {
                     return;

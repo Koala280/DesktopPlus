@@ -411,6 +411,7 @@ namespace DesktopPlus
 
             _animateNewTabIndex = _tabs.Count - 1;
             RebuildTabBar();
+            ScheduleBackgroundFolderIndexWarmup();
             MainWindow.SaveSettings();
             return tab;
         }
@@ -434,6 +435,7 @@ namespace DesktopPlus
 
             _animateNewTabIndex = insertAt;
             RebuildTabBar();
+            ScheduleBackgroundFolderIndexWarmup();
             MainWindow.SaveSettings();
             MainWindow.NotifyPanelsChanged();
         }
@@ -608,6 +610,7 @@ namespace DesktopPlus
             }
             _activeTabIndex = Math.Max(0, Math.Min(activeIndex, _tabs.Count - 1));
             RefreshTabPresentation(reloadActiveState: true, persist: false);
+            ScheduleBackgroundFolderIndexWarmup();
         }
 
         public void InitializeSingleTabFromCurrentState()

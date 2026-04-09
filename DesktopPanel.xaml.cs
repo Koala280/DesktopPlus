@@ -91,6 +91,7 @@ namespace DesktopPlus
         private bool _deferSortUntilSearchComplete;
         private bool _isSearchExpandedFromCompactButton = false;
         private CancellationTokenSource? _folderLoadCts;
+        private CancellationTokenSource? _folderIndexWarmupCts;
         private CancellationTokenSource? _recycleBinLoadCts;
         private bool _useLightweightItemVisuals;
         private FileSystemWatcher? _folderContentWatcher;
@@ -312,6 +313,9 @@ namespace DesktopPlus
                 _folderLoadCts?.Cancel();
                 _folderLoadCts?.Dispose();
                 _folderLoadCts = null;
+                _folderIndexWarmupCts?.Cancel();
+                _folderIndexWarmupCts?.Dispose();
+                _folderIndexWarmupCts = null;
                 CancelPendingFolderSearchIndex();
                 _recycleBinLoadCts?.Cancel();
                 _recycleBinLoadCts?.Dispose();
