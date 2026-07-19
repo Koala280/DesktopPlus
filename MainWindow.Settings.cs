@@ -136,6 +136,7 @@ namespace DesktopPlus
                 NormalizeDesktopAutoSortSettings();
                 _globalShortcuts = state.GlobalShortcuts ?? new GlobalShortcutSettings();
                 NormalizeGlobalShortcutSettings();
+                _companion = state.Companion ?? new CompanionSettings();
                 _layoutDefaultPresetName = string.IsNullOrWhiteSpace(state.LayoutDefaultPresetName)
                     ? DefaultPresetName
                     : state.LayoutDefaultPresetName;
@@ -376,6 +377,7 @@ namespace DesktopPlus
                 string closeBehavior = mainWindow?._closeBehavior ?? CloseBehaviorMinimize;
                 DesktopAutoSortSettings desktopAutoSort = mainWindow?._desktopAutoSort ?? new DesktopAutoSortSettings();
                 GlobalShortcutSettings globalShortcuts = mainWindow?._globalShortcuts ?? new GlobalShortcutSettings();
+                CompanionSettings companion = mainWindow?._companion ?? new CompanionSettings();
                 string layoutDefaultPreset = mainWindow?._layoutDefaultPresetName ?? DefaultPresetName;
                 if (string.IsNullOrWhiteSpace(layoutDefaultPreset))
                 {
@@ -399,7 +401,15 @@ namespace DesktopPlus
                     GlobalShortcuts = new GlobalShortcutSettings
                     {
                         HidePanelsHotkey = globalShortcuts.HidePanelsHotkey,
-                        ForegroundPanelsHotkey = globalShortcuts.ForegroundPanelsHotkey
+                        ForegroundPanelsHotkey = globalShortcuts.ForegroundPanelsHotkey,
+                        NotifyOnConflict = globalShortcuts.NotifyOnConflict,
+                        OverrideBlockingApp = globalShortcuts.OverrideBlockingApp
+                    },
+                    Companion = new CompanionSettings
+                    {
+                        Enabled = companion.Enabled,
+                        Port = companion.Port,
+                        Token = companion.Token
                     }
                 };
 

@@ -2531,6 +2531,56 @@
                                         </StackPanel>
                                     </Grid>
 
+                                    <Border Height="1"
+                                            Background="{StaticResource CardBorder}"
+                                            Margin="0,16,0,12"/>
+
+                                    <CheckBox x:Name="ShortcutNotifyConflictCheck"
+                                              Content="{DynamicResource Loc.ShortcutsNotifyConflict}"
+                                              Style="{StaticResource AccentCheckBox}"
+                                              Margin="0"
+                                              Checked="ShortcutNotifyConflict_Changed"
+                                              Unchecked="ShortcutNotifyConflict_Changed"/>
+
+                                    <CheckBox x:Name="ShortcutOverrideBlockingCheck"
+                                              Content="{DynamicResource Loc.ShortcutsPriorityAbove}"
+                                              Style="{StaticResource AccentCheckBox}"
+                                              Margin="0,6,0,0"
+                                              Checked="ShortcutPriority_Changed"
+                                              Unchecked="ShortcutPriority_Changed"/>
+                                    <TextBlock Text="{DynamicResource Loc.ShortcutsPriorityHint}"
+                                               FontSize="11"
+                                               Foreground="{StaticResource Muted}"
+                                               TextWrapping="Wrap"
+                                               Margin="26,2,0,0"/>
+
+                                    <Border x:Name="GlobalShortcutWarning"
+                                            Visibility="Collapsed"
+                                            Margin="0,12,0,0"
+                                            Padding="10,8"
+                                            CornerRadius="6"
+                                            Background="#22F2B705"
+                                            BorderBrush="#66F2B705"
+                                            BorderThickness="1">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0"
+                                                       Text="&#x26A0;"
+                                                       FontSize="14"
+                                                       Foreground="#F2C94C"
+                                                       Margin="0,0,8,0"
+                                                       VerticalAlignment="Top"/>
+                                            <TextBlock Grid.Column="1"
+                                                       x:Name="GlobalShortcutWarningText"
+                                                       TextWrapping="Wrap"
+                                                       FontSize="12"
+                                                       Foreground="#F2C94C"/>
+                                        </Grid>
+                                    </Border>
+
                                     <TextBlock Text="{DynamicResource Loc.ShortcutsExistingTitle}"
                                                FontSize="13"
                                                FontWeight="SemiBold"
@@ -2620,6 +2670,116 @@
                                         <TextBlock Grid.Row="18" Grid.Column="0" Text="Double Click Resize Grip" FontFamily="Consolas" FontSize="12" Foreground="#D7E2F2" Margin="0,2,8,2"/>
                                         <TextBlock Grid.Row="18" Grid.Column="1" Text="{DynamicResource Loc.ShortcutFitContent}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,2"/>
                                     </Grid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </TabItem>
+
+                    <TabItem Header="{DynamicResource Loc.TabCompanion}">
+                        <StackPanel Margin="0,12,0,0">
+                            <Border Background="{StaticResource CardBackground}"
+                                    CornerRadius="12"
+                                    Padding="16"
+                                    BorderBrush="{StaticResource CardBorder}"
+                                    BorderThickness="1">
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource Loc.CompanionTitle}"
+                                               FontSize="16"
+                                               FontWeight="SemiBold"
+                                               Foreground="White"/>
+                                    <TextBlock Text="{DynamicResource Loc.CompanionDesc}"
+                                               FontSize="12"
+                                               Foreground="{StaticResource Muted}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,8,0,0"/>
+
+                                    <CheckBox x:Name="CompanionEnableToggle"
+                                              Content="{DynamicResource Loc.CompanionEnable}"
+                                              Style="{StaticResource AccentCheckBox}"
+                                              Margin="0,14,0,0"
+                                              Checked="CompanionToggle_Changed"
+                                              Unchecked="CompanionToggle_Changed"/>
+
+                                    <TextBlock x:Name="CompanionStatusText"
+                                               FontSize="12"
+                                               Foreground="{StaticResource Muted}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,10,0,0"/>
+
+                                    <Grid x:Name="CompanionConnectionPanel"
+                                          Margin="0,14,0,0"
+                                          Visibility="Collapsed">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <Border Grid.Column="0"
+                                                Background="White"
+                                                CornerRadius="8"
+                                                Padding="8"
+                                                VerticalAlignment="Top">
+                                            <Image x:Name="CompanionQrImage"
+                                                   Width="176"
+                                                   Height="176"
+                                                   Stretch="Fill"
+                                                   RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                                        </Border>
+
+                                        <StackPanel Grid.Column="1" Margin="16,0,0,0">
+                                            <TextBlock Text="{DynamicResource Loc.CompanionScanHint}"
+                                                       FontSize="12"
+                                                       Foreground="{StaticResource Muted}"
+                                                       TextWrapping="Wrap"/>
+                                            <TextBlock Text="{DynamicResource Loc.CompanionUrlLabel}"
+                                                       FontSize="11"
+                                                       Foreground="{StaticResource Muted}"
+                                                       Margin="0,12,0,4"/>
+                                            <TextBox x:Name="CompanionUrlText"
+                                                     IsReadOnly="True"
+                                                     FontFamily="Consolas"
+                                                     FontSize="12"
+                                                     Style="{StaticResource FlatTextBox}"
+                                                     VerticalContentAlignment="Center"
+                                                     Height="30"/>
+                                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                                <Button Content="{DynamicResource Loc.CompanionCopyUrl}"
+                                                        Style="{StaticResource GhostButton}"
+                                                        Padding="10,6"
+                                                        Click="CompanionCopyUrl_Click"/>
+                                                <Button Content="{DynamicResource Loc.CompanionRegenerate}"
+                                                        Style="{StaticResource GhostButton}"
+                                                        Margin="8,0,0,0"
+                                                        Padding="10,6"
+                                                        Click="CompanionRegenerateToken_Click"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <Border Margin="0,14,0,0"
+                                            Padding="10,8"
+                                            CornerRadius="6"
+                                            Background="#22F2B705"
+                                            BorderBrush="#66F2B705"
+                                            BorderThickness="1">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0"
+                                                       Text="&#x26A0;"
+                                                       FontSize="14"
+                                                       Foreground="#F2C94C"
+                                                       Margin="0,0,8,0"
+                                                       VerticalAlignment="Top"/>
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{DynamicResource Loc.CompanionSecurityNote}"
+                                                       TextWrapping="Wrap"
+                                                       FontSize="12"
+                                                       Foreground="#F2C94C"/>
+                                        </Grid>
+                                    </Border>
                                 </StackPanel>
                             </Border>
                         </StackPanel>

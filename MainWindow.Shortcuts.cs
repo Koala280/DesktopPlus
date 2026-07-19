@@ -25,12 +25,50 @@ namespace DesktopPlus
         private const string DefaultHidePanelsHotkey = "Ctrl + Alt + H";
         private const string DefaultForegroundPanelsHotkey = "Ctrl + Alt + F";
         private const int ForegroundShortcutPollMs = 35;
+        // Keep the panels in front briefly after the keys are released so the shortcut
+        // can actually be used to click an item.  A hold-only mode requires the user to
+        // keep modifier keys pressed while operating the panel, which commonly blocks
+        // the intended click and immediately sends the panel away on release.
+        private const int ForegroundShortcutInteractionGraceMs = 2000;
+        private const int ShortcutConflictPollSeconds = 3;
+
+        // Low-level keyboard hook constants (override / "above the blocking app" mode).
+        private const int WhKeyboardLL = 13;
+        private const int HcAction = 0;
+        private const int WmKeyDown = 0x0100;
+        private const int WmKeyUp = 0x0101;
+        private const int WmSysKeyDown = 0x0104;
+        private const int WmSysKeyUp = 0x0105;
 
         private HwndSource? _mainWindowSource;
         private bool _hidePanelsHotkeyRegistered;
         private bool _foregroundPanelsHotkeyRegistered;
+        // "Conflict" = the combination is currently owned/blocked by another app.
+        private bool _hidePanelsHotkeyConflict;
+        private bool _foregroundPanelsHotkeyConflict;
+        // Tracks whether we already raised a notification for the current conflict, so a
+        // persistent block only notifies once (on the free -> blocked transition).
+        private bool _hideConflictNotified;
+        private bool _foregroundConflictNotified;
         private CancellationTokenSource? _temporaryForegroundCts;
         private GlobalShortcutSettings _globalShortcuts = new GlobalShortcutSettings();
+        private DispatcherTimer? _shortcutConflictTimer;
+        private bool _suppressShortcutOptionEvents;
+
+        // Cached parse of the configured hotkeys so the keyboard hook doesn't re-parse
+        // strings on every keystroke. Refreshed via UpdateHotkeyCache().
+        private int _hideHotkeyVk;
+        private ModifierKeys _hideHotkeyModifiers;
+        private int _foregroundHotkeyVk;
+        private ModifierKeys _foregroundHotkeyModifiers;
+        // Auto-repeat suppression for the hook: WM_KEYDOWN repeats while a key is held.
+        private bool _hideHotkeyDown;
+        private bool _foregroundHotkeyDown;
+
+        private IntPtr _keyboardHook = IntPtr.Zero;
+        private LowLevelKeyboardProc? _keyboardHookProc;
+
+        private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -41,10 +79,37 @@ namespace DesktopPlus
         [DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int vKey);
 
+        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern IntPtr GetModuleHandle(string? lpModuleName);
+
         private void InitializeGlobalShortcuts()
         {
             SourceInitialized += MainWindow_SourceInitialized;
             EnsureGlobalShortcutWindowSource();
+
+            // Periodically re-evaluate conflicts: reclaim combos freed by another app
+            // (below mode) and detect/notify when a hotkey becomes blocked after startup.
+            _shortcutConflictTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(ShortcutConflictPollSeconds)
+            };
+            _shortcutConflictTimer.Tick += ShortcutConflictTimer_Tick;
+            _shortcutConflictTimer.Start();
+        }
+
+        private void ShortcutConflictTimer_Tick(object? sender, EventArgs e)
+        {
+            RefreshHotkeyStates();
         }
 
         private void MainWindow_SourceInitialized(object? sender, EventArgs e)
@@ -64,10 +129,15 @@ namespace DesktopPlus
             IntPtr handle = helper.Handle;
             if (handle == IntPtr.Zero)
             {
+                // EnsureHandle() creates the HWND and raises SourceInitialized
+                // synchronously, which re-enters this method and may already set up
+                // _mainWindowSource. Re-check afterwards so the message hook is only
+                // ever added once (a double hook would fire WM_HOTKEY handlers twice,
+                // turning the toggle shortcut into a no-op).
                 handle = helper.EnsureHandle();
             }
 
-            if (handle == IntPtr.Zero)
+            if (handle == IntPtr.Zero || _mainWindowSource != null)
             {
                 return;
             }
@@ -391,6 +461,21 @@ namespace DesktopPlus
             {
                 ForegroundPanelsHotkeyInput.Text = _globalShortcuts.ForegroundPanelsHotkey;
             }
+
+            // Setting IsChecked below fires Checked/Unchecked; suppress the handlers so
+            // syncing the UI from settings doesn't loop back into a save/re-register.
+            _suppressShortcutOptionEvents = true;
+            if (ShortcutNotifyConflictCheck != null)
+            {
+                ShortcutNotifyConflictCheck.IsChecked = _globalShortcuts.NotifyOnConflict;
+            }
+            if (ShortcutOverrideBlockingCheck != null)
+            {
+                ShortcutOverrideBlockingCheck.IsChecked = _globalShortcuts.OverrideBlockingApp;
+            }
+            _suppressShortcutOptionEvents = false;
+
+            UpdateGlobalShortcutWarning();
         }
 
         private void UnregisterRegisteredGlobalShortcuts(IntPtr handle)
@@ -431,20 +516,143 @@ namespace DesktopPlus
                 MessageBoxImage.Warning);
         }
 
-        private void ShowGlobalShortcutRegisterFailedMessage(string shortcutText)
+        private void UpdateGlobalShortcutWarning()
         {
-            int errorCode = Marshal.GetLastWin32Error();
-            string message = string.Format(GetString("Loc.MsgShortcutRegisterFailed"), shortcutText);
-            if (errorCode != 0)
+            if (GlobalShortcutWarning == null)
             {
-                message = $"{message} (Win32: {errorCode})";
+                return;
             }
 
-            System.Windows.MessageBox.Show(
-                message,
-                GetString("Loc.MsgError"),
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
+            var failed = new List<string>(2);
+            if (!_hidePanelsHotkeyRegistered)
+            {
+                failed.Add(_globalShortcuts.HidePanelsHotkey);
+            }
+            if (!_foregroundPanelsHotkeyRegistered)
+            {
+                failed.Add(_globalShortcuts.ForegroundPanelsHotkey);
+            }
+
+            if (failed.Count == 0)
+            {
+                GlobalShortcutWarning.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            if (GlobalShortcutWarningText != null)
+            {
+                GlobalShortcutWarningText.Text = string.Format(
+                    GetString("Loc.ShortcutsRegisterWarning"),
+                    string.Join(", ", failed));
+            }
+
+            GlobalShortcutWarning.Visibility = Visibility.Visible;
+        }
+
+        private void UpdateHotkeyCache()
+        {
+            if (TryParseHotkey(_globalShortcuts.HidePanelsHotkey, out var hideModifiers, out var hideKey, out _))
+            {
+                _hideHotkeyModifiers = hideModifiers;
+                _hideHotkeyVk = KeyInterop.VirtualKeyFromKey(hideKey);
+            }
+            else
+            {
+                _hideHotkeyModifiers = ModifierKeys.None;
+                _hideHotkeyVk = 0;
+            }
+
+            if (TryParseHotkey(_globalShortcuts.ForegroundPanelsHotkey, out var foregroundModifiers, out var foregroundKey, out _))
+            {
+                _foregroundHotkeyModifiers = foregroundModifiers;
+                _foregroundHotkeyVk = KeyInterop.VirtualKeyFromKey(foregroundKey);
+            }
+            else
+            {
+                _foregroundHotkeyModifiers = ModifierKeys.None;
+                _foregroundHotkeyVk = 0;
+            }
+        }
+
+        // Refreshes the active/conflict state for a single hotkey.
+        //   below mode: RegisterHotKey owns the combo; a failure means another app holds it.
+        //   above mode: the keyboard hook fires the action, so RegisterHotKey is only used
+        //               as a probe to detect whether another app also wants the combo.
+        private void RefreshSingleHotkey(
+            IntPtr handle,
+            int id,
+            ModifierKeys modifiers,
+            int virtualKey,
+            bool overrideMode,
+            ref bool active,
+            ref bool conflict)
+        {
+            if (virtualKey == 0)
+            {
+                active = false;
+                conflict = false;
+                return;
+            }
+
+            uint nativeModifiers = BuildNativeModifiers(modifiers);
+            uint vk = (uint)virtualKey;
+
+            if (overrideMode)
+            {
+                // Probe only: register succeeds only when the combo is free. Release it
+                // again immediately so the hook stays the single source of firing (a live
+                // RegisterHotKey would double-fire via WM_HOTKEY when we own the combo).
+                bool free = RegisterHotKey(handle, id, nativeModifiers, vk);
+                if (free)
+                {
+                    UnregisterHotKey(handle, id);
+                }
+                conflict = !free;
+                active = true; // functional via the low-level keyboard hook
+            }
+            else if (active)
+            {
+                // Already registered and owned by us; it cannot be stolen via RegisterHotKey.
+                conflict = false;
+            }
+            else
+            {
+                bool registered = RegisterHotKey(handle, id, nativeModifiers, vk);
+                active = registered;
+                conflict = !registered;
+            }
+        }
+
+        private void RefreshHotkeyStates()
+        {
+            IntPtr handle = _mainWindowSource?.Handle ?? IntPtr.Zero;
+            if (handle == IntPtr.Zero)
+            {
+                return;
+            }
+
+            bool overrideMode = _globalShortcuts.OverrideBlockingApp;
+
+            RefreshSingleHotkey(
+                handle,
+                HotkeyHidePanelsId,
+                _hideHotkeyModifiers,
+                _hideHotkeyVk,
+                overrideMode,
+                ref _hidePanelsHotkeyRegistered,
+                ref _hidePanelsHotkeyConflict);
+
+            RefreshSingleHotkey(
+                handle,
+                HotkeyForegroundPanelsId,
+                _foregroundHotkeyModifiers,
+                _foregroundHotkeyVk,
+                overrideMode,
+                ref _foregroundPanelsHotkeyRegistered,
+                ref _foregroundPanelsHotkeyConflict);
+
+            NotifyConflictTransitions();
+            UpdateGlobalShortcutWarning();
         }
 
         private bool TryRegisterConfiguredGlobalShortcuts(IntPtr handle, bool showErrors)
@@ -484,50 +692,60 @@ namespace DesktopPlus
                 return false;
             }
 
-            bool hideRegistered = RegisterHotKey(handle, HotkeyHidePanelsId, hideModifiers, hideVirtualKey);
-            if (!hideRegistered)
-            {
-                if (showErrors)
-                {
-                    ShowGlobalShortcutRegisterFailedMessage(normalizedHide);
-                }
-                return false;
-            }
-
-            bool foregroundRegistered = RegisterHotKey(handle, HotkeyForegroundPanelsId, foregroundModifiers, foregroundVirtualKey);
-            if (!foregroundRegistered)
-            {
-                UnregisterHotKey(handle, HotkeyHidePanelsId);
-                if (showErrors)
-                {
-                    ShowGlobalShortcutRegisterFailedMessage(normalizedForeground);
-                }
-                return false;
-            }
-
-            _hidePanelsHotkeyRegistered = true;
-            _foregroundPanelsHotkeyRegistered = true;
             _globalShortcuts.HidePanelsHotkey = normalizedHide;
             _globalShortcuts.ForegroundPanelsHotkey = normalizedForeground;
-            return true;
+            UpdateHotkeyCache();
+
+            bool overrideMode = _globalShortcuts.OverrideBlockingApp;
+
+            // Fresh registration: assume nothing is held yet, then (re)acquire/probe each.
+            _hidePanelsHotkeyRegistered = false;
+            _foregroundPanelsHotkeyRegistered = false;
+            RefreshSingleHotkey(
+                handle,
+                HotkeyHidePanelsId,
+                _hideHotkeyModifiers,
+                _hideHotkeyVk,
+                overrideMode,
+                ref _hidePanelsHotkeyRegistered,
+                ref _hidePanelsHotkeyConflict);
+            RefreshSingleHotkey(
+                handle,
+                HotkeyForegroundPanelsId,
+                _foregroundHotkeyModifiers,
+                _foregroundHotkeyVk,
+                overrideMode,
+                ref _foregroundPanelsHotkeyRegistered,
+                ref _foregroundPanelsHotkeyConflict);
+
+            // In override mode both hotkeys work regardless of who else wants the combo.
+            return overrideMode || (_hidePanelsHotkeyRegistered && _foregroundPanelsHotkeyRegistered);
+        }
+
+        // Central (re)apply used on startup, on Apply, on Reset and when the priority
+        // mode is toggled: refresh registrations, (un)install the hook, notify + sync UI.
+        private void ReapplyGlobalShortcutRegistration()
+        {
+            IntPtr handle = _mainWindowSource?.Handle ?? IntPtr.Zero;
+            if (handle != IntPtr.Zero)
+            {
+                UnregisterRegisteredGlobalShortcuts(handle);
+                TryRegisterConfiguredGlobalShortcuts(handle, showErrors: false);
+            }
+            else
+            {
+                // No HWND yet (very early startup); still keep the parsed cache current.
+                UpdateHotkeyCache();
+            }
+
+            InstallOrRemoveKeyboardHook();
+            NotifyConflictTransitions();
+            ApplyGlobalShortcutSettingsToUi();
         }
 
         private void RegisterGlobalShortcuts()
         {
-            IntPtr handle = _mainWindowSource?.Handle ?? IntPtr.Zero;
-            if (handle == IntPtr.Zero)
-            {
-                return;
-            }
-
-            UnregisterRegisteredGlobalShortcuts(handle);
-            if (!TryRegisterConfiguredGlobalShortcuts(handle, showErrors: false))
-            {
-                _hidePanelsHotkeyRegistered = false;
-                _foregroundPanelsHotkeyRegistered = false;
-            }
-
-            ApplyGlobalShortcutSettingsToUi();
+            ReapplyGlobalShortcutRegistration();
         }
 
         private bool TryApplyGlobalHotkeysFromInputs(bool showErrors)
@@ -562,31 +780,209 @@ namespace DesktopPlus
                 return false;
             }
 
-            var previous = new GlobalShortcutSettings
-            {
-                HidePanelsHotkey = _globalShortcuts.HidePanelsHotkey,
-                ForegroundPanelsHotkey = _globalShortcuts.ForegroundPanelsHotkey
-            };
-
             _globalShortcuts.HidePanelsHotkey = normalizedHide;
             _globalShortcuts.ForegroundPanelsHotkey = normalizedForeground;
 
-            IntPtr handle = _mainWindowSource?.Handle ?? IntPtr.Zero;
-            if (handle != IntPtr.Zero)
+            // Keep the user's chosen combination even if one of them can't be registered
+            // right now (e.g. taken by another app); the inline warning explains why and
+            // the other hotkey keeps working. Invalid/duplicate input was already rejected
+            // above, so this is always treated as a successful apply.
+            ReapplyGlobalShortcutRegistration();
+            return true;
+        }
+
+        private void InstallOrRemoveKeyboardHook()
+        {
+            if (_globalShortcuts.OverrideBlockingApp)
             {
-                UnregisterRegisteredGlobalShortcuts(handle);
-                if (!TryRegisterConfiguredGlobalShortcuts(handle, showErrors))
+                InstallKeyboardHook();
+            }
+            else
+            {
+                RemoveKeyboardHook();
+            }
+        }
+
+        private void InstallKeyboardHook()
+        {
+            if (_keyboardHook != IntPtr.Zero)
+            {
+                return;
+            }
+
+            _keyboardHookProc ??= LowLevelKeyboardHookProc;
+
+            IntPtr moduleHandle = IntPtr.Zero;
+            using (var currentProcess = System.Diagnostics.Process.GetCurrentProcess())
+            using (var mainModule = currentProcess.MainModule)
+            {
+                if (mainModule != null)
                 {
-                    _globalShortcuts = previous;
-                    UnregisterRegisteredGlobalShortcuts(handle);
-                    TryRegisterConfiguredGlobalShortcuts(handle, showErrors: false);
-                    ApplyGlobalShortcutSettingsToUi();
-                    return false;
+                    moduleHandle = GetModuleHandle(mainModule.ModuleName);
                 }
             }
 
-            ApplyGlobalShortcutSettingsToUi();
-            return true;
+            _keyboardHook = SetWindowsHookEx(WhKeyboardLL, _keyboardHookProc, moduleHandle, 0);
+        }
+
+        private void RemoveKeyboardHook()
+        {
+            if (_keyboardHook == IntPtr.Zero)
+            {
+                return;
+            }
+
+            UnhookWindowsHookEx(_keyboardHook);
+            _keyboardHook = IntPtr.Zero;
+            _hideHotkeyDown = false;
+            _foregroundHotkeyDown = false;
+        }
+
+        private IntPtr LowLevelKeyboardHookProc(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode == HcAction)
+            {
+                int message = wParam.ToInt32();
+                // KBDLLHOOKSTRUCT.vkCode is the first field of the struct at lParam.
+                int vk = Marshal.ReadInt32(lParam);
+
+                if (message == WmKeyDown || message == WmSysKeyDown)
+                {
+                    if (_hideHotkeyVk != 0 && vk == _hideHotkeyVk &&
+                        AreRequiredModifiersPressed(_hideHotkeyModifiers))
+                    {
+                        if (!_hideHotkeyDown)
+                        {
+                            _hideHotkeyDown = true;
+                            _ = Dispatcher.BeginInvoke(new Action(ToggleAllPanelsVisibilityByShortcut));
+                        }
+                        return (IntPtr)1; // swallow: put DesktopPlus above the blocking app
+                    }
+
+                    if (_foregroundHotkeyVk != 0 && vk == _foregroundHotkeyVk &&
+                        AreRequiredModifiersPressed(_foregroundHotkeyModifiers))
+                    {
+                        if (!_foregroundHotkeyDown)
+                        {
+                            _foregroundHotkeyDown = true;
+                            _ = Dispatcher.BeginInvoke(new Action(BringPanelsToForegroundTemporarily));
+                        }
+                        return (IntPtr)1;
+                    }
+                }
+                else if (message == WmKeyUp || message == WmSysKeyUp)
+                {
+                    if (vk == _hideHotkeyVk)
+                    {
+                        _hideHotkeyDown = false;
+                    }
+                    if (vk == _foregroundHotkeyVk)
+                    {
+                        _foregroundHotkeyDown = false;
+                    }
+                }
+            }
+
+            return CallNextHookEx(_keyboardHook, nCode, wParam, lParam);
+        }
+
+        // Raises a tray notification when a hotkey newly becomes blocked by another app.
+        // Only fires on the free -> blocked transition so a persistent conflict is not spammed.
+        private void NotifyConflictTransitions()
+        {
+            bool canNotify = _globalShortcuts.NotifyOnConflict && _notifyIcon != null;
+
+            if (_hidePanelsHotkeyConflict)
+            {
+                if (canNotify && !_hideConflictNotified)
+                {
+                    ShowShortcutConflictNotification(_globalShortcuts.HidePanelsHotkey);
+                    _hideConflictNotified = true;
+                }
+            }
+            else
+            {
+                _hideConflictNotified = false;
+            }
+
+            if (_foregroundPanelsHotkeyConflict)
+            {
+                if (canNotify && !_foregroundConflictNotified)
+                {
+                    ShowShortcutConflictNotification(_globalShortcuts.ForegroundPanelsHotkey);
+                    _foregroundConflictNotified = true;
+                }
+            }
+            else
+            {
+                _foregroundConflictNotified = false;
+            }
+        }
+
+        private void ShowShortcutConflictNotification(string hotkeyText)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                _ = Dispatcher.BeginInvoke(new Action(() => ShowShortcutConflictNotification(hotkeyText)));
+                return;
+            }
+
+            if (_notifyIcon == null)
+            {
+                return;
+            }
+
+            string title = GetString("Loc.ShortcutConflictTitle");
+            string bodyKey = _globalShortcuts.OverrideBlockingApp
+                ? "Loc.ShortcutConflictBodyAbove"
+                : "Loc.ShortcutConflictBodyBelow";
+            string message = string.Format(GetString(bodyKey), hotkeyText);
+
+            try
+            {
+                _notifyIcon.BalloonTipTitle = title;
+                _notifyIcon.BalloonTipText = message;
+                _notifyIcon.BalloonTipIcon = System.Windows.Forms.ToolTipIcon.Warning;
+                _notifyIcon.ShowBalloonTip(6000);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to show shortcut conflict notification: {ex}");
+            }
+        }
+
+        private void ShortcutNotifyConflict_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressShortcutOptionEvents)
+            {
+                return;
+            }
+
+            _globalShortcuts.NotifyOnConflict = ShortcutNotifyConflictCheck?.IsChecked == true;
+            NotifyConflictTransitions();
+            SaveSettingsImmediate();
+        }
+
+        private void ShortcutPriority_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressShortcutOptionEvents)
+            {
+                return;
+            }
+
+            bool overrideApp = ShortcutOverrideBlockingCheck?.IsChecked == true;
+            if (overrideApp == _globalShortcuts.OverrideBlockingApp)
+            {
+                return;
+            }
+
+            _globalShortcuts.OverrideBlockingApp = overrideApp;
+            // Switching modes changes the notification wording and register/hook strategy,
+            // so re-evaluate the current conflict state from scratch.
+            _hideConflictNotified = false;
+            _foregroundConflictNotified = false;
+            ReapplyGlobalShortcutRegistration();
+            SaveSettingsImmediate();
         }
 
         private void GlobalHotkeyInput_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -660,7 +1056,7 @@ namespace DesktopPlus
                 return;
             }
 
-            SaveSettings();
+            SaveSettingsImmediate();
         }
 
         private void ResetGlobalShortcuts_Click(object sender, RoutedEventArgs e)
@@ -669,11 +1065,20 @@ namespace DesktopPlus
             NormalizeGlobalShortcutSettings();
             ApplyGlobalShortcutSettingsToUi();
             RegisterGlobalShortcuts();
-            SaveSettings();
+            SaveSettingsImmediate();
         }
 
         private void CleanupGlobalShortcuts()
         {
+            if (_shortcutConflictTimer != null)
+            {
+                _shortcutConflictTimer.Stop();
+                _shortcutConflictTimer.Tick -= ShortcutConflictTimer_Tick;
+                _shortcutConflictTimer = null;
+            }
+
+            RemoveKeyboardHook();
+
             var pendingForeground = Interlocked.Exchange(ref _temporaryForegroundCts, null);
             pendingForeground?.Cancel();
             pendingForeground?.Dispose();
@@ -708,7 +1113,7 @@ namespace DesktopPlus
             }
             else if (id == HotkeyForegroundPanelsId)
             {
-                BringPanelsToForegroundWhileShortcutHeld();
+                BringPanelsToForegroundTemporarily();
                 handled = true;
             }
 
@@ -731,14 +1136,17 @@ namespace DesktopPlus
             }
         }
 
-        private void BringPanelsToForegroundWhileShortcutHeld()
+        private void BringPanelsToForegroundTemporarily()
         {
-            var openPanels = Application.Current.Windows
+            // This is a foreground action, not a visibility action.  In particular, do not
+            // briefly reveal panels the user deliberately hid: they would disappear again on
+            // release and look as if the shortcut had closed them.
+            var candidatePanels = Application.Current.Windows
                 .OfType<DesktopPanel>()
-                .Where(IsUserPanel)
+                .Where(panel => IsUserPanel(panel) && panel.IsVisible)
                 .ToList();
 
-            if (openPanels.Count == 0)
+            if (candidatePanels.Count == 0)
             {
                 return;
             }
@@ -748,14 +1156,13 @@ namespace DesktopPlus
             previous?.Cancel();
             previous?.Dispose();
 
-            foreach (var panel in openPanels)
+            foreach (var panel in candidatePanels)
             {
-                panel.Show();
                 panel.SetTemporaryForegroundMode(true);
             }
 
             string hotkeyText = _globalShortcuts.ForegroundPanelsHotkey;
-            _ = RestorePanelsFromForegroundModeAsync(openPanels, hotkeyText, replacement);
+            _ = RestorePanelsFromForegroundModeAsync(candidatePanels, hotkeyText, replacement);
         }
 
         private static bool IsVirtualKeyPressed(int virtualKey)
@@ -839,6 +1246,11 @@ namespace DesktopPlus
 
                     await Task.Delay(ForegroundShortcutPollMs, source.Token);
                 }
+
+                // The WM_HOTKEY message is delivered while the shortcut keys are still
+                // down.  Keep the foreground state a little longer after release so users
+                // can let go of Alt/Ctrl and click or open an item normally.
+                await Task.Delay(ForegroundShortcutInteractionGraceMs, source.Token);
             }
             catch (OperationCanceledException)
             {

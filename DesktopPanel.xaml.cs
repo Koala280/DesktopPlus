@@ -195,6 +195,8 @@ namespace DesktopPlus
         private const int GwlExStyle = -20;
         private const int WsExToolWindow = 0x00000080;
         private const int WsExAppWindow = 0x00040000;
+        private static readonly IntPtr HwndTopmost = new IntPtr(-1);
+        private static readonly IntPtr HwndNotTopmost = new IntPtr(-2);
         private static readonly IntPtr HwndBottom = new IntPtr(1);
         private const uint SwpNoSize = 0x0001;
         private const uint SwpNoMove = 0x0002;
@@ -1371,6 +1373,23 @@ namespace DesktopPlus
                 SwpNoMove | SwpNoSize | SwpNoActivate | SwpNoOwnerZOrder);
         }
 
+        private void UpdateTemporaryForegroundWindowOrder(bool enabled)
+        {
+            if (IsPreviewPanel) return;
+
+            IntPtr handle = _windowSource?.Handle ?? IntPtr.Zero;
+            if (handle == IntPtr.Zero) return;
+
+            SetWindowPos(
+                handle,
+                enabled ? HwndTopmost : HwndNotTopmost,
+                0,
+                0,
+                0,
+                0,
+                SwpNoMove | SwpNoSize | SwpNoActivate | SwpNoOwnerZOrder);
+        }
+
         internal void BringPanelToFrontWithinPanels()
         {
             if (_isTemporarilyForeground) return;
@@ -1412,9 +1431,11 @@ namespace DesktopPlus
             if (enabled)
             {
                 Topmost = true;
+                UpdateTemporaryForegroundWindowOrder(enabled: true);
                 return;
             }
 
+            UpdateTemporaryForegroundWindowOrder(enabled: false);
             Topmost = false;
             SendPanelToBack();
         }

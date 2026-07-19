@@ -16,5 +16,6 @@ namespace DesktopPlus
         public string CloseBehavior { get; set; } = "Minimize";
         public DesktopAutoSortSettings DesktopAutoSort { get; set; } = new DesktopAutoSortSettings();
         public GlobalShortcutSettings GlobalShortcuts { get; set; } = new GlobalShortcutSettings();
+        public CompanionSettings Companion { get; set; } = new CompanionSettings();
     }
 }

@@ -437,6 +437,7 @@ namespace DesktopPlus
             RegisterGlobalShortcuts();
             NormalizeDesktopAutoSortSettings();
             ApplyLanguage(_languageCode);
+            InitializeCompanion();
             if (!Presets.Any())
             {
                 Presets = GetDefaultPresets();
@@ -466,6 +467,7 @@ namespace DesktopPlus
                 PanelsChanged -= RefreshPanelOverview;
                 StopDesktopAutoSortWatcher();
                 CleanupGlobalShortcuts();
+                CleanupCompanion();
             };
             ConfigureDesktopAutoSortWatcher();
             ApplyStartupWindowVisibilityPreference();

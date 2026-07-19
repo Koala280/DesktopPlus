@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <title>DesktopPlus Companion</title>
+    <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+    <header class="topbar">
+        <button id="back" class="icon-btn" type="button" hidden aria-label="Back">&#8249;</button>
+        <span id="title" class="title">DesktopPlus</span>
+        <span id="status" class="status status--pending">connecting…</span>
+    </header>
+
+    <nav id="crumbs" class="crumbs" hidden></nav>
+
+    <div id="netbanner" class="netbanner" hidden role="status" aria-live="polite"></div>
+
+    <main id="main" class="main">
+        <div class="placeholder">Loading…</div>
+    </main>
+
+    <div id="toolbar" class="toolbar" hidden></div>
+
+    <nav id="tabs" class="tabbar" hidden>
+        <button id="tabPanels" class="tabbar-item" type="button">
+            <span class="tabbar-ico" aria-hidden="true">🖥</span>
+            <span class="tabbar-label">Panels</span>
+        </button>
+        <button id="tabDrives" class="tabbar-item" type="button">
+            <span class="tabbar-ico" aria-hidden="true">💽</span>
+            <span class="tabbar-label">Drives</span>
+        </button>
+    </nav>
+
+    <script src="app.js"></script>
+</body>
+</html>

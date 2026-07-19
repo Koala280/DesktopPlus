@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-07-19
+
+### Added
+
+- Mobile Companion: securely pair a phone through a QR code to browse panels, navigate folders, and perform supported file operations over the local network.
+- Configurable global panel shortcuts, including conflict notifications and an optional priority mode for shortcuts claimed by another application.
+- Automated unit-test coverage for the Companion security, network, file-service, and QR-code components.
+
+### Fixed
+
+- The temporary foreground shortcut now leaves visible panels available briefly after releasing the keys so items can be opened normally.
+- The foreground shortcut no longer briefly reveals and then re-hides deliberately hidden panels.
+
 ## [1.4.2] - 2026-04-09
 
 ### Fixed

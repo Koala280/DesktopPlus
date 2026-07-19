@@ -24,11 +24,35 @@
 
 	<ItemGroup>
 		<Compile Remove="artifacts\**\*.cs" />
+		<!-- The test project lives in a subfolder; keep its sources out of the app assembly. -->
+		<Compile Remove="DesktopPlus.Tests\**\*.cs" />
+		<EmbeddedResource Remove="DesktopPlus.Tests\**" />
+		<None Remove="DesktopPlus.Tests\**" />
+	</ItemGroup>
+
+	<!-- Expose internal Companion types to the unit-test assembly. -->
+	<ItemGroup>
+		<InternalsVisibleTo Include="DesktopPlus.Tests" />
 	</ItemGroup>
 
 	<ItemGroup>
 		<PackageReference Include="System.Drawing.Common" Version="9.0.3" />
 		<PackageReference Include="System.Text.Json" Version="9.0.3" />
+		<PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.3" />
+		<PackageReference Include="QRCoder" Version="1.6.0" />
+	</ItemGroup>
+
+	<!-- Companion: embedded HTTPS server for the phone remote (Kestrel/minimal API). -->
+	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
+
+	<!-- Companion PWA assets are embedded (single-file publish has no physical wwwroot).
+	     Explicit LogicalName keeps resource names stable regardless of MSBuild munging. -->
+	<ItemGroup>
+		<EmbeddedResource Include="Companion\WebApp\index.html" LogicalName="DesktopPlus.Companion.WebApp.index.html" />
+		<EmbeddedResource Include="Companion\WebApp\app.js" LogicalName="DesktopPlus.Companion.WebApp.app.js" />
+		<EmbeddedResource Include="Companion\WebApp\app.css" LogicalName="DesktopPlus.Companion.WebApp.app.css" />
 	</ItemGroup>
 
 </Project>
