@@ -189,6 +189,7 @@ namespace DesktopPlus
         private const int WmSysCommand = 0x0112;
         private const int ScSize = 0xF000;
         private const int ScMove = 0xF010;
+        private const int ScMinimize = 0xF020;
         private const int ScMaximize = 0xF030;
         private const int HtClient = 0x0001;
         private const int HtBottomRight = 0x0011;
@@ -1456,7 +1457,11 @@ namespace DesktopPlus
             if (msg == WmSysCommand)
             {
                 int command = (int)(wParam.ToInt64() & 0xFFF0);
-                if (command == ScMove || command == ScMaximize || command == ScSize)
+                // Win+D broadcasts SC_MINIMIZE to regular top-level windows.  Desktop
+                // panels are intended to remain visible when the desktop is shown, so
+                // they must opt out of that command rather than being minimized along
+                // with normal application windows.
+                if (command == ScMinimize || command == ScMove || command == ScMaximize || command == ScSize)
                 {
                     handled = true;
                     return IntPtr.Zero;

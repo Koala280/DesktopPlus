@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-07-22
+
+### Fixed
+
+- Panels remain visible when using Windows+D to show the desktop instead of being minimized with regular application windows.
+
 ## [1.5.2] - 2026-07-22
 
 ### Fixed
