@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-07-22
+
+### Fixed
+
+- Dragging between panels no longer removes a source item before the destination has confirmed a filesystem transfer.
+- Dropping onto a list panel now adds a reference without incorrectly treating the operation as a filesystem move.
+
 ## [1.5.1] - 2026-07-22
 
 ### Fixed

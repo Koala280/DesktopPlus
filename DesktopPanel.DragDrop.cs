@@ -1418,8 +1418,15 @@ namespace DesktopPlus
             if (TryGetInternalPanelDragSourceId(e.Data, out string sourcePanelId) &&
                 !string.Equals(sourcePanelId, PanelId, StringComparison.OrdinalIgnoreCase))
             {
-                // Internal panel-to-panel drags always move.
-                return DragDropEffects.Move;
+                // A list panel stores references only; it cannot be the destination of a
+                // filesystem move.  Reporting Move here makes the source remove its item
+                // even though the file was never transferred.  Folder and recycle-bin
+                // panels are real filesystem destinations and can safely accept a move.
+                bool canReceiveFilesystemMove = PanelType == PanelKind.RecycleBin ||
+                    (PanelType == PanelKind.Folder &&
+                     !string.IsNullOrWhiteSpace(currentFolderPath) &&
+                     Directory.Exists(currentFolderPath));
+                return canReceiveFilesystemMove ? DragDropEffects.Move : DragDropEffects.Copy;
             }
 
             var fallback = ShouldDefaultDropToMove(droppedItems) ? DragDropEffects.Move : DragDropEffects.Copy;
@@ -2477,18 +2484,10 @@ namespace DesktopPlus
                             return;
                         }
 
-                        if ((result & DragDropEffects.Move) == DragDropEffects.Move &&
-                            PanelType == PanelKind.Folder &&
-                            !string.IsNullOrWhiteSpace(currentFolderPath) &&
-                            Directory.Exists(currentFolderPath))
-                        {
-                            foreach (string path in selectedPaths)
-                            {
-                                NotifyFolderContentChangeImmediate(FolderWatcherChangeKind.Deleted, path);
-                            }
-
-                            MainWindow.SaveSettings();
-                        }
+                        // The target performs its file operation asynchronously.  Do not
+                        // remove source items just because the drag loop reported Move: the
+                        // target may still fail or may only be a list panel.  The folder
+                        // watcher updates the source after a confirmed filesystem change.
                     }
                 }
             }
