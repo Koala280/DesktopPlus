@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-07-22
+
+### Fixed
+
+- Items in a panel can now be opened normally while the foreground shortcut uses `Alt` (for example `Alt + G`); the shortcut modifier is no longer interpreted as an additive-selection click.
+
 ## [1.5.0] - 2026-07-19
 
 ### Added

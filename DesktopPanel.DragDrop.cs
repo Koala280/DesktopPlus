@@ -466,10 +466,15 @@ namespace DesktopPlus
             return true;
         }
 
-        private static bool IsToggleModifierPressed()
+        private bool IsToggleModifierPressed()
         {
             var modifiers = Keyboard.Modifiers;
-            return modifiers.HasFlag(ModifierKeys.Control) || modifiers.HasFlag(ModifierKeys.Alt);
+            // Alt is normally an additive-selection modifier.  While the foreground
+            // shortcut is held, however, Alt is part of the shortcut itself; treating
+            // every click as Alt+Click then prevents the usual single-/double-click
+            // open behavior from ever reaching the item.
+            return modifiers.HasFlag(ModifierKeys.Control) ||
+                   (!_isTemporarilyForeground && modifiers.HasFlag(ModifierKeys.Alt));
         }
 
         private static bool IsRangeModifierPressed()
@@ -2260,7 +2265,8 @@ namespace DesktopPlus
                 }
 
                 // ALT toggles selection just like CTRL.
-                if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control) &&
+                if (!_isTemporarilyForeground &&
+                    !Keyboard.Modifiers.HasFlag(ModifierKeys.Control) &&
                     Keyboard.Modifiers.HasFlag(ModifierKeys.Alt))
                 {
                     clickedItem.IsSelected = !clickedItem.IsSelected;
