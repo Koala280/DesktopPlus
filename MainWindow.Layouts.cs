@@ -1047,6 +1047,11 @@ namespace DesktopPlus
         {
             if (sender is FrameworkElement fe && fe.Tag is LayoutDefinition layout)
             {
+                if (!EnsureCriticalBackup(GetString("Loc.BackupsReasonBeforeLayout")))
+                {
+                    return;
+                }
+
                 ApplyLayout(layout);
             }
         }
@@ -1055,6 +1060,11 @@ namespace DesktopPlus
         {
             if (sender is FrameworkElement fe && fe.Tag is LayoutDefinition layout)
             {
+                if (!EnsureCriticalBackup(GetString("Loc.BackupsReasonBeforeLayoutUpdate")))
+                {
+                    return;
+                }
+
                 string layoutDefaultPresetName = ResolveLayoutDefaultPresetName(layout);
                 layout.DefaultPanelPresetName = layoutDefaultPresetName;
                 layout.ThemePresetName = GetSelectedPresetName();
@@ -1070,6 +1080,11 @@ namespace DesktopPlus
         {
             if (sender is FrameworkElement fe && fe.Tag is LayoutDefinition layout)
             {
+                if (!EnsureCriticalBackup(GetString("Loc.BackupsReasonBeforeLayoutDelete")))
+                {
+                    return;
+                }
+
                 Layouts.Remove(layout);
                 SaveSettings();
                 RefreshLayoutList();

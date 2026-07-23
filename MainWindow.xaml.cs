@@ -30,6 +30,7 @@ namespace DesktopPlus
         public static event Action? AppearanceChanged;
         public static event Action? PanelsChanged;
         private bool _isUiReady = false;
+        internal static bool IsUiReadyForBackgroundWork { get; private set; }
         private bool _suspendPresetSelection = false;
         private bool _suspendGeneralHandlers = true;
         private bool _hideMainWindowOnStartup = false;
@@ -1361,6 +1362,7 @@ if ($isMatch) {{ exit 0 }} else {{ exit 1 }}";
                 ? GetString("Loc.AutoSortStatusEnabled")
                 : GetString("Loc.AutoSortStatusDisabled"));
             ApplyGeneralSettingsToUi();
+            RefreshBackupsTab((BackupsList?.SelectedItem as UpdateBackupInfo)?.ArchivePath);
             SaveSettings();
         }
 
@@ -1394,8 +1396,15 @@ if ($isMatch) {{ exit 0 }} else {{ exit 1 }}";
             ApplyGlobalShortcutSettingsToUi();
             ConfigureDesktopAutoSortWatcher();
             _isUiReady = true;
+            IsUiReadyForBackgroundWork = true;
             ApplyStartupWindowVisibilityPreference();
             RestoreSavedPanels(onlyWhenNoPanelsOpen: true);
+            foreach (DesktopPanel panel in Application.Current.Windows.OfType<DesktopPanel>())
+            {
+                panel.StartFolderBackgroundWorkAfterUiReady();
+            }
+            ScheduleSavedPanelFolderWarmup();
+            RefreshBackupsTab();
 
             if (_autoCheckUpdates)
             {

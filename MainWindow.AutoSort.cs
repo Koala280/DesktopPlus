@@ -1615,6 +1615,49 @@ namespace DesktopPlus
             return anyChanged;
         }
 
+        private List<string> GetDesktopAutoSortBackupCandidates()
+        {
+            var candidates = new List<string>();
+            var activeRules = _desktopAutoSort.Rules
+                .Where(rule => rule.Enabled)
+                .ToList();
+            if (activeRules.Count == 0)
+            {
+                return candidates;
+            }
+
+            foreach (string desktopPath in GetDesktopDirectoryPaths())
+            {
+                IEnumerable<string> entries;
+                try
+                {
+                    entries = Directory.EnumerateFileSystemEntries(desktopPath).ToList();
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (string entry in entries)
+                {
+                    if (IsIgnoredDesktopEntry(entry))
+                    {
+                        continue;
+                    }
+
+                    bool isDirectory = Directory.Exists(entry);
+                    if (ResolveRuleForPath(activeRules, entry, isDirectory) != null)
+                    {
+                        candidates.Add(entry);
+                    }
+                }
+            }
+
+            return candidates
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
         private DesktopSortResult SortDesktopOnce()
         {
             var result = new DesktopSortResult();
@@ -2041,6 +2084,14 @@ namespace DesktopPlus
             _desktopAutoSortInProgress = true;
             try
             {
+                List<string> backupCandidates = GetDesktopAutoSortBackupCandidates();
+                if (backupCandidates.Count > 0 &&
+                    !TryCreateAutoSortBackup(backupCandidates, out string backupError))
+                {
+                    throw new InvalidOperationException(
+                        string.Format(GetString("Loc.AutoSortMsgBackupFailed"), backupError));
+                }
+
                 var result = SortDesktopOnce();
                 if (result.MovedCount > 0)
                 {
@@ -2054,6 +2105,7 @@ namespace DesktopPlus
                     EnsureAutoSortPanels(result.TargetPanels);
                     SaveSettings();
                     NotifyPanelsChanged();
+                    RefreshBackupsTab();
                 }
 
                 string statusText;
@@ -2441,6 +2493,11 @@ namespace DesktopPlus
 
         private void ResetAutoSortRules_Click(object sender, RoutedEventArgs e)
         {
+            if (!EnsureCriticalBackup(GetString("Loc.BackupsReasonBeforeRulesReset")))
+            {
+                return;
+            }
+
             _desktopAutoSort.Rules = new List<DesktopSortRuleState>();
             NormalizeDesktopAutoSortSettings();
             ApplyDesktopAutoSortSettingsToUi();

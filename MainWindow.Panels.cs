@@ -1525,6 +1525,11 @@ namespace DesktopPlus
         {
             if (sender is FrameworkElement fe && fe.Tag is PanelOverviewItem item)
             {
+                if (!EnsureCriticalBackup(GetString("Loc.BackupsReasonBeforePanelDelete")))
+                {
+                    return;
+                }
+
                 TryGetOrCreateSavedOverviewTarget(item, out var existing, out var tab, out int tabIndex);
                 int hostTabIndex = item.HostTabIndex >= 0 ? item.HostTabIndex : tabIndex;
 

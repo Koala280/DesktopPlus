@@ -789,6 +789,11 @@ namespace DesktopPlus
                     return;
                 }
 
+                if (!EnsureCriticalBackup(GetString("Loc.BackupsReasonBeforePresetDelete")))
+                {
+                    return;
+                }
+
                 Presets.Remove(preset);
                 RefreshPresetSelectors();
                 SaveSettings();
@@ -804,6 +809,11 @@ namespace DesktopPlus
                 MessageBoxImage.Warning);
 
             if (result != MessageBoxResult.Yes) return;
+
+            if (!EnsureCriticalBackup(GetString("Loc.BackupsReasonBeforePresetReset")))
+            {
+                return;
+            }
 
             var defaults = GetDefaultPresets();
             var defaultNames = new HashSet<string>(defaults.Select(p => p.Name), StringComparer.OrdinalIgnoreCase);

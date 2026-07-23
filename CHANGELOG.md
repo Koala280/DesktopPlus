@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-23
+
+### Added
+
+- A dedicated Backups tab now lists restore points with their type, reason, contents, date, and size, and supports creating, restoring, deleting, refreshing, and opening the backup folder.
+- DesktopPlus now creates automatic restore points before auto-sort, updates, layout application, panel or layout deletion, auto-sort rule resets, and backup restoration.
+- Auto-sort restore points preserve the exact affected desktop files and folders so they can be returned to their original locations.
+- Added unit-test coverage for the bounded folder-list cache and backup metadata display.
+
+### Changed
+
+- Panel folder listings now warm up in parallel after the UI is ready, so collapsed panels and unopened folder tabs can show large directories much faster on first use.
+- Folder-list and recursive search caches now use bounded concurrency and explicit memory budgets to avoid excessive RAM growth with very large directory trees.
+- File-system watcher events now update folder listings, visible panel items, and completed search indices incrementally for create, delete, change, and rename operations instead of reloading the whole panel.
+- Update backups and user-created backups now share one backward-compatible restore format and management interface.
+
+### Removed
+
+- Removed the standalone restore-backup button and its separate dialog from General settings.
+
 ## [1.5.3] - 2026-07-22
 
 ### Fixed

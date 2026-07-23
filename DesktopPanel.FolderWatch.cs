@@ -161,7 +161,32 @@ namespace DesktopPlus
             ShellPropertyReader.InvalidatePath(oldFullPath);
             ExplorerDetailsColumnProvider.InvalidatePath(fullPath);
             ExplorerDetailsColumnProvider.InvalidatePath(oldFullPath);
-            InvalidateFolderSearchIndex(currentFolderPath, rebuildInBackground: true, rerunActiveSearch: true);
+            string? removedPath = kind switch
+            {
+                FolderWatcherChangeKind.Deleted => fullPath,
+                FolderWatcherChangeKind.Renamed => oldFullPath,
+                _ => null
+            };
+            string? addedOrChangedPath = kind == FolderWatcherChangeKind.Deleted
+                ? null
+                : fullPath;
+            FolderListingCache.ApplyFileSystemChange(
+                currentFolderPath,
+                removedPath,
+                addedOrChangedPath);
+
+            if (TryApplyFolderSearchIndexChange(currentFolderPath, kind, fullPath, oldFullPath))
+            {
+                RerunSearchForPanelsBoundToFolder(NormalizeFolderSearchIndexRoot(currentFolderPath));
+            }
+            else
+            {
+                InvalidateFolderSearchIndex(
+                    currentFolderPath,
+                    rebuildInBackground: true,
+                    rerunActiveSearch: true,
+                    invalidateFolderListing: false);
+            }
 
             bool refreshVisibleItems =
                 ShouldRefreshVisibleFolderItemsForWatcherPath(fullPath) ||
@@ -476,6 +501,14 @@ namespace DesktopPlus
 
         private void FolderWatcher_Error(object sender, ErrorEventArgs e)
         {
+            if (PanelType == PanelKind.Folder && !string.IsNullOrWhiteSpace(currentFolderPath))
+            {
+                InvalidateFolderSearchIndex(
+                    currentFolderPath,
+                    rebuildInBackground: true,
+                    rerunActiveSearch: true);
+            }
+
             RequireFullFolderWatcherRefresh();
             QueueFolderRefreshFromWatcher();
         }

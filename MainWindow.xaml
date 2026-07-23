@@ -1124,20 +1124,243 @@
                                             HorizontalAlignment="Left"
                                             Click="CheckUpdatesButton_Click"/>
 
-                                    <Button x:Name="RestoreBackupButton"
-                                            Content="{DynamicResource Loc.GeneralRestoreBackupButton}"
-                                            Style="{StaticResource GhostButton}"
-                                            Padding="10,6"
-                                            Margin="0,8,0,0"
-                                            HorizontalAlignment="Left"
-                                            Click="RestoreBackupButton_Click"/>
-
                                     <TextBlock x:Name="CurrentVersionText"
                                                Foreground="{StaticResource Muted}"
                                                FontSize="11"
                                                Margin="0,8,0,0"/>
                                 </StackPanel>
                             </Border>
+                        </Grid>
+                    </TabItem>
+
+                    <TabItem Header="{DynamicResource Loc.TabBackups}">
+                        <Grid Margin="0,12,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource Loc.BackupsTitle}"
+                                               FontSize="17"
+                                               FontWeight="SemiBold"
+                                               Foreground="White"/>
+                                    <TextBlock Text="{DynamicResource Loc.BackupsDesc}"
+                                               Foreground="{StaticResource Muted}"
+                                               Margin="0,4,0,0"
+                                               TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <Border Grid.Column="1"
+                                        Background="{StaticResource Primary}"
+                                        CornerRadius="9"
+                                        Padding="10,5"
+                                        Margin="12,0,0,0"
+                                        VerticalAlignment="Top">
+                                    <TextBlock x:Name="BackupsCountText"
+                                               Foreground="White"
+                                               FontWeight="SemiBold"/>
+                                </Border>
+                            </Grid>
+
+                            <Grid Grid.Row="1" Margin="0,14,0,0" MinHeight="430">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="1.05*"/>
+                                    <ColumnDefinition Width="1.25*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <Border Grid.Column="0"
+                                        Background="{StaticResource CardBackground}"
+                                        BorderBrush="{StaticResource CardBorder}"
+                                        BorderThickness="1"
+                                        CornerRadius="12"
+                                        Padding="12"
+                                        Margin="0,0,8,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button x:Name="CreateManualBackupButton"
+                                                    Content="{DynamicResource Loc.BackupsCreate}"
+                                                    Style="{StaticResource PrimaryButton}"
+                                                    Click="CreateManualBackup_Click"/>
+                                            <Button Content="{DynamicResource Loc.BackupsRefresh}"
+                                                    Style="{StaticResource GhostButton}"
+                                                    Margin="8,0,0,0"
+                                                    Click="RefreshBackups_Click"/>
+                                        </StackPanel>
+
+                                        <Grid Grid.Row="1" Margin="0,12,0,10">
+                                            <TextBlock x:Name="BackupsEmptyText"
+                                                       Text="{DynamicResource Loc.BackupsEmpty}"
+                                                       Foreground="{StaticResource Muted}"
+                                                       TextWrapping="Wrap"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"/>
+                                            <ListBox x:Name="BackupsList"
+                                                     Background="Transparent"
+                                                     BorderThickness="0"
+                                                     MaxHeight="350"
+                                                     SelectionChanged="BackupsList_SelectionChanged"
+                                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                                <ListBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border BorderThickness="1"
+                                                                CornerRadius="9"
+                                                                Padding="11"
+                                                                Margin="0,0,0,7">
+                                                            <Border.Style>
+                                                                <Style TargetType="Border">
+                                                                    <Setter Property="Background" Value="#171E2A"/>
+                                                                    <Setter Property="BorderBrush" Value="{StaticResource CardBorder}"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsSelected}"
+                                                                                     Value="True">
+                                                                            <Setter Property="Background" Value="#27324A"/>
+                                                                            <Setter Property="BorderBrush" Value="{StaticResource Primary}"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Border.Style>
+                                                            <StackPanel>
+                                                                <TextBlock Text="{Binding DisplayName}"
+                                                                           Foreground="White"
+                                                                           FontWeight="SemiBold"
+                                                                           TextTrimming="CharacterEllipsis"/>
+                                                                <TextBlock Text="{Binding Reason}"
+                                                                           Foreground="{StaticResource Muted}"
+                                                                           FontSize="11"
+                                                                           Margin="0,3,0,0"
+                                                                           TextTrimming="CharacterEllipsis"/>
+                                                                <Grid Margin="0,5,0,0">
+                                                                    <TextBlock Text="{Binding CreatedDisplay}"
+                                                                               Foreground="{StaticResource Muted}"
+                                                                               FontSize="10"/>
+                                                                    <TextBlock Text="{Binding FileSizeDisplay}"
+                                                                               Foreground="{StaticResource Muted}"
+                                                                               FontSize="10"
+                                                                               HorizontalAlignment="Right"/>
+                                                                </Grid>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ListBox.ItemTemplate>
+                                            </ListBox>
+                                        </Grid>
+
+                                        <StackPanel Grid.Row="2">
+                                            <Button Content="{DynamicResource Loc.BackupsOpenFolder}"
+                                                    Style="{StaticResource GhostButton}"
+                                                    HorizontalAlignment="Left"
+                                                    Click="OpenBackupsFolder_Click"/>
+                                            <TextBlock x:Name="BackupOperationStatusText"
+                                                       Foreground="{StaticResource Muted}"
+                                                       FontSize="11"
+                                                       Margin="0,8,0,0"
+                                                       TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+
+                                <Border Grid.Column="1"
+                                        Background="{StaticResource CardBackground}"
+                                        BorderBrush="{StaticResource CardBorder}"
+                                        BorderThickness="1"
+                                        CornerRadius="12"
+                                        Padding="16"
+                                        Margin="8,0,0,0">
+                                    <Grid>
+                                        <TextBlock x:Name="BackupNoSelectionText"
+                                                   Text="{DynamicResource Loc.BackupsNoSelection}"
+                                                   Foreground="{StaticResource Muted}"
+                                                   TextWrapping="Wrap"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"/>
+
+                                        <StackPanel x:Name="BackupDetailsPanel">
+                                            <TextBlock x:Name="BackupDetailsNameText"
+                                                       Foreground="White"
+                                                       FontSize="16"
+                                                       FontWeight="SemiBold"
+                                                       TextWrapping="Wrap"/>
+
+                                            <TextBlock Text="{DynamicResource Loc.BackupsTypeLabel}"
+                                                       Foreground="{StaticResource Muted}"
+                                                       FontSize="11"
+                                                       Margin="0,14,0,2"/>
+                                            <TextBlock x:Name="BackupDetailsTypeText" Foreground="White"/>
+
+                                            <TextBlock Text="{DynamicResource Loc.BackupsReasonLabel}"
+                                                       Foreground="{StaticResource Muted}"
+                                                       FontSize="11"
+                                                       Margin="0,10,0,2"/>
+                                            <TextBlock x:Name="BackupDetailsReasonText"
+                                                       Foreground="White"
+                                                       TextWrapping="Wrap"/>
+
+                                            <Grid Margin="0,10,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="{DynamicResource Loc.BackupRestoreCreated}"
+                                                               Foreground="{StaticResource Muted}"
+                                                               FontSize="11"/>
+                                                    <TextBlock x:Name="BackupDetailsCreatedText"
+                                                               Foreground="White"
+                                                               Margin="0,2,0,0"/>
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="{DynamicResource Loc.BackupRestoreFileSize}"
+                                                               Foreground="{StaticResource Muted}"
+                                                               FontSize="11"/>
+                                                    <TextBlock x:Name="BackupDetailsSizeText"
+                                                               Foreground="White"
+                                                               Margin="0,2,0,0"/>
+                                                </StackPanel>
+                                            </Grid>
+
+                                            <TextBlock Text="{DynamicResource Loc.BackupRestoreIncludes}"
+                                                       Foreground="{StaticResource Muted}"
+                                                       FontSize="11"
+                                                       Margin="0,12,0,2"/>
+                                            <TextBlock x:Name="BackupDetailsIncludesText"
+                                                       Foreground="White"
+                                                       TextWrapping="Wrap"/>
+
+                                            <TextBlock Text="{DynamicResource Loc.BackupRestoreFileName}"
+                                                       Foreground="{StaticResource Muted}"
+                                                       FontSize="11"
+                                                       Margin="0,12,0,2"/>
+                                            <TextBlock x:Name="BackupDetailsFileText"
+                                                       Foreground="White"
+                                                       FontSize="11"
+                                                       TextWrapping="Wrap"/>
+
+                                            <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
+                                                <Button x:Name="BackupRestoreSelectedButton"
+                                                        Content="{DynamicResource Loc.BackupsRestore}"
+                                                        Style="{StaticResource PrimaryButton}"
+                                                        Click="RestoreSelectedBackup_Click"/>
+                                                <Button x:Name="BackupDeleteSelectedButton"
+                                                        Content="{DynamicResource Loc.BackupsDelete}"
+                                                        Style="{StaticResource DangerButton}"
+                                                        Margin="8,0,0,0"
+                                                        Click="DeleteSelectedBackup_Click"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </Grid>
                         </Grid>
                     </TabItem>
 

@@ -5,6 +5,8 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -281,6 +283,60 @@ namespace DesktopPlus
                     Debug.WriteLine($"Failed to restore panel '{panelLabel}': {ex}");
                 }
             }
+        }
+
+        private void ScheduleSavedPanelFolderWarmup()
+        {
+            var folderPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (WindowData window in savedWindows.Where(window => window != null))
+            {
+                NormalizeWindowData(window);
+
+                if (window.Tabs != null && window.Tabs.Count > 0)
+                {
+                    foreach (PanelTabData tab in window.Tabs)
+                    {
+                        bool isFolderTab = Enum.TryParse<PanelKind>(tab.PanelType, true, out PanelKind kind)
+                            ? kind == PanelKind.Folder
+                            : !string.IsNullOrWhiteSpace(tab.FolderPath);
+                        if (isFolderTab && !string.IsNullOrWhiteSpace(tab.FolderPath))
+                        {
+                            folderPaths.Add(tab.FolderPath);
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (ResolvePanelKind(window) == PanelKind.Folder)
+                {
+                    string folderPath = ResolvePreferredFolderPath(window);
+                    if (!string.IsNullOrWhiteSpace(folderPath))
+                    {
+                        folderPaths.Add(folderPath);
+                    }
+                }
+            }
+
+            if (folderPaths.Count == 0)
+            {
+                return;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    // Let the first rendered frame and startup input win over disk warm-up.
+                    await Task.Delay(350).ConfigureAwait(false);
+                    await FolderListingCache.WarmAsync(folderPaths, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Panel folder warm-up failed: {ex}");
+                }
+            });
         }
 
         public static void SaveSettings()

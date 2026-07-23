@@ -91,6 +91,7 @@ namespace DesktopPlus
         private bool _deferSortUntilSearchComplete;
         private bool _isSearchExpandedFromCompactButton = false;
         private CancellationTokenSource? _folderLoadCts;
+        private CancellationTokenSource? _runningFolderLoadCts;
         private CancellationTokenSource? _folderIndexWarmupCts;
         private CancellationTokenSource? _recycleBinLoadCts;
         private bool _useLightweightItemVisuals;
@@ -316,6 +317,7 @@ namespace DesktopPlus
                 _folderLoadCts?.Cancel();
                 _folderLoadCts?.Dispose();
                 _folderLoadCts = null;
+                _runningFolderLoadCts = null;
                 _folderIndexWarmupCts?.Cancel();
                 _folderIndexWarmupCts?.Dispose();
                 _folderIndexWarmupCts = null;
@@ -1310,6 +1312,7 @@ namespace DesktopPlus
             SyncAnchoringFromCurrentBounds();
             ApplySearchVisibility();
             ApplyCollapsedVisualState(!isContentVisible, animateCorners: false);
+            StartFolderBackgroundWorkAfterUiReady();
         }
 
         private void DesktopPanel_SourceInitialized(object? sender, EventArgs e)

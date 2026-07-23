@@ -22,6 +22,8 @@ namespace DesktopPlus
         private const int SearchFilterBatchSize = 220;
         private const int SearchResultBatchSize = 10;
         private const int GlobalSearchIndexMaxRoots = 32;
+        private const long GlobalSearchIndexMaxEstimatedBytes = 64L * 1024L * 1024L;
+        private const long GlobalSearchIndexMaxEstimatedBytesPerRoot = 24L * 1024L * 1024L;
         private const int PersistedSearchIndexMagic = 0x44505349;
         private const int PersistedSearchIndexVersion = 3;
         private const int PersistedSearchIndexMaxFiles = 64;
@@ -69,7 +71,9 @@ namespace DesktopPlus
             public bool IsComplete { get; set; }
             public bool IsDirty { get; set; }
             public bool RequiresRefresh { get; set; }
+            public bool IsTooLargeToCache { get; set; }
             public CancellationTokenSource? BuildCts { get; set; }
+            public long EstimatedBytes { get; set; }
             public DateTime LastBuildUtc { get; set; }
             public DateTime RootLastWriteUtc { get; set; }
             public DateTime LastAccessUtc { get; set; } = DateTime.UtcNow;
@@ -99,6 +103,10 @@ namespace DesktopPlus
             var previousCts = _folderLoadCts;
             _folderLoadCts = null;
             previousCts?.Cancel();
+            if (ReferenceEquals(_runningFolderLoadCts, previousCts))
+            {
+                _runningFolderLoadCts = null;
+            }
 
             var currentCts = new CancellationTokenSource();
             _folderLoadCts = currentCts;
@@ -110,6 +118,41 @@ namespace DesktopPlus
             var pendingLoadCts = _folderLoadCts;
             _folderLoadCts = null;
             pendingLoadCts?.Cancel();
+            if (ReferenceEquals(_runningFolderLoadCts, pendingLoadCts))
+            {
+                _runningFolderLoadCts = null;
+            }
+        }
+
+        private void StartFolderLoad(string folderPath, CancellationTokenSource cts)
+        {
+            if (!MainWindow.IsUiReadyForBackgroundWork ||
+                !IsLoaded ||
+                !IsFolderLoadRequestCurrent(cts, folderPath) ||
+                ReferenceEquals(_runningFolderLoadCts, cts))
+            {
+                return;
+            }
+
+            _runningFolderLoadCts = cts;
+            _ = RunFolderLoadAsync(folderPath, cts);
+        }
+
+        internal void StartFolderBackgroundWorkAfterUiReady()
+        {
+            if (!MainWindow.IsUiReadyForBackgroundWork || !IsLoaded)
+            {
+                return;
+            }
+
+            if (_folderLoadCts is CancellationTokenSource pendingLoad &&
+                PanelType == PanelKind.Folder &&
+                !string.IsNullOrWhiteSpace(currentFolderPath))
+            {
+                StartFolderLoad(currentFolderPath, pendingLoad);
+            }
+
+            ScheduleBackgroundFolderIndexWarmup();
         }
 
         private void CancelPendingFolderSearchIndex()
@@ -122,12 +165,11 @@ namespace DesktopPlus
         {
             try
             {
-                return Path.GetFullPath(folderPath)
-                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                return Path.TrimEndingDirectorySeparator(Path.GetFullPath(folderPath));
             }
             catch
             {
-                return folderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                return Path.TrimEndingDirectorySeparator(folderPath);
             }
         }
 
@@ -207,7 +249,40 @@ namespace DesktopPlus
 
                     GlobalFolderSearchIndices.Remove(candidate.Key);
                 }
+
+                long cachedBytes = GlobalFolderSearchIndices.Values.Sum(state => state.EstimatedBytes);
+                while (cachedBytes > GlobalSearchIndexMaxEstimatedBytes)
+                {
+                    var candidate = GlobalFolderSearchIndices
+                        .Where(pair =>
+                            !string.Equals(pair.Key, preferredRoot, StringComparison.OrdinalIgnoreCase) &&
+                            pair.Value.BuildCts == null)
+                        .OrderBy(pair => pair.Value.LastAccessUtc)
+                        .FirstOrDefault();
+
+                    if (string.IsNullOrWhiteSpace(candidate.Key))
+                    {
+                        break;
+                    }
+
+                    cachedBytes = Math.Max(0, cachedBytes - candidate.Value.EstimatedBytes);
+                    GlobalFolderSearchIndices.Remove(candidate.Key);
+                }
             }
+        }
+
+        private static long EstimateFolderSearchIndexBytes(IEnumerable<FolderSearchIndexEntry> entries)
+        {
+            long bytes = 0;
+            foreach (FolderSearchIndexEntry entry in entries)
+            {
+                bytes += 96L +
+                    (entry.Path?.Length ?? 0) * sizeof(char) +
+                    (entry.Name?.Length ?? 0) * sizeof(char) +
+                    (entry.RelativePath?.Length ?? 0) * sizeof(char);
+            }
+
+            return bytes;
         }
 
         private static string GetFolderSearchIndexCachePath(string folderPath)
@@ -274,26 +349,37 @@ namespace DesktopPlus
                     return null;
                 }
 
-                var entries = new List<FolderSearchIndexEntry>(entryCount);
+                var entries = new List<FolderSearchIndexEntry>(Math.Min(entryCount, 100_000));
+                long estimatedBytes = 0;
                 for (int i = 0; i < entryCount; i++)
                 {
                     string path = reader.ReadString();
                     string name = reader.ReadString();
                     bool isDirectory = reader.ReadBoolean();
                     int depth = reader.ReadInt32();
+                    string relativePath = persistedVersion >= 2
+                        ? reader.ReadString()
+                        : BuildRelativeSearchPath(storedRoot, path, name);
 
                     if (string.IsNullOrWhiteSpace(path))
                     {
                         continue;
                     }
 
+                    estimatedBytes += 96L +
+                        path.Length * sizeof(char) +
+                        name.Length * sizeof(char) +
+                        relativePath.Length * sizeof(char);
+                    if (estimatedBytes > GlobalSearchIndexMaxEstimatedBytesPerRoot)
+                    {
+                        return null;
+                    }
+
                     entries.Add(new FolderSearchIndexEntry
                     {
                         Path = path,
                         Name = string.IsNullOrWhiteSpace(name) ? GetPathLeafName(path) : name,
-                        RelativePath = persistedVersion >= 2
-                            ? reader.ReadString()
-                            : BuildRelativeSearchPath(storedRoot, path, name),
+                        RelativePath = relativePath,
                         IsDirectory = isDirectory,
                         Depth = Math.Max(0, depth)
                     });
@@ -429,10 +515,195 @@ namespace DesktopPlus
             }
         }
 
+        private bool TryApplyFolderSearchIndexChange(
+            string folderPath,
+            FolderWatcherChangeKind kind,
+            string? fullPath,
+            string? oldFullPath)
+        {
+            string normalizedRoot = NormalizeFolderSearchIndexRoot(folderPath);
+            bool changedIndexContents = false;
+
+            lock (GlobalFolderSearchIndexLock)
+            {
+                if (!GlobalFolderSearchIndices.TryGetValue(normalizedRoot, out var state))
+                {
+                    return false;
+                }
+
+                state.LastAccessUtc = DateTime.UtcNow;
+                if (state.IsTooLargeToCache)
+                {
+                    return true;
+                }
+
+                if (state.BuildCts != null ||
+                    state.IsDirty ||
+                    !state.IsComplete ||
+                    state.RequiresRefresh)
+                {
+                    return false;
+                }
+
+                List<FolderSearchIndexEntry> entries = state.Entries;
+                switch (kind)
+                {
+                    case FolderWatcherChangeKind.Changed:
+                        break;
+
+                    case FolderWatcherChangeKind.Created:
+                        if (string.IsNullOrWhiteSpace(fullPath))
+                        {
+                            return true;
+                        }
+
+                        if (Directory.Exists(fullPath))
+                        {
+                            // A directory may arrive with an existing subtree. Rebuild the
+                            // search index, while the visible one-level cache remains incremental.
+                            return false;
+                        }
+
+                        if (File.Exists(fullPath) && ShouldIndexPath(fullPath))
+                        {
+                            entries.RemoveAll(entry =>
+                                string.Equals(entry.Path, fullPath, StringComparison.OrdinalIgnoreCase));
+                            entries.Add(CreateFolderSearchIndexEntry(normalizedRoot, fullPath, isDirectory: false));
+                            changedIndexContents = true;
+                        }
+                        break;
+
+                    case FolderWatcherChangeKind.Deleted:
+                        if (!string.IsNullOrWhiteSpace(fullPath))
+                        {
+                            changedIndexContents = RemoveFolderSearchIndexPath(entries, fullPath) > 0;
+                        }
+                        break;
+
+                    case FolderWatcherChangeKind.Renamed:
+                        if (string.IsNullOrWhiteSpace(oldFullPath))
+                        {
+                            return false;
+                        }
+
+                        List<FolderSearchIndexEntry> renamedEntries = entries
+                            .Where(entry => IsSameOrDescendantPath(entry.Path, oldFullPath))
+                            .ToList();
+                        RemoveFolderSearchIndexPath(entries, oldFullPath);
+
+                        if (!string.IsNullOrWhiteSpace(fullPath) && Directory.Exists(fullPath))
+                        {
+                            if (renamedEntries.Count == 0)
+                            {
+                                return false;
+                            }
+
+                            foreach (FolderSearchIndexEntry oldEntry in renamedEntries)
+                            {
+                                string suffix = oldEntry.Path.Length == oldFullPath.Length
+                                    ? string.Empty
+                                    : oldEntry.Path.Substring(oldFullPath.Length);
+                                string renamedPath = fullPath + suffix;
+                                if (ShouldIndexPath(renamedPath))
+                                {
+                                    entries.Add(CreateFolderSearchIndexEntry(
+                                        normalizedRoot,
+                                        renamedPath,
+                                        oldEntry.IsDirectory));
+                                }
+                            }
+                        }
+                        else if (!string.IsNullOrWhiteSpace(fullPath) &&
+                                 File.Exists(fullPath) &&
+                                 ShouldIndexPath(fullPath))
+                        {
+                            entries.Add(CreateFolderSearchIndexEntry(normalizedRoot, fullPath, isDirectory: false));
+                        }
+
+                        changedIndexContents = true;
+                        break;
+                }
+
+                if (changedIndexContents)
+                {
+                    long estimatedBytes = EstimateFolderSearchIndexBytes(entries);
+                    if (estimatedBytes > GlobalSearchIndexMaxEstimatedBytesPerRoot)
+                    {
+                        state.Entries = new List<FolderSearchIndexEntry>();
+                        state.EstimatedBytes = 0;
+                        state.IsComplete = false;
+                        state.IsTooLargeToCache = true;
+                    }
+                    else
+                    {
+                        state.EstimatedBytes = estimatedBytes;
+                    }
+                }
+
+                state.RootLastWriteUtc = GetDirectoryLastWriteTimeUtcSafe(normalizedRoot);
+                state.LastAccessUtc = DateTime.UtcNow;
+            }
+
+            if (changedIndexContents)
+            {
+                DeletePersistedFolderSearchIndex(normalizedRoot);
+            }
+
+            return true;
+        }
+
+        private static FolderSearchIndexEntry CreateFolderSearchIndexEntry(
+            string rootPath,
+            string path,
+            bool isDirectory)
+        {
+            string relativePath = BuildRelativeSearchPath(rootPath, path);
+            int depth = relativePath
+                .Split(
+                    new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+                    StringSplitOptions.RemoveEmptyEntries)
+                .Length;
+
+            return new FolderSearchIndexEntry
+            {
+                Path = path,
+                Name = GetPathLeafName(path),
+                RelativePath = relativePath,
+                IsDirectory = isDirectory,
+                Depth = Math.Max(1, depth)
+            };
+        }
+
+        private static int RemoveFolderSearchIndexPath(
+            List<FolderSearchIndexEntry> entries,
+            string path)
+        {
+            return entries.RemoveAll(entry => IsSameOrDescendantPath(entry.Path, path));
+        }
+
+        private static bool IsSameOrDescendantPath(string candidatePath, string parentPath)
+        {
+            if (string.Equals(candidatePath, parentPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (!candidatePath.StartsWith(parentPath, StringComparison.OrdinalIgnoreCase) ||
+                candidatePath.Length <= parentPath.Length)
+            {
+                return false;
+            }
+
+            char separator = candidatePath[parentPath.Length];
+            return separator == Path.DirectorySeparatorChar ||
+                separator == Path.AltDirectorySeparatorChar;
+        }
+
         private void InvalidateFolderSearchIndex(
             string folderPath,
             bool rebuildInBackground = true,
-            bool rerunActiveSearch = false)
+            bool rerunActiveSearch = false,
+            bool invalidateFolderListing = true)
         {
             if (string.IsNullOrWhiteSpace(folderPath))
             {
@@ -440,6 +711,10 @@ namespace DesktopPlus
             }
 
             string normalizedRoot = NormalizeFolderSearchIndexRoot(folderPath);
+            if (invalidateFolderListing)
+            {
+                FolderListingCache.Invalidate(normalizedRoot);
+            }
             CancellationTokenSource? buildToCancel = null;
 
             lock (GlobalFolderSearchIndexLock)
@@ -450,6 +725,9 @@ namespace DesktopPlus
                     state.BuildCts = null;
                     state.IsDirty = true;
                     state.IsComplete = false;
+                    state.IsTooLargeToCache = false;
+                    state.Entries = new List<FolderSearchIndexEntry>();
+                    state.EstimatedBytes = 0;
                     state.LastAccessUtc = DateTime.UtcNow;
                 }
             }
@@ -536,12 +814,23 @@ namespace DesktopPlus
 
                     if (persistedSnapshot != null)
                     {
-                        state.Entries = persistedSnapshot.Entries;
-                        state.IsComplete = true;
-                        state.IsDirty = false;
-                        state.RequiresRefresh = true;
-                        state.LastBuildUtc = persistedSnapshot.BuiltUtc;
-                        state.RootLastWriteUtc = persistedSnapshot.RootLastWriteUtc;
+                        long persistedBytes = EstimateFolderSearchIndexBytes(persistedSnapshot.Entries);
+                        if (persistedBytes <= GlobalSearchIndexMaxEstimatedBytesPerRoot)
+                        {
+                            state.Entries = persistedSnapshot.Entries;
+                            state.EstimatedBytes = persistedBytes;
+                            state.IsComplete = true;
+                            state.IsDirty = false;
+                            state.RequiresRefresh = true;
+                            state.LastBuildUtc = persistedSnapshot.BuiltUtc;
+                            state.RootLastWriteUtc = persistedSnapshot.RootLastWriteUtc;
+                        }
+                        else
+                        {
+                            // Ignore an oversized persisted snapshot and rebuild with
+                            // the current in-memory cap instead of loading it into RAM.
+                            persistedSnapshot = null;
+                        }
                     }
 
                     GlobalFolderSearchIndices[normalizedRoot] = state;
@@ -549,6 +838,7 @@ namespace DesktopPlus
 
                 state.LastAccessUtc = DateTime.UtcNow;
                 if (state.BuildCts != null ||
+                    state.IsTooLargeToCache ||
                     (state.IsComplete && !state.IsDirty && !state.RequiresRefresh))
                 {
                     return;
@@ -569,6 +859,8 @@ namespace DesktopPlus
             DateTime completedUtc;
             DateTime rootLastWriteUtc = DateTime.MinValue;
             bool buildLockHeld = false;
+            long estimatedBytes = 0;
+            bool exceededMemoryBudget = false;
 
             try
             {
@@ -578,6 +870,18 @@ namespace DesktopPlus
                 foreach (var entry in EnumerateRecursiveSearchEntries(folderPath, token))
                 {
                     token.ThrowIfCancellationRequested();
+                    estimatedBytes += 96L +
+                        entry.Path.Length * sizeof(char) +
+                        entry.Name.Length * sizeof(char) +
+                        entry.RelativePath.Length * sizeof(char);
+                    if (estimatedBytes > GlobalSearchIndexMaxEstimatedBytesPerRoot)
+                    {
+                        exceededMemoryBudget = true;
+                        builtEntries.Clear();
+                        estimatedBytes = 0;
+                        break;
+                    }
+
                     builtEntries.Add(entry);
                 }
 
@@ -593,9 +897,11 @@ namespace DesktopPlus
                     }
 
                     state.Entries = builtEntries;
-                    state.IsComplete = true;
+                    state.EstimatedBytes = estimatedBytes;
+                    state.IsComplete = !exceededMemoryBudget;
                     state.IsDirty = false;
                     state.RequiresRefresh = false;
+                    state.IsTooLargeToCache = exceededMemoryBudget;
                     state.BuildCts = null;
                     state.LastBuildUtc = completedUtc;
                     state.RootLastWriteUtc = rootLastWriteUtc;
@@ -608,7 +914,11 @@ namespace DesktopPlus
                     return;
                 }
 
-                PersistFolderSearchIndex(folderPath, builtEntries, completedUtc, rootLastWriteUtc);
+                TrimGlobalFolderSearchIndexCache(folderPath);
+                if (!exceededMemoryBudget)
+                {
+                    PersistFolderSearchIndex(folderPath, builtEntries, completedUtc, rootLastWriteUtc);
+                }
                 await Dispatcher.InvokeAsync(() => RerunSearchForPanelsBoundToFolder(folderPath),
                     System.Windows.Threading.DispatcherPriority.Background,
                     token);
@@ -971,6 +1281,13 @@ namespace DesktopPlus
 
         private List<string>? TryGetIndexedVisibleFolderEntries(string folderPath)
         {
+            if (FolderListingCache.TryGet(folderPath, out IReadOnlyList<string> cachedPaths))
+            {
+                return cachedPaths
+                    .Where(ShouldShowPath)
+                    .ToList();
+            }
+
             var snapshot = GetFolderSearchIndexSnapshot(folderPath);
             if (!snapshot.HasSnapshot ||
                 !snapshot.IsComplete ||
@@ -1005,11 +1322,6 @@ namespace DesktopPlus
             {
                 for (int i = 0; i < _tabs.Count; i++)
                 {
-                    if (i == _activeTabIndex)
-                    {
-                        continue;
-                    }
-
                     var tab = _tabs[i];
                     bool isFolderTab = Enum.TryParse<PanelKind>(tab?.PanelType, true, out var kind)
                         ? kind == PanelKind.Folder
@@ -1027,8 +1339,6 @@ namespace DesktopPlus
                         yield return normalizedRoot;
                     }
                 }
-
-                yield break;
             }
 
             if (PanelType == PanelKind.Folder && !string.IsNullOrWhiteSpace(currentFolderPath))
@@ -1055,6 +1365,13 @@ namespace DesktopPlus
                 return;
             }
 
+            // Startup warm-up must never compete with constructing the window itself.
+            // Calls made while tabs are restored are picked up by DesktopPanel_Loaded.
+            if (!MainWindow.IsUiReadyForBackgroundWork || !IsLoaded)
+            {
+                return;
+            }
+
             var currentCts = new CancellationTokenSource();
             _folderIndexWarmupCts = currentCts;
 
@@ -1063,6 +1380,7 @@ namespace DesktopPlus
                 try
                 {
                     await Task.Delay(FolderIndexWarmupInitialDelayMs, currentCts.Token);
+                    await FolderListingCache.WarmAsync(folderPaths, currentCts.Token);
 
                     foreach (string folderPath in folderPaths)
                     {
@@ -1525,8 +1843,12 @@ namespace DesktopPlus
             _ = Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Loaded);
             UpdateDropZoneVisibility();
             UpdateEmptyRecycleBinButtonVisibility();
-            EnsureFolderSearchIndexBuild(folderPath);
-            _ = RunFolderLoadAsync(folderPath, loadCts);
+            if (MainWindow.IsUiReadyForBackgroundWork && IsLoaded)
+            {
+                EnsureFolderSearchIndexBuild(folderPath);
+            }
+            StartFolderLoad(folderPath, loadCts);
+            ScheduleBackgroundFolderIndexWarmup();
 
             if (saveSettings)
             {
@@ -1701,6 +2023,10 @@ namespace DesktopPlus
                 {
                     _folderLoadCts = null;
                 }
+                if (ReferenceEquals(_runningFolderLoadCts, cts))
+                {
+                    _runningFolderLoadCts = null;
+                }
 
                 cts.Dispose();
             }
@@ -1720,6 +2046,7 @@ namespace DesktopPlus
         private List<string> EnumerateVisibleFolderEntries(string folderPath, CancellationToken token)
         {
             var entries = new List<string>(256);
+            bool completed = false;
             try
             {
                 foreach (string directoryPath in Directory.EnumerateDirectories(folderPath))
@@ -1729,7 +2056,7 @@ namespace DesktopPlus
                         return entries;
                     }
 
-                    if (ShouldShowPath(directoryPath))
+                    if (ShouldIndexPath(directoryPath))
                     {
                         entries.Add(directoryPath);
                     }
@@ -1742,17 +2069,26 @@ namespace DesktopPlus
                         return entries;
                     }
 
-                    if (ShouldShowPath(filePath))
+                    if (ShouldIndexPath(filePath))
                     {
                         entries.Add(filePath);
                     }
                 }
+
+                completed = true;
             }
             catch
             {
             }
 
-            return entries;
+            if (completed && !token.IsCancellationRequested)
+            {
+                FolderListingCache.Store(folderPath, entries);
+            }
+
+            return entries
+                .Where(ShouldShowPath)
+                .ToList();
         }
 
         public void AppendItemsToList(IEnumerable<string> filePaths, bool animateEntries)

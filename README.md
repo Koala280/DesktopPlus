@@ -45,6 +45,7 @@ DesktopPlus is built for people who want a fast desktop workflow without replaci
 | Sorting | Click metadata headers in list view to toggle ascending/descending sort. |
 | Search | In-panel search with async loading behavior for large folders. |
 | Auto-sort | Rule-based desktop sorting with built-in and custom extension rules. |
+| Backups | Manual backups plus automatic restore points before auto-sort, updates, and critical configuration changes. |
 | Target suggestions | Auto-sort target input suggests existing panel and tab names. |
 | Layouts | Save and restore panel positions, visibility, and appearance presets. |
 | Themes | Header/body/tabs theming with presets, typography, colors, shadows, and preview. |
@@ -145,6 +146,20 @@ DesktopPlus can move new desktop items into category targets automatically.
 Sorted files are moved from your desktop into:
 
 `%LOCALAPPDATA%\DesktopPlus\AutoSortStorage\`
+
+## Backups and Recovery
+
+The `Backups` tab provides one place to create, inspect, restore, and delete backups.
+
+- DesktopPlus automatically creates restore points before auto-sort, updates, layout application, destructive panel/layout changes, rule resets, and restores.
+- Auto-sort backups preserve the affected desktop items and their original paths.
+- Manual backups include the installed application files, settings, custom languages, and auto-sort storage.
+- Automatic backup history is bounded per backup type; manual backups are retained until you delete them.
+- Restoring a backup first creates a safety backup of the current state.
+
+Backup archives are stored in:
+
+`%LOCALAPPDATA%\DesktopPlus\Backups\`
 
 ## Hotkeys and Shortcuts
 

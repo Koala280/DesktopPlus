@@ -12,15 +12,24 @@ namespace DesktopPlus
         public long FileSizeBytes { get; set; }
         public string SourceInstallDirectory { get; set; } = string.Empty;
         public string SourceExecutablePath { get; set; } = string.Empty;
+        public string BackupKind { get; set; } = "update";
+        public string Reason { get; set; } = string.Empty;
+        public string CustomDisplayName { get; set; } = string.Empty;
         public bool ContainsAppSnapshot { get; set; }
         public bool ContainsSettingsSnapshot { get; set; }
         public bool ContainsCustomLanguages { get; set; }
         public bool ContainsAutoSortStorage { get; set; }
+        public bool ContainsDesktopSnapshot { get; set; }
 
         public string DisplayName
         {
             get
             {
+                if (!string.IsNullOrWhiteSpace(CustomDisplayName))
+                {
+                    return CustomDisplayName;
+                }
+
                 if (!string.IsNullOrWhiteSpace(CurrentVersion) &&
                     !string.IsNullOrWhiteSpace(TargetVersion))
                 {

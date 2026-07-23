@@ -93,12 +93,24 @@ namespace DesktopPlus
 
         private sealed class UpdateBackupManifest
         {
+            public int SchemaVersion { get; set; } = 2;
+            public string BackupKind { get; set; } = "update";
+            public string Reason { get; set; } = string.Empty;
+            public string DisplayName { get; set; } = string.Empty;
             public string CurrentVersion { get; set; } = string.Empty;
             public string TargetVersion { get; set; } = string.Empty;
             public string CreatedUtc { get; set; } = string.Empty;
             public string SourceExecutablePath { get; set; } = string.Empty;
             public string SourceInstallDirectory { get; set; } = string.Empty;
+            public bool CapturedAutoSortStorage { get; set; }
             public List<string> IncludedEntries { get; set; } = new List<string>();
+            public List<DesktopBackupItemManifest> DesktopItems { get; set; } = new List<DesktopBackupItemManifest>();
+        }
+
+        private sealed class DesktopBackupItemManifest
+        {
+            public string OriginalPath { get; set; } = string.Empty;
+            public string ArchiveRelativePath { get; set; } = string.Empty;
         }
 
         private static string GetInstalledVersionText()
@@ -361,18 +373,20 @@ namespace DesktopPlus
         {
             return string.Join(Environment.NewLine, new[]
             {
-                "DesktopPlus update backup",
+                "DesktopPlus backup",
                 string.Empty,
                 $"Archive: {archiveFileName}",
                 string.Empty,
                 "Restore steps:",
-                "1. Install the DesktopPlus version you want to roll back to.",
-                "2. Close DesktopPlus.",
-                "3. Extract this archive to a temporary folder.",
-                $"4. Restore 'user-data\\roaming\\{Path.GetFileName(settingsFilePath)}' to '%APPDATA%\\{Path.GetFileName(settingsFilePath)}'.",
-                "5. Restore 'user-data\\roaming\\DesktopPlus\\' to '%APPDATA%\\DesktopPlus\\' if present.",
-                "6. Restore 'user-data\\local\\AutoSortStorage\\' to '%LOCALAPPDATA%\\DesktopPlus\\AutoSortStorage\\' if present.",
-                "7. Optional: the 'app\\' folder contains the pre-update program files of the previous installation."
+                "1. Open DesktopPlus and select this archive in the Backups tab.",
+                "2. Choose Restore and confirm the safety prompt.",
+                string.Empty,
+                "Manual recovery:",
+                "1. Close DesktopPlus and extract this archive to a temporary folder.",
+                $"2. Restore 'user-data\\roaming\\{Path.GetFileName(settingsFilePath)}' to '%APPDATA%\\{Path.GetFileName(settingsFilePath)}' if present.",
+                "3. Restore 'user-data\\roaming\\DesktopPlus\\' to '%APPDATA%\\DesktopPlus\\' if present.",
+                "4. Restore 'user-data\\local\\AutoSortStorage\\' to '%LOCALAPPDATA%\\DesktopPlus\\AutoSortStorage\\' if present.",
+                "5. The optional 'app\\' folder contains the backed-up program files."
             });
         }
 
@@ -387,6 +401,10 @@ namespace DesktopPlus
 
                 var oldBackups = Directory
                     .EnumerateFiles(UpdateBackupsDirectory, "DesktopPlus-backup-*.zip", SearchOption.TopDirectoryOnly)
+                    .Where(path =>
+                        !Path.GetFileName(path).StartsWith("DesktopPlus-backup-manual-", StringComparison.OrdinalIgnoreCase) &&
+                        !Path.GetFileName(path).StartsWith("DesktopPlus-backup-auto-sort-", StringComparison.OrdinalIgnoreCase) &&
+                        !Path.GetFileName(path).StartsWith("DesktopPlus-backup-critical-", StringComparison.OrdinalIgnoreCase))
                     .Where(path => !string.Equals(path, keepArchivePath, StringComparison.OrdinalIgnoreCase))
                     .Select(path => new FileInfo(path))
                     .OrderByDescending(info => info.LastWriteTimeUtc)
@@ -422,7 +440,7 @@ namespace DesktopPlus
                 normalizedTargetVersion = "next";
             }
 
-            string timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+            string timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff");
             string archiveFileName =
                 $"DesktopPlus-backup-{SanitizeVersionTokenForFileName(currentVersion)}-before-{SanitizeVersionTokenForFileName(normalizedTargetVersion)}-{timestamp}.zip";
             string archivePath = Path.Combine(UpdateBackupsDirectory, archiveFileName);
@@ -471,11 +489,15 @@ namespace DesktopPlus
 
                 var manifest = new UpdateBackupManifest
                 {
+                    BackupKind = "update",
+                    Reason = $"Before update to {normalizedTargetVersion}",
+                    DisplayName = $"Before update {currentVersion} → {normalizedTargetVersion}",
                     CurrentVersion = currentVersion,
                     TargetVersion = normalizedTargetVersion,
                     CreatedUtc = DateTime.UtcNow.ToString("O"),
                     SourceExecutablePath = Environment.ProcessPath ?? string.Empty,
                     SourceInstallDirectory = installDirectory ?? string.Empty,
+                    CapturedAutoSortStorage = true,
                     IncludedEntries = includedEntries
                 };
 
@@ -600,6 +622,13 @@ namespace DesktopPlus
                         backup.TargetVersion = manifest.TargetVersion ?? string.Empty;
                         backup.SourceInstallDirectory = manifest.SourceInstallDirectory ?? string.Empty;
                         backup.SourceExecutablePath = manifest.SourceExecutablePath ?? string.Empty;
+                        backup.BackupKind = string.IsNullOrWhiteSpace(manifest.BackupKind)
+                            ? "update"
+                            : manifest.BackupKind;
+                        backup.Reason = manifest.Reason ?? string.Empty;
+                        backup.CustomDisplayName = manifest.DisplayName ?? string.Empty;
+                        backup.ContainsDesktopSnapshot = manifest.DesktopItems?.Count > 0;
+                        backup.ContainsAutoSortStorage = manifest.CapturedAutoSortStorage;
 
                         if (DateTime.TryParse(
                             manifest.CreatedUtc,
@@ -614,7 +643,8 @@ namespace DesktopPlus
                     backup.ContainsAppSnapshot = ZipArchiveContainsEntryPrefix(archive, "app/");
                     backup.ContainsSettingsSnapshot = ZipArchiveContainsEntryPrefix(archive, "user-data/roaming/DesktopPlus_Settings.json");
                     backup.ContainsCustomLanguages = ZipArchiveContainsEntryPrefix(archive, "user-data/roaming/DesktopPlus/Languages/");
-                    backup.ContainsAutoSortStorage = ZipArchiveContainsEntryPrefix(archive, "user-data/local/AutoSortStorage/");
+                    backup.ContainsAutoSortStorage |= ZipArchiveContainsEntryPrefix(archive, "user-data/local/AutoSortStorage/");
+                    backup.ContainsDesktopSnapshot |= ZipArchiveContainsEntryPrefix(archive, "user-data/desktop-items/");
                     backups.Add(backup);
                 }
                 catch (Exception ex)
@@ -719,6 +749,8 @@ namespace DesktopPlus
             script.AppendLine("try {");
             script.AppendLine("  Ensure-Directory $restoreRoot");
             script.AppendLine("  Expand-Archive -LiteralPath $archivePath -DestinationPath $extractPath -Force");
+            script.AppendLine("  $manifestPath = Join-Path $extractPath 'manifest.json'");
+            script.AppendLine("  $manifest = if (Test-Path -LiteralPath $manifestPath) { Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json } else { $null }");
             script.AppendLine("  $appSource = Join-Path $extractPath 'app'");
             script.AppendLine("  if (Test-Path -LiteralPath $appSource) { Reset-DirectoryContents $targetInstallDir; Copy-DirectoryContents $appSource $targetInstallDir }");
             script.AppendLine("  $settingsSource = Join-Path $extractPath 'user-data\\roaming\\DesktopPlus_Settings.json'");
@@ -726,7 +758,19 @@ namespace DesktopPlus
             script.AppendLine("  $languagesSource = Join-Path $extractPath 'user-data\\roaming\\DesktopPlus\\Languages'");
             script.AppendLine("  if (Test-Path -LiteralPath $languagesSource) { if (Test-Path -LiteralPath $targetLanguagesDir) { Remove-Item -LiteralPath $targetLanguagesDir -Recurse -Force }; Ensure-Directory (Split-Path -Path $targetLanguagesDir -Parent); Copy-DirectoryContents $languagesSource $targetLanguagesDir }");
             script.AppendLine("  $autoSortSource = Join-Path $extractPath 'user-data\\local\\AutoSortStorage'");
-            script.AppendLine("  if (Test-Path -LiteralPath $autoSortSource) { if (Test-Path -LiteralPath $targetAutoSortDir) { Remove-Item -LiteralPath $targetAutoSortDir -Recurse -Force }; Ensure-Directory (Split-Path -Path $targetAutoSortDir -Parent); Copy-DirectoryContents $autoSortSource $targetAutoSortDir }");
+            script.AppendLine("  $capturedAutoSort = ($manifest -and $manifest.CapturedAutoSortStorage) -or (Test-Path -LiteralPath $autoSortSource)");
+            script.AppendLine("  if ($capturedAutoSort) { if (Test-Path -LiteralPath $targetAutoSortDir) { Remove-Item -LiteralPath $targetAutoSortDir -Recurse -Force }; if (Test-Path -LiteralPath $autoSortSource) { Ensure-Directory (Split-Path -Path $targetAutoSortDir -Parent); Copy-DirectoryContents $autoSortSource $targetAutoSortDir } }");
+            script.AppendLine("  if ($manifest -and $manifest.DesktopItems) {");
+            script.AppendLine("    foreach ($desktopItem in $manifest.DesktopItems) {");
+            script.AppendLine("      if ([string]::IsNullOrWhiteSpace($desktopItem.OriginalPath) -or [string]::IsNullOrWhiteSpace($desktopItem.ArchiveRelativePath)) { continue }");
+            script.AppendLine("      $desktopRelativePath = $desktopItem.ArchiveRelativePath.Replace('/', [IO.Path]::DirectorySeparatorChar)");
+            script.AppendLine("      $desktopSource = Join-Path $extractPath $desktopRelativePath");
+            script.AppendLine("      if (-not (Test-Path -LiteralPath $desktopSource)) { continue }");
+            script.AppendLine("      Ensure-Directory (Split-Path -Path $desktopItem.OriginalPath -Parent)");
+            script.AppendLine("      if (Test-Path -LiteralPath $desktopItem.OriginalPath) { Remove-Item -LiteralPath $desktopItem.OriginalPath -Recurse -Force }");
+            script.AppendLine("      Copy-Item -LiteralPath $desktopSource -Destination $desktopItem.OriginalPath -Recurse -Force");
+            script.AppendLine("    }");
+            script.AppendLine("  }");
             script.AppendLine("  if (Test-Path -LiteralPath $pendingInfoPath) { Remove-Item -LiteralPath $pendingInfoPath -Force -ErrorAction SilentlyContinue }");
             script.AppendLine("} catch {");
             script.AppendLine("  Show-RestoreError($_.Exception.Message)");
@@ -1510,45 +1554,5 @@ namespace DesktopPlus
             await CheckForUpdatesAsync(userInitiated: true);
         }
 
-        private void RestoreBackupButton_Click(object sender, RoutedEventArgs e)
-        {
-            var dialog = new BackupRestoreDialog(LoadAvailableUpdateBackups)
-            {
-                Owner = this,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner
-            };
-
-            bool? result = dialog.ShowDialog();
-            if (result != true || dialog.SelectedBackup == null)
-            {
-                return;
-            }
-
-            UpdateBackupInfo backup = dialog.SelectedBackup;
-            string displayName = string.IsNullOrWhiteSpace(backup.DisplayName)
-                ? backup.ArchiveFileName
-                : backup.DisplayName;
-            MessageBoxResult confirmRestore = System.Windows.MessageBox.Show(
-                string.Format(GetString("Loc.BackupRestoreConfirm"), displayName),
-                GetString("Loc.BackupRestoreConfirmTitle"),
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
-            if (confirmRestore != MessageBoxResult.Yes)
-            {
-                return;
-            }
-
-            if (!TryStartBackupRestoreScript(backup, out string errorMessage))
-            {
-                System.Windows.MessageBox.Show(
-                    string.Format(GetString("Loc.MsgBackupRestoreFailed"), errorMessage),
-                    GetString("Loc.MsgError"),
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
-                return;
-            }
-
-            ShutdownForUpdateInstall();
-        }
     }
 }
