@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-07-25
+
+### Changed
+
+- The temporary foreground shortcut now sends panels back immediately when the keys are released.
+
 ## [1.6.0] - 2026-07-23
 
 ### Added

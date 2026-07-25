@@ -25,11 +25,6 @@ namespace DesktopPlus
         private const string DefaultHidePanelsHotkey = "Ctrl + Alt + H";
         private const string DefaultForegroundPanelsHotkey = "Ctrl + Alt + F";
         private const int ForegroundShortcutPollMs = 35;
-        // Keep the panels in front briefly after the keys are released so the shortcut
-        // can actually be used to click an item.  A hold-only mode requires the user to
-        // keep modifier keys pressed while operating the panel, which commonly blocks
-        // the intended click and immediately sends the panel away on release.
-        private const int ForegroundShortcutInteractionGraceMs = 2000;
         private const int ShortcutConflictPollSeconds = 3;
 
         // Low-level keyboard hook constants (override / "above the blocking app" mode).
@@ -1246,11 +1241,6 @@ namespace DesktopPlus
 
                     await Task.Delay(ForegroundShortcutPollMs, source.Token);
                 }
-
-                // The WM_HOTKEY message is delivered while the shortcut keys are still
-                // down.  Keep the foreground state a little longer after release so users
-                // can let go of Alt/Ctrl and click or open an item normally.
-                await Task.Delay(ForegroundShortcutInteractionGraceMs, source.Token);
             }
             catch (OperationCanceledException)
             {
