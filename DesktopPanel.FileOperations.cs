@@ -126,8 +126,10 @@ namespace DesktopPlus
 
         private void StartFolderLoad(string folderPath, CancellationTokenSource cts)
         {
-            if (!MainWindow.IsUiReadyForBackgroundWork ||
-                !IsLoaded ||
+            // Loading the visible folder contents is foreground work. Do not gate it
+            // on the main window's background-work lifecycle: panels can be loaded
+            // before or independently of that signal and would otherwise stay empty.
+            if (!IsLoaded ||
                 !IsFolderLoadRequestCurrent(cts, folderPath) ||
                 ReferenceEquals(_runningFolderLoadCts, cts))
             {
@@ -140,11 +142,13 @@ namespace DesktopPlus
 
         internal void StartFolderBackgroundWorkAfterUiReady()
         {
-            if (!MainWindow.IsUiReadyForBackgroundWork || !IsLoaded)
+            if (!IsLoaded)
             {
                 return;
             }
 
+            // Always resume a pending visible-folder load. Only index warm-up is
+            // background work and remains guarded inside its scheduler.
             if (_folderLoadCts is CancellationTokenSource pendingLoad &&
                 PanelType == PanelKind.Folder &&
                 !string.IsNullOrWhiteSpace(currentFolderPath))
@@ -1292,7 +1296,8 @@ namespace DesktopPlus
             if (!snapshot.HasSnapshot ||
                 !snapshot.IsComplete ||
                 snapshot.RequiresRefresh ||
-                snapshot.IsBuildInProgress)
+                snapshot.IsBuildInProgress ||
+                snapshot.Entries.Count == 0)
             {
                 return null;
             }

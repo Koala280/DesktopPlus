@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-07-26
+
+### Fixed
+
+- Folder panels now load their visible contents independently of background index startup, preventing Downloads, Development, and other restored folders from appearing empty.
+- Empty search-index snapshots now fall back to a direct folder listing.
+
 ## [1.6.1] - 2026-07-25
 
 ### Changed
