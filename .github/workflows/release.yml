@@ -92,7 +92,7 @@ jobs:
           generate_release_notes: true
           body: |
             ## Code signing policy
-            [Code signing policy](https://github.com/Koala280/DesktopPlus/blob/main/CODE_SIGNING_POLICY.md)
+            [Code signing policy](https://github.com/Koala280/DesktopPlus/blob/master/CODE_SIGNING_POLICY.md)
 
             Free code signing provided by SignPath.io, certificate by SignPath Foundation.
           files: |

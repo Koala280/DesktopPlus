@@ -673,6 +673,34 @@ namespace DesktopPlus
             return !string.IsNullOrWhiteSpace(originalName);
         }
 
+        private static bool TrySetRecycleBinFileNameMap(
+            System.Windows.DataObject dataObject,
+            IReadOnlyList<string> dataPaths)
+        {
+            if (dataObject == null || dataPaths == null || dataPaths.Count == 0)
+            {
+                return false;
+            }
+
+            var originalNames = new List<string>(dataPaths.Count);
+            foreach (string dataPath in dataPaths)
+            {
+                if (!TryGetRecycleBinOriginalName(dataPath, out string originalName))
+                {
+                    return false;
+                }
+
+                originalNames.Add(originalName);
+            }
+
+            byte[] payload = ShellFileNameMap.BuildUnicodePayload(originalNames);
+            dataObject.SetData(
+                ShellFileNameMap.UnicodeFormat,
+                new MemoryStream(payload, writable: false),
+                autoConvert: false);
+            return true;
+        }
+
         private static bool TryTransferRecycleBinItemToDirectory(
             string dataPath,
             string destinationDirectory,

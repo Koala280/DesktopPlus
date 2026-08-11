@@ -1456,6 +1456,11 @@ namespace DesktopPlus
             {
                 var dataObject = new System.Windows.DataObject();
                 dataObject.SetFileDropList(collection);
+                if (PanelType == PanelKind.RecycleBin &&
+                    !TrySetRecycleBinFileNameMap(dataObject, paths))
+                {
+                    return false;
+                }
                 WritePreferredDropEffect(dataObject, cut ? DragDropEffects.Move : DragDropEffects.Copy);
                 System.Windows.Clipboard.SetDataObject(dataObject, true);
                 return true;
@@ -2441,6 +2446,11 @@ namespace DesktopPlus
 
                         var dataObject = new System.Windows.DataObject();
                         dataObject.SetFileDropList(fileDrop);
+                        if (PanelType == PanelKind.RecycleBin &&
+                            !TrySetRecycleBinFileNameMap(dataObject, selectedPaths))
+                        {
+                            return;
+                        }
                         dataObject.SetData(InternalPanelDragSourceFormat, PanelId);
                         // Don't force a preferred drop effect for drag-and-drop.
                         // Let the target (e.g. Explorer) choose native default behavior

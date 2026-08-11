@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-08-11
+
+### Fixed
+
+- Restoring files and folders from the DesktopPlus recycle-bin panel through drag-and-drop or the clipboard now preserves their original names instead of exposing Windows' internal `$R...` names.
+
 ## [1.6.2] - 2026-07-26
 
 ### Fixed
