@@ -1815,17 +1815,26 @@ namespace DesktopPlus
             }
         }
 
-        public void LoadFolder(string folderPath, bool saveSettings = true, bool renamePanelTitle = false)
+        public bool LoadFolder(
+            string folderPath,
+            bool saveSettings = true,
+            bool renamePanelTitle = false,
+            bool preserveSearch = false)
         {
-            if (!Directory.Exists(folderPath)) return;
+            if (!Directory.Exists(folderPath))
+            {
+                return false;
+            }
 
+            _contentViewGeneration++;
             var loadCts = BeginFolderLoad();
             CancelPendingFolderSearchIndex();
             CancelPendingRecycleBinLoad();
             StopRecycleBinWatchers();
-            ResetSearchState(clearSearchBox: true);
+            ResetSearchState(clearSearchBox: !preserveSearch, removeInjectedItems: false);
             PanelType = PanelKind.Folder;
             currentFolderPath = folderPath;
+            _currentFolderHasEntries = false;
             StartOrUpdateFolderWatchers(folderPath);
             _useLightweightItemVisuals = false;
             PinnedItems.Clear();
@@ -1859,10 +1868,13 @@ namespace DesktopPlus
             {
                 MainWindow.SaveSettings();
             }
+
+            return true;
         }
 
         public void LoadList(IEnumerable<string> items, bool saveSettings = true)
         {
+            _contentViewGeneration++;
             CancelPendingFolderLoad();
             CancelPendingFolderSearchIndex();
             CancelPendingRecycleBinLoad();
@@ -1897,6 +1909,7 @@ namespace DesktopPlus
 
         public void ClearPanelItems()
         {
+            _contentViewGeneration++;
             CancelPendingFolderLoad();
             CancelPendingRecycleBinLoad();
             StopFolderWatchers();
@@ -1969,7 +1982,7 @@ namespace DesktopPlus
                             ViewModePhotos,
                             StringComparison.OrdinalIgnoreCase);
                         string activeFilter = SearchBox?.Text?.Trim() ?? string.Empty;
-                        bool hasFilter = !string.IsNullOrWhiteSpace(activeFilter);
+                        IReadOnlyList<string> activeTerms = GetSearchTerms(activeFilter);
                         foreach (string entryPath in batch)
                         {
                             string displayName = GetDisplayNameForPath(entryPath);
@@ -1984,8 +1997,7 @@ namespace DesktopPlus
                                 isBackButton: false,
                                 _currentAppearance);
 
-                            if (hasFilter &&
-                                displayName.IndexOf(activeFilter, StringComparison.OrdinalIgnoreCase) < 0)
+                            if (!MatchesSearchTerms(displayName, activeTerms))
                             {
                                 listItem.Visibility = Visibility.Collapsed;
                             }
@@ -2017,6 +2029,13 @@ namespace DesktopPlus
                     SortCurrentFolderItemsInPlace();
                     _ = Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Background);
                     UpdateDropZoneVisibility();
+                    UpdateEmptyRecycleBinButtonVisibility();
+
+                    string currentSearch = SearchBox?.Text ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(currentSearch))
+                    {
+                        BeginSearch(currentSearch);
+                    }
                 }, System.Windows.Threading.DispatcherPriority.Background);
             }
             catch (OperationCanceledException)
@@ -2485,14 +2504,24 @@ namespace DesktopPlus
             }
         }
 
-        private void ResetSearchState(bool clearSearchBox)
+        private void ResetSearchState(bool clearSearchBox, bool removeInjectedItems = true)
         {
             var pendingSearchCts = _searchCts;
             _searchCts = null;
             pendingSearchCts?.Cancel();
             _deferSortUntilSearchComplete = false;
             _isSearchExpandedFromCompactButton = false;
-            RemoveInjectedSearchItems();
+            if (removeInjectedItems)
+            {
+                RemoveInjectedSearchItems();
+            }
+            else
+            {
+                // The caller is about to clear FileList in one operation. Avoid removing a
+                // potentially large injected result set item-by-item on the dispatcher.
+                _searchInjectedItems.Clear();
+                _searchInjectedPaths.Clear();
+            }
 
             if (!clearSearchBox || SearchBox == null || string.IsNullOrEmpty(SearchBox.Text))
             {

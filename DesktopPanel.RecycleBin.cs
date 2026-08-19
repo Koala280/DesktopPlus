@@ -10,7 +10,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using Microsoft.VisualBasic.FileIO;
 
 namespace DesktopPlus
 {
@@ -25,7 +24,14 @@ namespace DesktopPlus
 
         private List<FileSystemWatcher>? _recycleBinWatchers;
         private CancellationTokenSource? _recycleBinRefreshCts;
+        private readonly object _recycleBinRefreshLock = new object();
+        private int _recycleBinRefreshSuspensionCount;
+        private int _recycleBinRefreshPending;
+        private CancellationTokenSource? _folderEntryStateCts;
+        private bool _currentFolderHasEntries;
         public bool showEmptyRecycleBinButton = false;
+
+        private const int RecycleBinSnapshotReloadThreshold = 64;
 
         private static readonly HashSet<string> RecycleBinDefaultTitles =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -104,6 +110,7 @@ namespace DesktopPlus
                 return;
             }
 
+            _contentViewGeneration++;
             var loadCts = BeginRecycleBinLoad();
             CancelPendingFolderLoad();
             CancelPendingFolderSearchIndex();
@@ -152,23 +159,6 @@ namespace DesktopPlus
             return item;
         }
 
-        private void RefreshRecycleBinListBoxItem(ListBoxItem item, RecycleBinItemEntry entry)
-        {
-            item.Tag = entry.DataPath;
-            item.Content = CreateListBoxItem(
-                entry.DisplayName,
-                entry.DataPath,
-                isBackButton: false,
-                _currentAppearance);
-            item.Focusable = true;
-            ApplyListItemContainerSpacing(item);
-
-            if (item.Content is FrameworkElement root)
-            {
-                ToolTipService.SetToolTip(root, BuildRecycleBinToolTip(entry));
-            }
-        }
-
         private bool TryApplyRecycleBinSnapshot(IReadOnlyList<RecycleBinItemEntry> entries)
         {
             if (FileList == null ||
@@ -176,6 +166,23 @@ namespace DesktopPlus
                 _recycleBinLoadCts != null)
             {
                 return false;
+            }
+
+            if (entries.Count == 0)
+            {
+                FileList.Items.Clear();
+                _baseItemPaths.Clear();
+                _detailsDefaultOrderPaths.Clear();
+                _searchInjectedItems.Clear();
+                _searchInjectedPaths.Clear();
+                RefreshDetailsHeader();
+                if (CurrentViewNeedsContentLayoutRefresh())
+                {
+                    QueueWrapPanelWidthUpdate();
+                }
+                UpdateDropZoneVisibility();
+                UpdateEmptyRecycleBinButtonVisibility();
+                return true;
             }
 
             var selectedPaths = new HashSet<string>(
@@ -192,13 +199,23 @@ namespace DesktopPlus
                 .GroupBy(item => item.Tag as string ?? string.Empty, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
 
+            var snapshotPaths = new HashSet<string>(
+                entries.Select(entry => entry.DataPath),
+                StringComparer.OrdinalIgnoreCase);
+            int addedCount = snapshotPaths.Count(path => !existingByPath.ContainsKey(path));
+            int removedCount = existingByPath.Keys.Count(path => !snapshotPaths.Contains(path));
+
+            // Rebuilding a large delta item-by-item causes thousands of WPF layout invalidations.
+            // The normal recycle-bin loader already clears once and adds items in dispatcher batches.
+            if (addedCount + removedCount >= RecycleBinSnapshotReloadThreshold)
+            {
+                return false;
+            }
+
             var desiredOrder = new List<ListBoxItem>(entries.Count);
-            var snapshotPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (RecycleBinItemEntry entry in entries)
             {
-                snapshotPaths.Add(entry.DataPath);
-
                 if (!existingByPath.TryGetValue(entry.DataPath, out ListBoxItem? item))
                 {
                     item = CreateRecycleBinListBoxItem(entry);
@@ -206,7 +223,6 @@ namespace DesktopPlus
                 }
                 else
                 {
-                    RefreshRecycleBinListBoxItem(item, entry);
                     existingByPath.Remove(entry.DataPath);
                 }
 
@@ -234,11 +250,9 @@ namespace DesktopPlus
             _searchInjectedItems.Clear();
             _searchInjectedPaths.Clear();
 
-            if (desiredOrder.Count == 0)
-            {
-                FileList.Items.Clear();
-            }
-            else
+            // Deleting entries preserves the relative order of all survivors. Reordering is only
+            // needed when newly-created recycle-bin entries were appended to the current list.
+            if (addedCount > 0)
             {
                 ApplyFileListOrderInPlace(desiredOrder, selectedPaths);
             }
@@ -251,6 +265,130 @@ namespace DesktopPlus
             UpdateDropZoneVisibility();
             UpdateEmptyRecycleBinButtonVisibility();
             return true;
+        }
+
+        private async Task ApplyQueuedRecycleBinSnapshotAsync(
+            IReadOnlyList<RecycleBinItemEntry> entries,
+            CancellationTokenSource cts,
+            CancellationToken token)
+        {
+            try
+            {
+                if (!IsRecycleBinRefreshCurrent(cts, token) ||
+                    PanelType != PanelKind.RecycleBin)
+                {
+                    return;
+                }
+
+                if (TryApplyRecycleBinSnapshot(entries))
+                {
+                    return;
+                }
+
+                CancelPendingRecycleBinLoad();
+                await RebuildRecycleBinSnapshotAsync(entries, cts, token);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        private async Task RebuildRecycleBinSnapshotAsync(
+            IReadOnlyList<RecycleBinItemEntry> entries,
+            CancellationTokenSource cts,
+            CancellationToken token)
+        {
+            if (FileList == null ||
+                !IsRecycleBinRefreshCurrent(cts, token) ||
+                PanelType != PanelKind.RecycleBin)
+            {
+                return;
+            }
+
+            var selectedPaths = new HashSet<string>(
+                FileList.SelectedItems
+                    .OfType<ListBoxItem>()
+                    .Select(item => item.Tag as string)
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Cast<string>(),
+                StringComparer.OrdinalIgnoreCase);
+            long selectionVersion = _fileListSelectionVersion;
+
+            _useLightweightItemVisuals = entries.Count >= FolderLightweightVisualThreshold;
+            _suppressFileListSelectionVersion = true;
+            try
+            {
+                FileList.Items.Clear();
+            }
+            finally
+            {
+                _suppressFileListSelectionVersion = false;
+            }
+            _baseItemPaths.Clear();
+            _detailsDefaultOrderPaths.Clear();
+            _detailsDefaultOrderPaths.AddRange(entries.Select(entry => entry.DataPath));
+            _searchInjectedItems.Clear();
+            _searchInjectedPaths.Clear();
+
+            int uiBatchSize = GetFolderLoadBatchSize();
+            for (int start = 0; start < entries.Count; start += uiBatchSize)
+            {
+                if (!IsRecycleBinRefreshCurrent(cts, token) ||
+                    PanelType != PanelKind.RecycleBin)
+                {
+                    return;
+                }
+
+                int end = Math.Min(start + uiBatchSize, entries.Count);
+                string activeFilter = SearchBox?.Text?.Trim() ?? string.Empty;
+                IReadOnlyList<string> activeTerms = GetSearchTerms(activeFilter);
+
+                for (int index = start; index < end; index++)
+                {
+                    RecycleBinItemEntry entry = entries[index];
+                    ListBoxItem item = CreateRecycleBinListBoxItem(entry);
+                    if (!MatchesSearchTerms(entry.DisplayName, activeTerms))
+                    {
+                        item.Visibility = Visibility.Collapsed;
+                    }
+
+                    FileList.Items.Add(item);
+                    _baseItemPaths.Add(entry.DataPath);
+                    if (_fileListSelectionVersion == selectionVersion &&
+                        selectedPaths.Contains(entry.DataPath))
+                    {
+                        _suppressFileListSelectionVersion = true;
+                        try
+                        {
+                            item.IsSelected = true;
+                        }
+                        finally
+                        {
+                            _suppressFileListSelectionVersion = false;
+                        }
+                    }
+                }
+
+                UpdateDropZoneVisibility();
+                UpdateEmptyRecycleBinButtonVisibility();
+
+                if (end < entries.Count)
+                {
+                    await System.Windows.Threading.Dispatcher.Yield(
+                        System.Windows.Threading.DispatcherPriority.ContextIdle);
+                }
+            }
+
+            if (!IsRecycleBinRefreshCurrent(cts, token) ||
+                PanelType != PanelKind.RecycleBin)
+            {
+                return;
+            }
+
+            RefreshDetailsHeader();
+            QueueWrapPanelWidthUpdate();
+            UpdateDropZoneVisibility();
+            UpdateEmptyRecycleBinButtonVisibility();
         }
 
         private async Task RunRecycleBinLoadAsync(CancellationTokenSource cts)
@@ -304,7 +442,7 @@ namespace DesktopPlus
                             ViewModePhotos,
                             StringComparison.OrdinalIgnoreCase);
                         string activeFilter = SearchBox?.Text?.Trim() ?? string.Empty;
-                        bool hasFilter = !string.IsNullOrWhiteSpace(activeFilter);
+                        IReadOnlyList<string> activeTerms = GetSearchTerms(activeFilter);
 
                         foreach (RecycleBinItemEntry entry in batch)
                         {
@@ -319,8 +457,7 @@ namespace DesktopPlus
                                 ToolTipService.SetToolTip(root, BuildRecycleBinToolTip(entry));
                             }
 
-                            if (hasFilter &&
-                                entry.DisplayName.IndexOf(activeFilter, StringComparison.OrdinalIgnoreCase) < 0)
+                            if (!MatchesSearchTerms(entry.DisplayName, activeTerms))
                             {
                                 item.Visibility = Visibility.Collapsed;
                             }
@@ -619,19 +756,11 @@ namespace DesktopPlus
             {
                 if (Directory.Exists(dataPath))
                 {
-                    FileSystem.DeleteDirectory(
-                        dataPath,
-                        UIOption.OnlyErrorDialogs,
-                        RecycleOption.DeletePermanently,
-                        UICancelOption.DoNothing);
+                    Directory.Delete(dataPath, recursive: true);
                 }
                 else if (File.Exists(dataPath))
                 {
-                    FileSystem.DeleteFile(
-                        dataPath,
-                        UIOption.OnlyErrorDialogs,
-                        RecycleOption.DeletePermanently,
-                        UICancelOption.DoNothing);
+                    File.Delete(dataPath);
                 }
                 else
                 {
@@ -819,26 +948,26 @@ namespace DesktopPlus
         {
             var watchers = _recycleBinWatchers;
             _recycleBinWatchers = null;
-            if (watchers == null)
+            if (watchers != null)
             {
-                return;
+                foreach (var watcher in watchers)
+                {
+                    try
+                    {
+                        watcher.EnableRaisingEvents = false;
+                        watcher.Created -= RecycleBinWatcher_Changed;
+                        watcher.Deleted -= RecycleBinWatcher_Changed;
+                        watcher.Renamed -= RecycleBinWatcher_Changed;
+                        watcher.Error -= RecycleBinWatcher_Error;
+                        watcher.Dispose();
+                    }
+                    catch
+                    {
+                    }
+                }
             }
 
-            foreach (var watcher in watchers)
-            {
-                try
-                {
-                    watcher.EnableRaisingEvents = false;
-                    watcher.Created -= RecycleBinWatcher_Changed;
-                    watcher.Deleted -= RecycleBinWatcher_Changed;
-                    watcher.Renamed -= RecycleBinWatcher_Changed;
-                    watcher.Error -= RecycleBinWatcher_Error;
-                    watcher.Dispose();
-                }
-                catch
-                {
-                }
-            }
+            CancelPendingRecycleBinRefresh();
         }
 
         private void RecycleBinWatcher_Changed(object sender, FileSystemEventArgs e)
@@ -851,25 +980,123 @@ namespace DesktopPlus
             QueueRecycleBinRefresh();
         }
 
+        private void SuspendRecycleBinRefreshes()
+        {
+            CancellationTokenSource? pendingRefresh = null;
+            lock (_recycleBinRefreshLock)
+            {
+                _recycleBinRefreshSuspensionCount++;
+                if (_recycleBinRefreshSuspensionCount == 1)
+                {
+                    pendingRefresh = _recycleBinRefreshCts;
+                    _recycleBinRefreshCts = null;
+                    if (pendingRefresh != null)
+                    {
+                        _recycleBinRefreshPending = 1;
+                    }
+                }
+            }
+
+            pendingRefresh?.Cancel();
+            pendingRefresh?.Dispose();
+        }
+
+        private void ResumeRecycleBinRefreshes(bool forceRefresh)
+        {
+            bool shouldRefresh = forceRefresh;
+            lock (_recycleBinRefreshLock)
+            {
+                if (_recycleBinRefreshSuspensionCount <= 0)
+                {
+                    return;
+                }
+
+                _recycleBinRefreshSuspensionCount--;
+                if (_recycleBinRefreshSuspensionCount > 0)
+                {
+                    if (forceRefresh)
+                    {
+                        _recycleBinRefreshPending = 1;
+                    }
+                    return;
+                }
+
+                shouldRefresh |= _recycleBinRefreshPending != 0;
+                _recycleBinRefreshPending = 0;
+            }
+
+            if (!_isClosed && shouldRefresh && PanelType == PanelKind.RecycleBin)
+            {
+                QueueRecycleBinRefresh(immediate: true);
+            }
+        }
+
+        private void CancelPendingRecycleBinRefresh()
+        {
+            CancellationTokenSource? pendingRefresh;
+            lock (_recycleBinRefreshLock)
+            {
+                pendingRefresh = _recycleBinRefreshCts;
+                _recycleBinRefreshCts = null;
+                _recycleBinRefreshPending = 0;
+            }
+
+            pendingRefresh?.Cancel();
+            pendingRefresh?.Dispose();
+        }
+
+        private bool IsRecycleBinRefreshCurrent(CancellationTokenSource cts, CancellationToken token)
+        {
+            if (token.IsCancellationRequested)
+            {
+                return false;
+            }
+
+            lock (_recycleBinRefreshLock)
+            {
+                return _recycleBinRefreshSuspensionCount == 0 &&
+                    ReferenceEquals(_recycleBinRefreshCts, cts);
+            }
+        }
+
         private void QueueRecycleBinRefresh(bool immediate = false)
         {
-            var pending = Interlocked.Exchange(ref _recycleBinRefreshCts, new CancellationTokenSource());
-            pending?.Cancel();
-            pending?.Dispose();
+            if (_isClosed)
+            {
+                return;
+            }
 
-            var cts = _recycleBinRefreshCts;
+            CancellationTokenSource? pendingRefresh;
+            CancellationTokenSource cts;
+            CancellationToken token;
+            lock (_recycleBinRefreshLock)
+            {
+                if (_recycleBinRefreshSuspensionCount > 0)
+                {
+                    _recycleBinRefreshPending = 1;
+                    return;
+                }
+
+                pendingRefresh = _recycleBinRefreshCts;
+                cts = new CancellationTokenSource();
+                token = cts.Token;
+                _recycleBinRefreshCts = cts;
+            }
+
+            pendingRefresh?.Cancel();
+            pendingRefresh?.Dispose();
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await Task.Delay(immediate ? 0 : 300, cts!.Token);
+                    await Task.Delay(immediate ? 0 : 300, token);
                 }
                 catch (OperationCanceledException)
                 {
                     return;
                 }
 
-                if (cts == null || cts.Token.IsCancellationRequested)
+                if (!IsRecycleBinRefreshCurrent(cts, token))
                 {
                     return;
                 }
@@ -877,26 +1104,24 @@ namespace DesktopPlus
                 List<RecycleBinItemEntry> snapshot;
                 try
                 {
-                    snapshot = EnumerateRecycleBinItems(cts.Token);
+                    snapshot = EnumerateRecycleBinItems(token);
                 }
                 catch
                 {
-                    snapshot = new List<RecycleBinItemEntry>();
+                    return;
                 }
 
-                if (cts.Token.IsCancellationRequested)
+                if (!IsRecycleBinRefreshCurrent(cts, token))
                 {
                     return;
                 }
 
                 _ = Dispatcher.BeginInvoke(new Action(() =>
                 {
-                    if (PanelType == PanelKind.RecycleBin)
+                    if (PanelType == PanelKind.RecycleBin &&
+                        IsRecycleBinRefreshCurrent(cts, token))
                     {
-                        if (!TryApplyRecycleBinSnapshot(snapshot))
-                        {
-                            LoadRecycleBin(saveSettings: false, renamePanelTitle: false);
-                        }
+                        _ = ApplyQueuedRecycleBinSnapshotAsync(snapshot, cts, token);
                     }
                 }), System.Windows.Threading.DispatcherPriority.Background);
             });
@@ -920,26 +1145,32 @@ namespace DesktopPlus
                 return;
             }
 
+            SuspendRecycleBinRefreshes();
             SetDeleteOperationState(true);
             try
             {
                 await RunStaFileOperationAsync(() =>
                 {
-                    SHEmptyRecycleBin(IntPtr.Zero, null, SHERB_NOPROGRESSUI | SHERB_NOSOUND);
+                    int hresult = SHEmptyRecycleBin(
+                        IntPtr.Zero,
+                        null,
+                        SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND);
+                    Marshal.ThrowExceptionForHR(hresult);
                     return true;
                 });
             }
-            catch
+            catch (Exception ex)
             {
+                System.Windows.MessageBox.Show(
+                    string.Format(MainWindow.GetString("Loc.MsgDeletePermanentError"), ex.Message),
+                    MainWindow.GetString("Loc.MsgError"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
             }
             finally
             {
                 SetDeleteOperationState(false);
-            }
-
-            if (PanelType == PanelKind.RecycleBin)
-            {
-                QueueRecycleBinRefresh(immediate: true);
+                ResumeRecycleBinRefreshes(forceRefresh: true);
             }
         }
 
@@ -971,10 +1202,86 @@ namespace DesktopPlus
             }
         }
 
+        private static bool HasFolderEntriesForClearAction(string folderPath)
+        {
+            if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+            {
+                return false;
+            }
+
+            try
+            {
+                var options = new EnumerationOptions
+                {
+                    IgnoreInaccessible = true,
+                    RecurseSubdirectories = false,
+                    ReturnSpecialDirectories = false,
+                    AttributesToSkip = 0
+                };
+
+                return Directory.EnumerateFileSystemEntries(folderPath, "*", options)
+                    .Any(path => !string.IsNullOrWhiteSpace(path) &&
+                        (File.Exists(path) || Directory.Exists(path)));
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private void QueueFolderEntryStateRefresh(string folderPath)
+        {
+            if (_isClosed || string.IsNullOrWhiteSpace(folderPath))
+            {
+                return;
+            }
+
+            var cts = new CancellationTokenSource();
+            CancellationToken token = cts.Token;
+            var pending = Interlocked.Exchange(ref _folderEntryStateCts, cts);
+            pending?.Cancel();
+            pending?.Dispose();
+
+            _ = Task.Run(() =>
+            {
+                bool hasEntries = HasFolderEntriesForClearAction(folderPath);
+                if (token.IsCancellationRequested ||
+                    !ReferenceEquals(Volatile.Read(ref _folderEntryStateCts), cts))
+                {
+                    return;
+                }
+
+                _ = Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (token.IsCancellationRequested ||
+                        !ReferenceEquals(Volatile.Read(ref _folderEntryStateCts), cts) ||
+                        PanelType != PanelKind.Folder ||
+                        !string.Equals(currentFolderPath, folderPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return;
+                    }
+
+                    _currentFolderHasEntries = hasEntries;
+                    UpdateEmptyRecycleBinButtonVisibility();
+                }), System.Windows.Threading.DispatcherPriority.Background);
+            }, token);
+        }
+
+        private void CancelPendingFolderEntryStateRefresh()
+        {
+            var pending = Interlocked.Exchange(ref _folderEntryStateCts, null);
+            pending?.Cancel();
+            pending?.Dispose();
+            _currentFolderHasEntries = false;
+        }
+
         public async Task ClearCurrentFolderAsync()
         {
             string folderPath = currentFolderPath;
-            if (PanelType != PanelKind.Folder ||
+            PanelTabData? tabAtStart = ActiveTab;
+            long viewGenerationAtStart = _contentViewGeneration;
+            if (_isDeleteOperationRunning ||
+                PanelType != PanelKind.Folder ||
                 string.IsNullOrWhiteSpace(folderPath) ||
                 !Directory.Exists(folderPath))
             {
@@ -982,41 +1289,48 @@ namespace DesktopPlus
                 return;
             }
 
-            List<string> entries = GetFolderEntriesForClearAction(folderPath);
-            if (entries.Count == 0)
-            {
-                UpdateEmptyRecycleBinButtonVisibility();
-                return;
-            }
-
-            string folderName = GetFolderDisplayName(folderPath);
-            var result = System.Windows.MessageBox.Show(
-                string.Format(MainWindow.GetString("Loc.EmptyFolderConfirm"), folderName),
-                MainWindow.GetString("Loc.EmptyFolderTitle"),
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
-
-            if (result != MessageBoxResult.Yes)
-            {
-                return;
-            }
-
-            StopFolderWatchers();
             SetDeleteOperationState(true);
-
-            (bool DeletedAny, List<string> Failures) clearResult;
+            bool folderWatchersStopped = false;
             try
             {
-                clearResult = await RunStaFileOperationAsync(() =>
+                List<string> entries = await Task.Run(() => GetFolderEntriesForClearAction(folderPath));
+                if (!IsContentViewCurrent(viewGenerationAtStart, tabAtStart) ||
+                    PanelType != PanelKind.Folder ||
+                    !string.Equals(currentFolderPath, folderPath, StringComparison.OrdinalIgnoreCase))
                 {
-                    bool deletedAny = false;
+                    return;
+                }
+
+                if (entries.Count == 0)
+                {
+                    UpdateEmptyRecycleBinButtonVisibility();
+                    return;
+                }
+
+                string folderName = GetFolderDisplayName(folderPath);
+                var result = System.Windows.MessageBox.Show(
+                    string.Format(MainWindow.GetString("Loc.EmptyFolderConfirm"), folderName),
+                    MainWindow.GetString("Loc.EmptyFolderTitle"),
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+
+                if (result != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+
+                StopFolderWatchers();
+                CancelPendingFolderLoad();
+                folderWatchersStopped = true;
+
+                List<string> clearFailures = await RunStaFileOperationAsync(() =>
+                {
                     var failures = new List<string>();
 
                     foreach (string path in entries)
                     {
                         if (TryMovePathToRecycleBin(path, out string? error))
                         {
-                            deletedAny = true;
                             continue;
                         }
 
@@ -1032,30 +1346,52 @@ namespace DesktopPlus
                         }
                     }
 
-                    return (deletedAny, failures);
+                    return failures;
                 });
-            }
-            finally
-            {
-                SetDeleteOperationState(false);
-            }
 
-            InvalidateFolderSearchIndex(folderPath, rebuildInBackground: true, rerunActiveSearch: true);
+                InvalidateFolderSearchIndex(
+                    folderPath,
+                    rebuildInBackground: true,
+                    rerunActiveSearch: false);
 
-            if (PanelType == PanelKind.Folder &&
-                string.Equals(currentFolderPath, folderPath, StringComparison.OrdinalIgnoreCase) &&
-                Directory.Exists(folderPath))
-            {
-                LoadFolder(folderPath, saveSettings: false, renamePanelTitle: false);
+                if (IsContentViewCurrent(viewGenerationAtStart, tabAtStart) &&
+                    PanelType == PanelKind.Folder &&
+                    string.Equals(currentFolderPath, folderPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    ReloadFolderAfterDelete(folderPath);
+                    folderWatchersStopped = false;
+                }
+
+                if (clearFailures.Count > 0)
+                {
+                    System.Windows.MessageBox.Show(
+                        string.Format(MainWindow.GetString("Loc.MsgDeletePathError"), string.Join(Environment.NewLine, clearFailures)),
+                        MainWindow.GetString("Loc.MsgError"),
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
             }
-
-            if (clearResult.Failures.Count > 0)
+            catch (Exception ex)
             {
                 System.Windows.MessageBox.Show(
-                    string.Format(MainWindow.GetString("Loc.MsgDeletePathError"), string.Join(Environment.NewLine, clearResult.Failures)),
+                    string.Format(MainWindow.GetString("Loc.MsgDeletePathError"), ex.Message),
                     MainWindow.GetString("Loc.MsgError"),
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
+            }
+            finally
+            {
+                if (!_isClosed &&
+                    folderWatchersStopped &&
+                    IsContentViewCurrent(viewGenerationAtStart, tabAtStart) &&
+                    PanelType == PanelKind.Folder &&
+                    string.Equals(currentFolderPath, folderPath, StringComparison.OrdinalIgnoreCase) &&
+                    Directory.Exists(folderPath))
+                {
+                    StartOrUpdateFolderWatchers(folderPath);
+                }
+
+                SetDeleteOperationState(false);
             }
         }
 
@@ -1074,10 +1410,9 @@ namespace DesktopPlus
                     hasItems = FileList != null && FileList.Items.Count > 0;
                 }
                 else if (PanelType == PanelKind.Folder &&
-                         !string.IsNullOrWhiteSpace(currentFolderPath) &&
-                         Directory.Exists(currentFolderPath))
+                         !string.IsNullOrWhiteSpace(currentFolderPath))
                 {
-                    hasItems = GetFolderEntriesForClearAction(currentFolderPath).Count > 0;
+                    hasItems = _currentFolderHasEntries;
                 }
             }
 

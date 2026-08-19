@@ -11,7 +11,6 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using Microsoft.VisualBasic.FileIO;
 using DataFormats = System.Windows.DataFormats;
 using DragDrop = System.Windows.DragDrop;
 using DragDropEffects = System.Windows.DragDropEffects;
@@ -19,7 +18,6 @@ using DragEventArgs = System.Windows.DragEventArgs;
 using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 using Point = System.Windows.Point;
 using WpfListBox = System.Windows.Controls.ListBox;
-using VBFileSystem = Microsoft.VisualBasic.FileIO.FileSystem;
 
 namespace DesktopPlus
 {
@@ -49,6 +47,8 @@ namespace DesktopPlus
         private Point _lastRenameClickPosition;
         private bool _lastRenameClickWasOnName;
         private bool _isNormalizingFileListSelection;
+        private bool _suppressFileListSelectionVersion;
+        private long _fileListSelectionVersion;
         private readonly SemaphoreSlim _incomingFileImportSemaphore = new SemaphoreSlim(1, 1);
         private const double FileListReorderPreviewAnimationMs = 190.0;
         private int _fileListReorderInsertIndex = -1;
@@ -564,6 +564,11 @@ namespace DesktopPlus
 
         private void FileList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            if (!_suppressFileListSelectionVersion)
+            {
+                _fileListSelectionVersion++;
+            }
+
             NormalizeFileListSelection();
         }
 
@@ -1619,26 +1624,20 @@ namespace DesktopPlus
 
             try
             {
-                if (Directory.Exists(path))
+                if (!Directory.Exists(path) && !File.Exists(path))
                 {
-                    VBFileSystem.DeleteDirectory(
-                        path,
-                        UIOption.OnlyErrorDialogs,
-                        RecycleOption.SendToRecycleBin,
-                        UICancelOption.DoNothing);
+                    return false;
+                }
+
+                var result = DesktopPlus.Companion.CompanionFileOps.Delete(
+                    new[] { path },
+                    permanent: false);
+                if (result.Ok)
+                {
                     return true;
                 }
 
-                if (File.Exists(path))
-                {
-                    VBFileSystem.DeleteFile(
-                        path,
-                        UIOption.OnlyErrorDialogs,
-                        RecycleOption.SendToRecycleBin,
-                        UICancelOption.DoNothing);
-                    return true;
-                }
-
+                errorMessage = result.Error;
                 return false;
             }
             catch (Exception ex)
@@ -1678,7 +1677,6 @@ namespace DesktopPlus
                     .Select(item => item.Tag as string)
                     .Where(path => !string.IsNullOrWhiteSpace(path))
                     .Cast<string>()
-                    .Where(path => File.Exists(path) || Directory.Exists(path))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
@@ -1714,53 +1712,30 @@ namespace DesktopPlus
                             return false;
                         }
 
-                        return File.Exists(path) || Directory.Exists(path);
+                        return true;
                     })
                     .Select(item => (string)item.Tag)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-                var pseudoItems = selectedItems
-                    .Where(item =>
-                    {
-                        if (item.Tag is not string path || string.IsNullOrWhiteSpace(path))
-                        {
-                            return false;
-                        }
-
-                        if (IsParentNavigationItem(item))
-                        {
-                            return true;
-                        }
-
-                        return !File.Exists(path) && !Directory.Exists(path);
-                    })
-                    .ToList();
-
                 if (realPaths.Count > 0)
                 {
-                    string singleName = GetDisplayNameForPath(realPaths[0]);
-                    if (string.IsNullOrWhiteSpace(singleName))
-                    {
-                        singleName = GetPathLeafName(realPaths[0]);
-                    }
+                    var realPathSet = new HashSet<string>(
+                        realPaths,
+                        StringComparer.OrdinalIgnoreCase);
+                    ListBoxItem firstItem = selectedItems.First(item =>
+                        item.Tag is string path &&
+                        realPathSet.Contains(path));
+                    string singleName = GetSelectedItemDisplayName(firstItem);
 
                     if (ConfirmDeleteAction(panelOnly: false, realPaths.Count, singleName))
                     {
                         var displayNames = selectedItems
                             .Where(item => item.Tag is string path &&
-                                realPaths.Contains(path, StringComparer.OrdinalIgnoreCase))
+                                realPathSet.Contains(path))
                             .GroupBy(item => (string)item.Tag!, StringComparer.OrdinalIgnoreCase)
                             .ToDictionary(group => group.Key, group => GetSelectedItemDisplayName(group.First()), StringComparer.OrdinalIgnoreCase);
                         _ = DeletePathsToRecycleBinAsync(realPaths, displayNames, hadPanelOnlyChanges: false);
-                    }
-                }
-
-                if (pseudoItems.Count > 0)
-                {
-                    if (RemoveItemsFromPanel(pseudoItems))
-                    {
-                        anyChanges = true;
                     }
                 }
             }
@@ -1778,6 +1753,7 @@ namespace DesktopPlus
             IReadOnlyList<string> recycledPaths,
             IReadOnlyDictionary<string, string> displayNames)
         {
+            SuspendRecycleBinRefreshes();
             SetDeleteOperationState(true);
             bool changed = false;
 
@@ -1811,7 +1787,6 @@ namespace DesktopPlus
 
                 if (deleteResult.DeletedAny)
                 {
-                    QueueRecycleBinRefresh(immediate: true);
                     changed = true;
                 }
 
@@ -1835,6 +1810,7 @@ namespace DesktopPlus
             finally
             {
                 SetDeleteOperationState(false);
+                ResumeRecycleBinRefreshes(forceRefresh: true);
             }
 
             if (changed)
@@ -1850,10 +1826,19 @@ namespace DesktopPlus
             bool hadPanelOnlyChanges)
         {
             string folderPathAtStart = currentFolderPath;
+            PanelTabData? tabAtStart = ActiveTab;
+            long viewGenerationAtStart = _contentViewGeneration;
             bool refreshCurrentFolder =
                 PanelType == PanelKind.Folder &&
-                !string.IsNullOrWhiteSpace(folderPathAtStart) &&
-                Directory.Exists(folderPathAtStart);
+                !string.IsNullOrWhiteSpace(folderPathAtStart);
+            bool folderWatchersStopped = false;
+
+            if (refreshCurrentFolder)
+            {
+                StopFolderWatchers();
+                CancelPendingFolderLoad();
+                folderWatchersStopped = true;
+            }
 
             SetDeleteOperationState(true);
             bool changed = hadPanelOnlyChanges;
@@ -1863,6 +1848,7 @@ namespace DesktopPlus
                 var deleteResult = await RunStaFileOperationAsync(() =>
                 {
                     var deletedPaths = new List<string>();
+                    var missingPaths = new List<string>();
                     var failures = new List<string>();
 
                     foreach (string path in realPaths)
@@ -1880,30 +1866,48 @@ namespace DesktopPlus
                                 ? name
                                 : GetPathLeafName(path);
                             failures.Add($"{displayName}: {error}");
+                            continue;
                         }
+
+                        missingPaths.Add(path);
                     }
 
-                    return (DeletedPaths: deletedPaths, Failures: failures);
+                    return (DeletedPaths: deletedPaths, MissingPaths: missingPaths, Failures: failures);
                 });
 
                 if (deleteResult.DeletedPaths.Count > 0)
                 {
                     changed = true;
+                }
 
-                    if (refreshCurrentFolder &&
-                        PanelType == PanelKind.Folder &&
-                        string.Equals(currentFolderPath, folderPathAtStart, StringComparison.OrdinalIgnoreCase))
-                    {
-                        InvalidateFolderSearchIndex(folderPathAtStart, rebuildInBackground: true, rerunActiveSearch: true);
-                        foreach (string deletedPath in deleteResult.DeletedPaths)
-                        {
-                            ShellPropertyReader.InvalidatePath(deletedPath);
-                            ExplorerDetailsColumnProvider.InvalidatePath(deletedPath);
-                            EnqueueFolderWatcherChange(FolderWatcherChangeKind.Deleted, deletedPath);
-                        }
+                var removedPaths = deleteResult.DeletedPaths
+                    .Concat(deleteResult.MissingPaths)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
 
-                        QueueFolderRefreshFromWatcher(immediate: true);
-                    }
+                if (deleteResult.MissingPaths.Count > 0)
+                {
+                    changed = true;
+                }
+
+                bool isOriginalFolderStillActive =
+                    refreshCurrentFolder &&
+                    IsContentViewCurrent(viewGenerationAtStart, tabAtStart) &&
+                    PanelType == PanelKind.Folder &&
+                    string.Equals(currentFolderPath, folderPathAtStart, StringComparison.OrdinalIgnoreCase);
+
+                if (isOriginalFolderStillActive)
+                {
+                    InvalidateFolderSearchIndex(
+                        folderPathAtStart,
+                        rebuildInBackground: true,
+                        rerunActiveSearch: false);
+
+                    // The previous progressive load and watcher queue were cancelled before the
+                    // operation. Reloading from a fresh snapshot prevents stale loader batches or
+                    // unrelated file-system changes from being lost while deletion was running.
+                    ReloadFolderAfterDelete(folderPathAtStart);
+                    folderWatchersStopped = false;
                 }
 
                 if (deleteResult.Failures.Count > 0)
@@ -1925,6 +1929,16 @@ namespace DesktopPlus
             }
             finally
             {
+                if (!_isClosed &&
+                    folderWatchersStopped &&
+                    IsContentViewCurrent(viewGenerationAtStart, tabAtStart) &&
+                    PanelType == PanelKind.Folder &&
+                    string.Equals(currentFolderPath, folderPathAtStart, StringComparison.OrdinalIgnoreCase) &&
+                    Directory.Exists(folderPathAtStart))
+                {
+                    StartOrUpdateFolderWatchers(folderPathAtStart);
+                }
+
                 SetDeleteOperationState(false);
             }
 
@@ -1933,6 +1947,24 @@ namespace DesktopPlus
                 MainWindow.SaveSettings();
                 MainWindow.NotifyPanelsChanged();
             }
+        }
+
+        private void ReloadFolderAfterDelete(string folderPath)
+        {
+            if (LoadFolder(
+                folderPath,
+                saveSettings: false,
+                renamePanelTitle: false,
+                preserveSearch: true))
+            {
+                return;
+            }
+
+            // The root disappeared between the caller's check and LoadFolder. Keep the parent
+            // watcher alive and force a reconciliation so an immediate recreation is also handled.
+            StartOrUpdateFolderWatchers(folderPath);
+            RequireFullFolderWatcherRefresh();
+            QueueFolderRefreshFromWatcher(immediate: true);
         }
 
         private bool TryHandleSelectAllVisibleItems()

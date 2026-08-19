@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.4] - 2026-08-20
+
+### Fixed
+
+- Deleting many files or emptying the recycle bin no longer disables or stalls the panel while shell operations are running.
+- Recycle-bin and folder refreshes are now coalesced and applied in responsive batches after bulk deletes, preventing watcher storms, stale items, and long dispatcher blocks.
+- Emptying the recycle bin no longer opens a second hidden Windows confirmation dialog.
+
 ## [1.6.3] - 2026-08-11
 
 ### Fixed

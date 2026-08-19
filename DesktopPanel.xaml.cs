@@ -66,6 +66,8 @@ namespace DesktopPlus
         private bool _hasForcedCollapseReturnTop = false;
         private double _forcedCollapseReturnTop;
         private bool _isDeleteOperationRunning;
+        private volatile bool _isClosed;
+        private long _contentViewGeneration;
         private bool _headerBackButtonRequestedVisible;
         private bool _isCollapsedVisualState = false;
         private int _headerBackButtonAnimationVersion;
@@ -98,6 +100,7 @@ namespace DesktopPlus
         private FileSystemWatcher? _folderContentWatcher;
         private FileSystemWatcher? _folderParentWatcher;
         private CancellationTokenSource? _folderWatcherRefreshCts;
+        private int _folderWatcherRefreshSuspended;
         private readonly object _pendingFolderWatcherChangesLock = new object();
         private readonly List<FolderWatcherChange> _pendingFolderWatcherChanges = new List<FolderWatcherChange>();
         private bool _folderWatcherRequiresFullRefresh;
@@ -310,6 +313,7 @@ namespace DesktopPlus
             MainWindow.AppearanceChanged += OnAppearanceChanged;
             this.Closed += (s, e) =>
             {
+                _isClosed = true;
                 CancelPendingHoverLeave();
                 _searchCts?.Cancel();
                 _searchCts?.Dispose();
@@ -327,17 +331,8 @@ namespace DesktopPlus
                 _recycleBinLoadCts = null;
                 StopFolderWatchers();
                 StopRecycleBinWatchers();
-                _recycleBinRefreshCts?.Cancel();
-                _recycleBinRefreshCts?.Dispose();
-                _recycleBinRefreshCts = null;
-                _folderWatcherRefreshCts?.Cancel();
-                _folderWatcherRefreshCts?.Dispose();
-                _folderWatcherRefreshCts = null;
-                lock (_pendingFolderWatcherChangesLock)
-                {
-                    _pendingFolderWatcherChanges.Clear();
-                    _folderWatcherRequiresFullRefresh = false;
-                }
+                CancelPendingRecycleBinRefresh();
+                CancelPendingFolderWatcherRefresh(clearPendingChanges: true);
                 _pendingWheelZoomTarget = double.NaN;
                 if (_wheelZoomApplyTimer != null)
                 {
@@ -382,15 +377,17 @@ namespace DesktopPlus
         {
             _isDeleteOperationRunning = isRunning;
 
-            if (FileList != null)
-            {
-                FileList.IsEnabled = !isRunning;
-            }
-
             if (EmptyRecycleBinButton != null)
             {
                 EmptyRecycleBinButton.IsEnabled = !isRunning;
             }
+        }
+
+        private bool IsContentViewCurrent(long generation, PanelTabData? tab)
+        {
+            return !_isClosed &&
+                _contentViewGeneration == generation &&
+                ReferenceEquals(ActiveTab, tab);
         }
 
         private static Task<T> RunStaFileOperationAsync<T>(Func<T> operation)

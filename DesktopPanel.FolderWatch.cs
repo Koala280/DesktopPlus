@@ -152,7 +152,9 @@ namespace DesktopPlus
             string? fullPath,
             string? oldFullPath = null)
         {
-            if (PanelType != PanelKind.Folder || string.IsNullOrWhiteSpace(currentFolderPath))
+            if (Volatile.Read(ref _folderWatcherRefreshSuspended) != 0 ||
+                PanelType != PanelKind.Folder ||
+                string.IsNullOrWhiteSpace(currentFolderPath))
             {
                 return;
             }
@@ -214,6 +216,11 @@ namespace DesktopPlus
         {
             lock (_pendingFolderWatcherChangesLock)
             {
+                if (Volatile.Read(ref _folderWatcherRefreshSuspended) != 0)
+                {
+                    return;
+                }
+
                 _pendingFolderWatcherChanges.Add(new FolderWatcherChange(kind, fullPath, oldFullPath));
             }
         }
@@ -244,7 +251,7 @@ namespace DesktopPlus
 
         private void StartOrUpdateFolderWatchers(string folderPath)
         {
-            if (PanelType != PanelKind.Folder || string.IsNullOrWhiteSpace(folderPath))
+            if (_isClosed || PanelType != PanelKind.Folder || string.IsNullOrWhiteSpace(folderPath))
             {
                 StopFolderWatchers();
                 return;
@@ -263,6 +270,8 @@ namespace DesktopPlus
 
             ConfigureParentFolderWatcher(normalizedFolderPath);
             ConfigureContentFolderWatcher(normalizedFolderPath);
+            Volatile.Write(ref _folderWatcherRefreshSuspended, 0);
+            QueueFolderEntryStateRefresh(normalizedFolderPath);
         }
 
         private void ConfigureParentFolderWatcher(string normalizedFolderPath)
@@ -400,8 +409,29 @@ namespace DesktopPlus
 
         private void StopFolderWatchers()
         {
+            Volatile.Write(ref _folderWatcherRefreshSuspended, 1);
             StopContentFolderWatcher();
             StopParentFolderWatcher();
+            CancelPendingFolderWatcherRefresh(clearPendingChanges: true);
+            CancelPendingFolderEntryStateRefresh();
+        }
+
+        private void CancelPendingFolderWatcherRefresh(bool clearPendingChanges)
+        {
+            var pendingRefresh = Interlocked.Exchange(ref _folderWatcherRefreshCts, null);
+            pendingRefresh?.Cancel();
+            pendingRefresh?.Dispose();
+
+            if (!clearPendingChanges)
+            {
+                return;
+            }
+
+            lock (_pendingFolderWatcherChangesLock)
+            {
+                _pendingFolderWatcherChanges.Clear();
+                _folderWatcherRequiresFullRefresh = false;
+            }
         }
 
         private void FolderContentWatcher_Created(object sender, FileSystemEventArgs e)
@@ -515,16 +545,19 @@ namespace DesktopPlus
 
         private void QueueFolderRefreshFromWatcher(bool immediate = false)
         {
-            if (PanelType != PanelKind.Folder || string.IsNullOrWhiteSpace(currentFolderPath))
+            if (_isClosed ||
+                Volatile.Read(ref _folderWatcherRefreshSuspended) != 0 ||
+                PanelType != PanelKind.Folder ||
+                string.IsNullOrWhiteSpace(currentFolderPath))
             {
                 return;
             }
 
-            var pending = Interlocked.Exchange(ref _folderWatcherRefreshCts, new CancellationTokenSource());
+            var cts = new CancellationTokenSource();
+            CancellationToken token = cts.Token;
+            var pending = Interlocked.Exchange(ref _folderWatcherRefreshCts, cts);
             pending?.Cancel();
             pending?.Dispose();
-
-            var cts = _folderWatcherRefreshCts;
             int delayMs = immediate ? 0 : 180;
 
             _ = Task.Run(async () =>
@@ -533,7 +566,7 @@ namespace DesktopPlus
                 {
                     if (delayMs > 0)
                     {
-                        await Task.Delay(delayMs, cts!.Token);
+                        await Task.Delay(delayMs, token);
                     }
                 }
                 catch (OperationCanceledException)
@@ -545,12 +578,20 @@ namespace DesktopPlus
                     return;
                 }
 
-                if (cts == null || cts.Token.IsCancellationRequested)
+                if (token.IsCancellationRequested ||
+                    !ReferenceEquals(Volatile.Read(ref _folderWatcherRefreshCts), cts))
                 {
                     return;
                 }
 
-                _ = Dispatcher.BeginInvoke(new Action(ApplyFolderRefreshFromWatcher), DispatcherPriority.Background);
+                _ = Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (!token.IsCancellationRequested &&
+                        ReferenceEquals(Volatile.Read(ref _folderWatcherRefreshCts), cts))
+                    {
+                        ApplyFolderRefreshFromWatcher();
+                    }
+                }), DispatcherPriority.Background);
             });
         }
 
@@ -567,6 +608,7 @@ namespace DesktopPlus
             {
                 if (TryApplyLightweightFolderRefreshFromWatcher())
                 {
+                    QueueFolderEntryStateRefresh(currentFolderPath);
                     return;
                 }
 
@@ -580,6 +622,7 @@ namespace DesktopPlus
             _baseItemPaths.Clear();
             _searchInjectedItems.Clear();
             _searchInjectedPaths.Clear();
+            CancelPendingFolderEntryStateRefresh();
             UpdateDropZoneVisibility();
 
             // Parent watcher stays active and can catch recreation/rename of the bound folder.
