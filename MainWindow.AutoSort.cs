@@ -1853,7 +1853,7 @@ namespace DesktopPlus
                         }
                     }, progress);
 
-                if (result.MovedCount > 0)
+                if (result.MovedCount > 0 || result.DuplicateShortcutCount > 0)
                 {
                     var movedPathMap = BuildMovedPathMap(result.TargetPanels);
                     if (movedPathMap.Count > 0)
@@ -1880,6 +1880,14 @@ namespace DesktopPlus
                 else
                 {
                     statusText = string.Format(GetString("Loc.AutoSortMsgSortDone"), result.MovedCount);
+                }
+
+                if (result.DuplicateShortcutCount > 0)
+                {
+                    statusText = string.Format(GetString(result.ErrorCount > 0
+                        ? "Loc.AutoSortMsgSortDoneWithDuplicatesAndErrors"
+                        : "Loc.AutoSortMsgSortDoneWithDuplicates"),
+                        result.MovedCount, result.DuplicateShortcutCount, result.ErrorCount);
                 }
 
                 SetDesktopAutoSortStatus(statusText);

@@ -145,17 +145,6 @@ namespace DesktopPlus
                     shortcut,
                     new object[] { targetPath });
 
-                string? workingDirectory = Path.GetDirectoryName(targetPath);
-                if (!string.IsNullOrWhiteSpace(workingDirectory) && Directory.Exists(workingDirectory))
-                {
-                    shortcut.GetType().InvokeMember(
-                        "WorkingDirectory",
-                        BindingFlags.SetProperty,
-                        null,
-                        shortcut,
-                        new object[] { workingDirectory });
-                }
-
                 shortcut.GetType().InvokeMember(
                     "Save",
                     BindingFlags.InvokeMethod,

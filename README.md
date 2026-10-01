@@ -55,6 +55,8 @@ DesktopPlus is built for people who want a fast desktop workflow without replaci
 
 Auto-sort runs in the background and saves only settings and a move history before sorting. Its restore point moves existing sorted items back to their original desktop locations without copying desktop contents or overwriting new files. It cannot recover items deleted after sorting; use a manual backup for file-content recovery.
 
+Within each target panel, shortcuts with the same launch target and settings appear once. Auto-sort saves extra `.lnk` and `.url` files under `%LOCALAPPDATA%\DesktopPlus\AutoSortStorage\.DuplicateShortcuts\` and records their original paths for Restore. Running Sort now also repairs duplicates already present in the active target folders.
+
 ## Custom Language JSON Import
 
 Import path in app: `General` tab -> `Import language JSON`.

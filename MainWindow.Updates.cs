@@ -718,12 +718,14 @@ namespace DesktopPlus
             return """
               if ($manifest -and $manifest.DesktopMoves) {
                 $sortRoot = [IO.Path]::GetFullPath($targetAutoSortDir).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+                $duplicatesRoot = $sortRoot + '.DuplicateShortcuts' + [IO.Path]::DirectorySeparatorChar
                 foreach ($move in $manifest.DesktopMoves) {
                   if ([string]::IsNullOrWhiteSpace($move.SourcePath) -or [string]::IsNullOrWhiteSpace($move.TargetPath)) { continue }
                   $originalPath = [IO.Path]::GetFullPath($move.SourcePath)
                   $sortedPath = [IO.Path]::GetFullPath($move.TargetPath)
                   $originalParent = [IO.Path]::GetDirectoryName($originalPath)
-                  if ($desktopRoots -notcontains $originalParent -or -not $sortedPath.StartsWith($sortRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid desktop move in backup manifest.' }
+                  $isStoredDuplicate = $originalPath.StartsWith($sortRoot, [StringComparison]::OrdinalIgnoreCase) -and $sortedPath.StartsWith($duplicatesRoot, [StringComparison]::OrdinalIgnoreCase)
+                  if (($desktopRoots -notcontains $originalParent -and -not $isStoredDuplicate) -or -not $sortedPath.StartsWith($sortRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid desktop move in backup manifest.' }
                   if (-not (Test-Path -LiteralPath $sortedPath) -or (Test-Path -LiteralPath $originalPath)) { continue }
                   Ensure-Directory $originalParent
                   if ([IO.Directory]::Exists($sortedPath)) { [IO.Directory]::Move($sortedPath, $originalPath) } else { [IO.File]::Move($sortedPath, $originalPath) }

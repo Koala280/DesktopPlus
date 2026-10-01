@@ -1985,6 +1985,11 @@ namespace DesktopPlus
                         IReadOnlyList<string> activeTerms = GetSearchTerms(activeFilter);
                         foreach (string entryPath in batch)
                         {
+                            if (_baseItemPaths.Contains(entryPath))
+                            {
+                                continue;
+                            }
+
                             string displayName = GetDisplayNameForPath(entryPath);
                             if (string.IsNullOrWhiteSpace(displayName))
                             {

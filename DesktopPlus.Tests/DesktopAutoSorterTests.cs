@@ -189,6 +189,49 @@ public sealed class DesktopAutoSorterTests
         Assert.Equal("must stay here", File.ReadAllText(unrelatedFile));
     }
 
+    [Fact]
+    public async Task MoveHistoryRestore_ReturnsSavedDuplicatesToTheirOriginalSortFolder()
+    {
+        using var data = new TempDir();
+        string desktop = data.Dir("desktop");
+        string storage = data.Dir("storage");
+        string shortcuts = Directory.CreateDirectory(Path.Combine(storage, "Shortcuts")).FullName;
+        string savedDuplicates = Directory.CreateDirectory(Path.Combine(storage, DesktopAutoSorter.DuplicateShortcutsFolderName, "Shortcuts")).FullName;
+        string canonical = Path.Combine(shortcuts, "Game.url");
+        File.WriteAllText(canonical, "canonical");
+        string savedDuplicate = Path.Combine(savedDuplicates, "Game_1.url");
+        File.WriteAllText(savedDuplicate, "saved duplicate");
+        string originalDuplicate = Path.Combine(shortcuts, "Game_1.url");
+
+        await RunRestoreScriptAsync(desktop, storage, new[]
+        {
+            new DesktopSortMovedItem { SourcePath = originalDuplicate, TargetPath = savedDuplicate }
+        });
+
+        Assert.Equal("canonical", File.ReadAllText(canonical));
+        Assert.Equal("saved duplicate", File.ReadAllText(originalDuplicate));
+        Assert.False(File.Exists(savedDuplicate));
+    }
+
+    [Fact]
+    public async Task MoveHistoryRestore_RejectsRegularMovesBetweenSortFolders()
+    {
+        using var data = new TempDir();
+        string desktop = data.Dir("desktop");
+        string storage = data.Dir("storage");
+        string sourceFolder = Directory.CreateDirectory(Path.Combine(storage, "one")).FullName;
+        string targetFolder = Directory.CreateDirectory(Path.Combine(storage, "two")).FullName;
+        string source = Path.Combine(sourceFolder, "file.txt");
+        string target = Path.Combine(targetFolder, "file.txt");
+        File.WriteAllText(target, "must stay here");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => RunRestoreScriptAsync(desktop, storage, new[]
+        {
+            new DesktopSortMovedItem { SourcePath = source, TargetPath = target }
+        }));
+        Assert.Equal("must stay here", File.ReadAllText(target));
+        Assert.False(File.Exists(source));
+    }
+
     private static async Task RunRestoreScriptAsync(string desktop, string storage, DesktopSortMovedItem[] moves)
     {
         string Quote(string value) => "'" + value.Replace("'", "''") + "'";

@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.7] - 2026-10-01
+
+### Fixed
+
+- Auto-sort now detects duplicate Windows and Internet shortcuts by their launch behavior, repairs numbered duplicates from previous sorts, and retains extra links separately with reversible move history. Different arguments, working directories, and window styles remain distinct.
+- Moving Windows shortcuts now preserves their configured working directory.
+- Folder-loading batches skip paths already present in the panel.
+
 ## [1.6.6] - 2026-10-01
 
 ### Added
