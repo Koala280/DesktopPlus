@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -26,6 +27,8 @@ namespace DesktopPlus
         private readonly List<FileSystemWatcher> _desktopAutoSortWatchers = new List<FileSystemWatcher>();
         private DispatcherTimer? _desktopAutoSortDebounceTimer;
         private bool _desktopAutoSortInProgress;
+        private bool _desktopAutoSortPending;
+        private Task _desktopAutoSortTask = Task.CompletedTask;
         private bool _suspendDesktopAutoSortHandlers = true;
         private string _desktopAutoSortStatusMessage = "";
         private int _newAutoSortPanelIndex;
@@ -40,20 +43,6 @@ namespace DesktopPlus
             public bool MatchFolders { get; init; }
             public bool CatchAll { get; init; }
             public IReadOnlyList<string> Extensions { get; init; } = Array.Empty<string>();
-        }
-
-        private sealed class DesktopSortResult
-        {
-            public int MovedCount { get; set; }
-            public int ErrorCount { get; set; }
-            public int SkippedCount { get; set; }
-            public Dictionary<string, List<DesktopSortMovedItem>> TargetPanels { get; } = new Dictionary<string, List<DesktopSortMovedItem>>(StringComparer.OrdinalIgnoreCase);
-        }
-
-        private sealed class DesktopSortMovedItem
-        {
-            public string SourcePath { get; init; } = "";
-            public string TargetPath { get; init; } = "";
         }
 
         private sealed class AutoSortTargetMatch
@@ -272,7 +261,7 @@ namespace DesktopPlus
             return normalized.OrderBy(x => x).ToList();
         }
 
-        private IReadOnlyList<string> GetDesktopDirectoryPaths()
+        private static IReadOnlyList<string> GetDesktopDirectoryPaths()
         {
             var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var paths = new List<string>(2);
@@ -321,36 +310,6 @@ namespace DesktopPlus
             return Path.Combine(localAppDataPath, "DesktopPlus", AutoSortStorageFolderName);
         }
 
-        private static string SanitizePanelFolderName(string? input)
-        {
-            string value = string.IsNullOrWhiteSpace(input) ? "Sorted" : input.Trim();
-            var invalidChars = Path.GetInvalidFileNameChars();
-            var sanitized = new string(value.Select(ch => invalidChars.Contains(ch) ? '_' : ch).ToArray())
-                .Trim()
-                .TrimEnd('.');
-            if (string.IsNullOrWhiteSpace(sanitized))
-            {
-                sanitized = "Sorted";
-            }
-
-            return sanitized;
-        }
-
-        private static string GetUniqueDestinationPath(string directory, string fileName)
-        {
-            string baseName = Path.GetFileNameWithoutExtension(fileName);
-            string extension = Path.GetExtension(fileName);
-            string candidate = Path.Combine(directory, fileName);
-            int counter = 1;
-
-            while (File.Exists(candidate) || Directory.Exists(candidate))
-            {
-                candidate = Path.Combine(directory, $"{baseName}_{counter++}{extension}");
-            }
-
-            return candidate;
-        }
-
         private static bool IsPathInside(string candidatePath, string rootPath)
         {
             if (string.IsNullOrWhiteSpace(candidatePath) || string.IsNullOrWhiteSpace(rootPath))
@@ -375,50 +334,6 @@ namespace DesktopPlus
             {
                 return false;
             }
-        }
-
-        private static bool IsIgnoredDesktopEntry(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return true;
-            }
-
-            string name = Path.GetFileName(path);
-            if (string.Equals(name, DesktopAutoSortRootFolderName, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(name, "desktop.ini", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(name, "thumbs.db", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            try
-            {
-                var attr = File.GetAttributes(path);
-                bool isDirectory = (attr & FileAttributes.Directory) != 0;
-                bool isSystem = (attr & FileAttributes.System) != 0;
-                bool isReparsePoint = (attr & FileAttributes.ReparsePoint) != 0;
-
-                // Skip potentially unsafe desktop folder links (junctions/symlinks),
-                // but allow files (including cloud placeholders and shortcuts).
-                if (isDirectory && isReparsePoint)
-                {
-                    return true;
-                }
-
-                // Keep system folders out of sorting, but allow files so .lnk/.url
-                // and similar entries are still routed by extension rules.
-                if (isDirectory && isSystem)
-                {
-                    return true;
-                }
-            }
-            catch
-            {
-                return true;
-            }
-
-            return false;
         }
 
         private void NormalizeDesktopAutoSortSettings()
@@ -870,15 +785,16 @@ namespace DesktopPlus
 
         private void DesktopAutoSortWatcher_Changed(object sender, FileSystemEventArgs e)
         {
-            if (_desktopAutoSortInProgress || !_desktopAutoSort.AutoSortEnabled)
-            {
-                return;
-            }
-
             Dispatcher.BeginInvoke(new Action(() =>
             {
-                if (_desktopAutoSortInProgress || !_desktopAutoSort.AutoSortEnabled)
+                if (!_desktopAutoSort.AutoSortEnabled || _isExitPending || IsExiting)
                 {
+                    return;
+                }
+
+                if (_desktopAutoSortInProgress)
+                {
+                    _desktopAutoSortPending = true;
                     return;
                 }
 
@@ -887,46 +803,10 @@ namespace DesktopPlus
             }));
         }
 
-        private void DesktopAutoSortDebounceTimer_Tick(object? sender, EventArgs e)
+        private async void DesktopAutoSortDebounceTimer_Tick(object? sender, EventArgs e)
         {
             _desktopAutoSortDebounceTimer?.Stop();
-            RunDesktopSort(showResultMessage: false);
-        }
-
-        private DesktopSortRuleState? ResolveRuleForPath(IEnumerable<DesktopSortRuleState> activeRules, string path, bool isDirectory)
-        {
-            if (isDirectory)
-            {
-                return activeRules.FirstOrDefault(r => r.MatchFolders);
-            }
-
-            string ext = Path.GetExtension(path).ToLowerInvariant();
-            if (string.IsNullOrWhiteSpace(ext))
-            {
-                ext = "";
-            }
-
-            var custom = activeRules.FirstOrDefault(r =>
-                !r.IsBuiltIn &&
-                !r.MatchFolders &&
-                !r.CatchAll &&
-                r.Extensions.Any(x => string.Equals(x, ext, StringComparison.OrdinalIgnoreCase)));
-            if (custom != null)
-            {
-                return custom;
-            }
-
-            var builtIn = activeRules.FirstOrDefault(r =>
-                r.IsBuiltIn &&
-                !r.MatchFolders &&
-                !r.CatchAll &&
-                r.Extensions.Any(x => string.Equals(x, ext, StringComparison.OrdinalIgnoreCase)));
-            if (builtIn != null)
-            {
-                return builtIn;
-            }
-
-            return activeRules.FirstOrDefault(r => r.CatchAll);
+            await RunDesktopSortAsync(showResultMessage: false);
         }
 
         private string ResolveTargetPanelName(DesktopSortRuleState rule)
@@ -1615,156 +1495,6 @@ namespace DesktopPlus
             return anyChanged;
         }
 
-        private List<string> GetDesktopAutoSortBackupCandidates()
-        {
-            var candidates = new List<string>();
-            var activeRules = _desktopAutoSort.Rules
-                .Where(rule => rule.Enabled)
-                .ToList();
-            if (activeRules.Count == 0)
-            {
-                return candidates;
-            }
-
-            foreach (string desktopPath in GetDesktopDirectoryPaths())
-            {
-                IEnumerable<string> entries;
-                try
-                {
-                    entries = Directory.EnumerateFileSystemEntries(desktopPath).ToList();
-                }
-                catch
-                {
-                    continue;
-                }
-
-                foreach (string entry in entries)
-                {
-                    if (IsIgnoredDesktopEntry(entry))
-                    {
-                        continue;
-                    }
-
-                    bool isDirectory = Directory.Exists(entry);
-                    if (ResolveRuleForPath(activeRules, entry, isDirectory) != null)
-                    {
-                        candidates.Add(entry);
-                    }
-                }
-            }
-
-            return candidates
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
-
-        private DesktopSortResult SortDesktopOnce()
-        {
-            var result = new DesktopSortResult();
-            var desktopPaths = GetDesktopDirectoryPaths();
-            if (desktopPaths.Count == 0)
-            {
-                return result;
-            }
-
-            string storageRootPath = GetDesktopAutoSortStorageRootPath();
-            Directory.CreateDirectory(storageRootPath);
-
-            var activeRules = _desktopAutoSort.Rules
-                .Where(r => r.Enabled)
-                .ToList();
-
-            if (!activeRules.Any())
-            {
-                return result;
-            }
-
-            var resolvedTargetFolders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (string desktopPath in desktopPaths)
-            {
-                IEnumerable<string> entries;
-                try
-                {
-                    entries = Directory.EnumerateFileSystemEntries(desktopPath).ToList();
-                }
-                catch
-                {
-                    result.ErrorCount++;
-                    continue;
-                }
-
-                foreach (string entry in entries)
-                {
-                    if (IsIgnoredDesktopEntry(entry))
-                    {
-                        result.SkippedCount++;
-                        continue;
-                    }
-
-                    bool isDirectory = Directory.Exists(entry);
-                    var rule = ResolveRuleForPath(activeRules, entry, isDirectory);
-                    if (rule == null)
-                    {
-                        result.SkippedCount++;
-                        continue;
-                    }
-
-                    string panelName = ResolveTargetPanelName(rule);
-                    if (!resolvedTargetFolders.TryGetValue(panelName, out string? targetFolderPath))
-                    {
-                        targetFolderPath = Path.Combine(storageRootPath, SanitizePanelFolderName(panelName));
-
-                        try
-                        {
-                            Directory.CreateDirectory(targetFolderPath);
-                        }
-                        catch
-                        {
-                            result.ErrorCount++;
-                            continue;
-                        }
-
-                        resolvedTargetFolders[panelName] = targetFolderPath;
-                    }
-
-                    string name = Path.GetFileName(entry);
-                    string targetPath = GetUniqueDestinationPath(targetFolderPath, name);
-
-                    try
-                    {
-                        if (isDirectory)
-                        {
-                            Directory.Move(entry, targetPath);
-                        }
-                        else
-                        {
-                            ShortcutFileTransfer.MoveFile(entry, targetPath);
-                        }
-
-                        result.MovedCount++;
-                        if (!result.TargetPanels.TryGetValue(panelName, out List<DesktopSortMovedItem>? movedItems))
-                        {
-                            movedItems = new List<DesktopSortMovedItem>();
-                            result.TargetPanels[panelName] = movedItems;
-                        }
-
-                        movedItems.Add(new DesktopSortMovedItem
-                        {
-                            SourcePath = entry,
-                            TargetPath = targetPath
-                        });
-                    }
-                    catch
-                    {
-                        result.ErrorCount++;
-                    }
-                }
-            }
-
-            return result;
-        }
-
         private static Rect BuildRectForWindow(double left, double top, double width, double height)
         {
             const double minWidth = 120;
@@ -2064,35 +1794,65 @@ namespace DesktopPlus
             panel.AnimateListItemsForPaths(movedPaths);
         }
 
-        private void EnsureAutoSortPanels(Dictionary<string, List<DesktopSortMovedItem>> targetPanels)
+        private async Task EnsureAutoSortPanelsAsync(Dictionary<string, List<DesktopSortMovedItem>> targetPanels)
         {
             _newAutoSortPanelIndex = 0;
             CaptureAutoSortOccupiedRects();
             foreach (var pair in targetPanels.OrderBy(p => p.Key))
             {
                 EnsureAutoSortPanel(pair.Key, pair.Value);
+                await Dispatcher.Yield(DispatcherPriority.Background);
             }
         }
 
-        private void RunDesktopSort(bool showResultMessage)
+        private Task RunDesktopSortAsync(bool showResultMessage)
         {
-            if (_desktopAutoSortInProgress)
+            if (_desktopAutoSortInProgress || _isExitPending || IsExiting)
             {
-                return;
+                return _desktopAutoSortTask;
             }
 
+            _desktopAutoSortTask = RunDesktopSortCoreAsync(showResultMessage);
+            return _desktopAutoSortTask;
+        }
+
+        private async Task RunDesktopSortCoreAsync(bool showResultMessage)
+        {
             _desktopAutoSortInProgress = true;
+            _desktopAutoSortPending = false;
+            _desktopAutoSortDebounceTimer?.Stop();
+            AutoSortRunNowButton.IsEnabled = false;
+            UpdateBackupDetails(BackupsList.SelectedItem as UpdateBackupInfo);
             try
             {
-                List<string> backupCandidates = GetDesktopAutoSortBackupCandidates();
-                if (backupCandidates.Count > 0 &&
-                    !TryCreateAutoSortBackup(backupCandidates, out string backupError))
+                SetDesktopAutoSortStatus(GetString("Loc.AutoSortStatusScanning"));
+                var rules = _desktopAutoSort.Rules.Where(rule => rule.Enabled).Select(rule => new DesktopSortRuleState
                 {
-                    throw new InvalidOperationException(
-                        string.Format(GetString("Loc.AutoSortMsgBackupFailed"), backupError));
-                }
+                    Enabled = true,
+                    IsBuiltIn = rule.IsBuiltIn,
+                    MatchFolders = rule.MatchFolders,
+                    CatchAll = rule.CatchAll,
+                    TargetPanelName = ResolveTargetPanelName(rule),
+                    Extensions = rule.Extensions.ToList()
+                }).ToArray();
+                string backupReason = GetString("Loc.BackupsReasonAutoSort");
+                string backupName = GetString("Loc.BackupsNameBeforeAutoSort");
+                string backupFailedFormat = GetString("Loc.AutoSortMsgBackupFailed");
+                var progress = new Progress<DesktopSortPhase>(phase =>
+                    SetDesktopAutoSortStatus(GetString(phase == DesktopSortPhase.CreatingBackup
+                        ? "Loc.AutoSortStatusBackingUp"
+                        : "Loc.AutoSortStatusSorting")));
+                SaveSettingsImmediate();
 
-                var result = SortDesktopOnce();
+                var result = await DesktopAutoSorter.RunAsync(
+                    GetDesktopDirectoryPaths(), rules, GetDesktopAutoSortStorageRootPath(), moves =>
+                    {
+                        if (!TryCreateAutoSortBackup(moves, backupReason, backupName, out string backupError))
+                        {
+                            throw new InvalidOperationException(string.Format(backupFailedFormat, backupError));
+                        }
+                    }, progress);
+
                 if (result.MovedCount > 0)
                 {
                     var movedPathMap = BuildMovedPathMap(result.TargetPanels);
@@ -2102,7 +1862,7 @@ namespace DesktopPlus
                         ApplyMovedPathMapToSavedPanels(movedPathMap);
                     }
 
-                    EnsureAutoSortPanels(result.TargetPanels);
+                    await EnsureAutoSortPanelsAsync(result.TargetPanels);
                     SaveSettings();
                     NotifyPanelsChanged();
                     RefreshBackupsTab();
@@ -2124,7 +1884,7 @@ namespace DesktopPlus
 
                 SetDesktopAutoSortStatus(statusText);
 
-                if (showResultMessage)
+                if (showResultMessage && !_isExitPending)
                 {
                     MessageBoxImage icon = result.ErrorCount > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information;
                     System.Windows.MessageBox.Show(
@@ -2139,7 +1899,7 @@ namespace DesktopPlus
                 string message = string.Format(GetString("Loc.AutoSortMsgSortFailed"), ex.Message);
                 SetDesktopAutoSortStatus(message);
 
-                if (showResultMessage)
+                if (showResultMessage && !_isExitPending)
                 {
                     System.Windows.MessageBox.Show(
                         message,
@@ -2151,6 +1911,12 @@ namespace DesktopPlus
             finally
             {
                 _desktopAutoSortInProgress = false;
+                AutoSortRunNowButton.IsEnabled = true;
+                UpdateBackupDetails(BackupsList.SelectedItem as UpdateBackupInfo);
+                if (_desktopAutoSortPending && _desktopAutoSort.AutoSortEnabled && !_isExitPending)
+                {
+                    _desktopAutoSortDebounceTimer?.Start();
+                }
             }
         }
 
@@ -2486,9 +2252,9 @@ namespace DesktopPlus
             SaveSettings();
         }
 
-        private void SortDesktopNow_Click(object sender, RoutedEventArgs e)
+        private async void SortDesktopNow_Click(object sender, RoutedEventArgs e)
         {
-            RunDesktopSort(showResultMessage: true);
+            await RunDesktopSortAsync(showResultMessage: true);
         }
 
         private void ResetAutoSortRules_Click(object sender, RoutedEventArgs e)

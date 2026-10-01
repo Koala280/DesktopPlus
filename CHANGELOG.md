@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.5] - 2026-10-01
+
+### Fixed
+
+- Auto-sort now plans, backs up, and moves desktop items in the background, keeping the settings window responsive and processing items arriving during a sort in a subsequent pass.
+
+### Changed
+
+- Auto-sort restore points now store only settings and move history, avoiding copies of desktop contents and the existing sort storage. Restore moves surviving items back without overwriting new desktop items; deleted files require a separate full backup.
+
 ## [1.6.4] - 2026-08-20
 
 ### Fixed

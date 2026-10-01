@@ -20,6 +20,7 @@ namespace DesktopPlus
         public bool ContainsCustomLanguages { get; set; }
         public bool ContainsAutoSortStorage { get; set; }
         public bool ContainsDesktopSnapshot { get; set; }
+        public bool ContainsDesktopMoveHistory { get; set; }
 
         public string DisplayName
         {

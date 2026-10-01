@@ -24,7 +24,8 @@ namespace DesktopPlus
             bool captureAutoSortStorage,
             IReadOnlyCollection<string>? desktopItems,
             out string backupArchivePath,
-            out string errorMessage)
+            out string errorMessage,
+            string? preserveArchivePath = null)
         {
             backupArchivePath = string.Empty;
             errorMessage = string.Empty;
@@ -170,7 +171,7 @@ namespace DesktopPlus
 
                 if (!string.Equals(normalizedKind, "manual", StringComparison.OrdinalIgnoreCase))
                 {
-                    PruneManagedBackups(normalizedKind, archivePath);
+                    PruneManagedBackups(normalizedKind, archivePath, preserveArchivePath);
                 }
 
                 backupArchivePath = archivePath;
@@ -190,7 +191,7 @@ namespace DesktopPlus
             }
         }
 
-        private static void PruneManagedBackups(string backupKind, string keepArchivePath)
+        private static void PruneManagedBackups(string backupKind, string keepArchivePath, string? preserveArchivePath = null)
         {
             try
             {
@@ -200,12 +201,18 @@ namespace DesktopPlus
                 }
 
                 string pattern = $"DesktopPlus-backup-{backupKind}-*.zip";
-                foreach (FileInfo backup in Directory
+                var backupFiles = Directory
                     .EnumerateFiles(UpdateBackupsDirectory, pattern, SearchOption.TopDirectoryOnly)
-                    .Where(path => !string.Equals(path, keepArchivePath, StringComparison.OrdinalIgnoreCase))
                     .Select(path => new FileInfo(path))
+                    .ToList();
+                bool IsProtected(FileInfo file) =>
+                    string.Equals(file.FullName, keepArchivePath, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(file.FullName, preserveArchivePath, StringComparison.OrdinalIgnoreCase);
+                int protectedCount = backupFiles.Count(IsProtected);
+                foreach (FileInfo backup in backupFiles
+                    .Where(file => !IsProtected(file))
                     .OrderByDescending(info => info.LastWriteTimeUtc)
-                    .Skip(Math.Max(0, MaxAutomaticBackupsPerKind - 1)))
+                    .Skip(Math.Max(0, MaxAutomaticBackupsPerKind - protectedCount)))
                 {
                     TryDeleteFile(backup.FullName);
                 }
@@ -241,20 +248,64 @@ namespace DesktopPlus
             return false;
         }
 
-        private bool TryCreateAutoSortBackup(
-            IReadOnlyCollection<string> desktopItems,
+        private static bool TryCreateAutoSortBackup(
+            IReadOnlyCollection<DesktopSortMovedItem> desktopMoves,
+            string reason,
+            string displayName,
             out string errorMessage)
         {
-            SaveSettingsImmediate();
-            return TryCreateManagedBackup(
-                "auto-sort",
-                GetString("Loc.BackupsReasonAutoSort"),
-                GetString("Loc.BackupsNameBeforeAutoSort"),
-                includeApplication: false,
-                captureAutoSortStorage: true,
-                desktopItems,
-                out _,
-                out errorMessage);
+            string archivePath = Path.Combine(UpdateBackupsDirectory,
+                $"DesktopPlus-backup-auto-sort-{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}-{Guid.NewGuid():N}.zip");
+            errorMessage = string.Empty;
+            try
+            {
+                Directory.CreateDirectory(UpdateBackupsDirectory);
+                WriteDesktopAutoSortBackupArchive(archivePath, settingsFilePath, desktopMoves, reason, displayName);
+                PruneManagedBackups("auto-sort", archivePath);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to create auto-sort move backup: {ex}");
+                errorMessage = ex.Message;
+                TryDeleteFile(archivePath);
+                return false;
+            }
+        }
+
+        internal static void WriteDesktopAutoSortBackupArchive(
+            string archivePath,
+            string settingsSnapshotPath,
+            IReadOnlyCollection<DesktopSortMovedItem> desktopMoves,
+            string reason,
+            string displayName)
+        {
+            using ZipArchive archive = ZipFile.Open(archivePath, ZipArchiveMode.Create);
+            archive.CreateEntryFromFile(settingsSnapshotPath,
+                "user-data/roaming/DesktopPlus_Settings.json", CompressionLevel.Fastest);
+            var manifest = new UpdateBackupManifest
+            {
+                SchemaVersion = 3,
+                BackupKind = "auto-sort",
+                Reason = reason,
+                DisplayName = displayName,
+                CurrentVersion = NormalizeVersionToken(GetInstalledVersionText()),
+                CreatedUtc = DateTime.UtcNow.ToString("O"),
+                SourceExecutablePath = Environment.ProcessPath ?? string.Empty,
+                SourceInstallDirectory = GetCurrentInstallDirectory() ?? string.Empty,
+                IncludedEntries = new List<string> { settingsSnapshotPath },
+                DesktopMoves = desktopMoves.ToList()
+            };
+            using (var writer = new StreamWriter(archive.CreateEntry("manifest.json", CompressionLevel.Fastest).Open()))
+            {
+                writer.Write(JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
+            }
+            using (var writer = new StreamWriter(archive.CreateEntry("RESTORE.txt", CompressionLevel.Fastest).Open()))
+            {
+                writer.WriteLine("DesktopPlus auto-sort move history (no desktop file copies).");
+                writer.WriteLine("Use Restore in the Backups tab to move existing sorted items back to the desktop.");
+                writer.WriteLine("Items deleted after sorting cannot be recovered from this move history.");
+            }
         }
 
         private void RefreshBackupsTab(string? preferredArchivePath = null)
@@ -281,7 +332,7 @@ namespace DesktopPlus
         private void UpdateBackupDetails(UpdateBackupInfo? backup)
         {
             bool hasSelection = backup != null;
-            BackupRestoreSelectedButton.IsEnabled = hasSelection;
+            BackupRestoreSelectedButton.IsEnabled = hasSelection && !_desktopAutoSortInProgress;
             BackupDeleteSelectedButton.IsEnabled = hasSelection;
             BackupNoSelectionText.Visibility = hasSelection ? Visibility.Collapsed : Visibility.Visible;
             BackupDetailsPanel.Visibility = hasSelection ? Visibility.Visible : Visibility.Collapsed;
@@ -304,6 +355,7 @@ namespace DesktopPlus
             if (backup.ContainsCustomLanguages) includes.Add(GetString("Loc.BackupRestoreContainsLanguages"));
             if (backup.ContainsAutoSortStorage) includes.Add(GetString("Loc.BackupRestoreContainsAutoSort"));
             if (backup.ContainsDesktopSnapshot) includes.Add(GetString("Loc.BackupsContainsDesktop"));
+            if (backup.ContainsDesktopMoveHistory) includes.Add(GetString("Loc.BackupsContainsDesktopMoves"));
             BackupDetailsIncludesText.Text = includes.Count == 0
                 ? "-"
                 : string.Join(Environment.NewLine, includes.Select(item => "• " + item));
@@ -388,6 +440,11 @@ namespace DesktopPlus
 
         private void RestoreBackup(UpdateBackupInfo backup)
         {
+            if (_desktopAutoSortInProgress)
+            {
+                return;
+            }
+
             string displayName = string.IsNullOrWhiteSpace(backup.DisplayName)
                 ? backup.ArchiveFileName
                 : backup.DisplayName;
@@ -405,8 +462,8 @@ namespace DesktopPlus
                 "critical",
                 GetString("Loc.BackupsReasonBeforeRestore"),
                 GetString("Loc.BackupsNameBeforeRestore"),
-                includeApplication: true,
-                captureAutoSortStorage: true,
+                includeApplication: !backup.ContainsDesktopMoveHistory,
+                captureAutoSortStorage: !backup.ContainsDesktopMoveHistory,
                 desktopItems: null,
                 out _,
                 out string safetyError))

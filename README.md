@@ -53,6 +53,8 @@ DesktopPlus is built for people who want a fast desktop workflow without replaci
 | Tray integration | Run from system tray, reopen main window, and control app behavior. |
 | Localization | German, English, Latvian, plus custom language import via JSON. |
 
+Auto-sort runs in the background and saves only settings and a move history before sorting. Its restore point moves existing sorted items back to their original desktop locations without copying desktop contents or overwriting new files. It cannot recover items deleted after sorting; use a manual backup for file-content recovery.
+
 ## Custom Language JSON Import
 
 Import path in app: `General` tab -> `Import language JSON`.
@@ -152,7 +154,7 @@ Sorted files are moved from your desktop into:
 The `Backups` tab provides one place to create, inspect, restore, and delete backups.
 
 - DesktopPlus automatically creates restore points before auto-sort, updates, layout application, destructive panel/layout changes, rule resets, and restores.
-- Auto-sort backups preserve the affected desktop items and their original paths.
+- Auto-sort backups preserve settings and the original and sorted paths, without copying desktop contents.
 - Manual backups include the installed application files, settings, custom languages, and auto-sort storage.
 - Automatic backup history is bounded per backup type; manual backups are retained until you delete them.
 - Restoring a backup first creates a safety backup of the current state.

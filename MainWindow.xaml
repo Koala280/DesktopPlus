@@ -2338,7 +2338,8 @@
                                                     Style="{StaticResource GhostButton}"
                                                     Padding="10,6"
                                                     Click="ResetAutoSortRules_Click"/>
-                                            <Button Content="{DynamicResource Loc.AutoSortRunNow}"
+                                            <Button x:Name="AutoSortRunNowButton"
+                                                    Content="{DynamicResource Loc.AutoSortRunNow}"
                                                     Style="{StaticResource PrimaryButton}"
                                                     Padding="12,6"
                                                     Margin="8,0,0,0"

@@ -105,6 +105,7 @@ namespace DesktopPlus
             public bool CapturedAutoSortStorage { get; set; }
             public List<string> IncludedEntries { get; set; } = new List<string>();
             public List<DesktopBackupItemManifest> DesktopItems { get; set; } = new List<DesktopBackupItemManifest>();
+            public List<DesktopSortMovedItem> DesktopMoves { get; set; } = new List<DesktopSortMovedItem>();
         }
 
         private sealed class DesktopBackupItemManifest
@@ -628,6 +629,7 @@ namespace DesktopPlus
                         backup.Reason = manifest.Reason ?? string.Empty;
                         backup.CustomDisplayName = manifest.DisplayName ?? string.Empty;
                         backup.ContainsDesktopSnapshot = manifest.DesktopItems?.Count > 0;
+                        backup.ContainsDesktopMoveHistory = manifest.DesktopMoves?.Count > 0;
                         backup.ContainsAutoSortStorage = manifest.CapturedAutoSortStorage;
 
                         if (DateTime.TryParse(
@@ -711,6 +713,25 @@ namespace DesktopPlus
             return candidates;
         }
 
+        internal static string BuildDesktopMoveRestoreScript()
+        {
+            return """
+              if ($manifest -and $manifest.DesktopMoves) {
+                $sortRoot = [IO.Path]::GetFullPath($targetAutoSortDir).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+                foreach ($move in $manifest.DesktopMoves) {
+                  if ([string]::IsNullOrWhiteSpace($move.SourcePath) -or [string]::IsNullOrWhiteSpace($move.TargetPath)) { continue }
+                  $originalPath = [IO.Path]::GetFullPath($move.SourcePath)
+                  $sortedPath = [IO.Path]::GetFullPath($move.TargetPath)
+                  $originalParent = [IO.Path]::GetDirectoryName($originalPath)
+                  if ($desktopRoots -notcontains $originalParent -or -not $sortedPath.StartsWith($sortRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid desktop move in backup manifest.' }
+                  if (-not (Test-Path -LiteralPath $sortedPath) -or (Test-Path -LiteralPath $originalPath)) { continue }
+                  Ensure-Directory $originalParent
+                  if ([IO.Directory]::Exists($sortedPath)) { [IO.Directory]::Move($sortedPath, $originalPath) } else { [IO.File]::Move($sortedPath, $originalPath) }
+                }
+              }
+            """;
+        }
+
         private static string BuildBackupRestoreScript(
             UpdateBackupInfo backup,
             IReadOnlyList<string> launchCandidates)
@@ -724,6 +745,7 @@ namespace DesktopPlus
             string errorTitle = GetString("Loc.MsgError");
             string launchMissingMessage = GetString("Loc.MsgBackupRestoreLaunchMissing");
             string launchTargetsLiteral = BuildPowerShellStringArrayLiteral(launchCandidates);
+            string desktopRootsLiteral = BuildPowerShellStringArrayLiteral(GetDesktopDirectoryPaths());
 
             var script = new StringBuilder();
             script.AppendLine("$ErrorActionPreference = 'Stop'");
@@ -734,6 +756,7 @@ namespace DesktopPlus
             script.AppendLine($"$settingsPath = '{EscapePowerShellSingleQuotedLiteral(targetSettingsPath)}'");
             script.AppendLine($"$targetLanguagesDir = '{EscapePowerShellSingleQuotedLiteral(targetLanguagesDirectory)}'");
             script.AppendLine($"$targetAutoSortDir = '{EscapePowerShellSingleQuotedLiteral(targetAutoSortDirectory)}'");
+            script.AppendLine($"$desktopRoots = @({desktopRootsLiteral})");
             script.AppendLine($"$pendingInfoPath = '{EscapePowerShellSingleQuotedLiteral(PendingUpdateInfoPath)}'");
             script.AppendLine($"$errorTitle = '{EscapePowerShellSingleQuotedLiteral(errorTitle)}'");
             script.AppendLine($"$launchMissingMessage = '{EscapePowerShellSingleQuotedLiteral(launchMissingMessage)}'");
@@ -751,6 +774,7 @@ namespace DesktopPlus
             script.AppendLine("  Expand-Archive -LiteralPath $archivePath -DestinationPath $extractPath -Force");
             script.AppendLine("  $manifestPath = Join-Path $extractPath 'manifest.json'");
             script.AppendLine("  $manifest = if (Test-Path -LiteralPath $manifestPath) { Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json } else { $null }");
+            script.AppendLine(BuildDesktopMoveRestoreScript());
             script.AppendLine("  $appSource = Join-Path $extractPath 'app'");
             script.AppendLine("  if (Test-Path -LiteralPath $appSource) { Reset-DirectoryContents $targetInstallDir; Copy-DirectoryContents $appSource $targetInstallDir }");
             script.AppendLine("  $settingsSource = Join-Path $extractPath 'user-data\\roaming\\DesktopPlus_Settings.json'");
@@ -1303,6 +1327,7 @@ namespace DesktopPlus
                 return false;
             }
 
+            await _desktopAutoSortTask;
             SaveSettingsImmediate();
             SetManualUpdateStatus(GetString("Loc.UpdateStatusBackingUp"));
             if (!TryCreatePreUpdateBackup(normalizedLatestVersion, out _, out string backupError))

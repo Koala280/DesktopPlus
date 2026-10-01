@@ -26,6 +26,7 @@ namespace DesktopPlus
         private WinForms.NotifyIcon? _notifyIcon;
         private TrayMenuWindow? _trayMenuWindow;
         private bool _isExit = false;
+        private bool _isExitPending;
         public static bool IsExiting { get; private set; }
         public static event Action? AppearanceChanged;
         public static event Action? PanelsChanged;
@@ -1072,8 +1073,16 @@ if ($isMatch) {{ exit 0 }} else {{ exit 1 }}";
             Focus();
         }
 
-        private void ExitApplication()
+        private async void ExitApplication()
         {
+            if (_isExitPending || _isExit)
+            {
+                return;
+            }
+
+            _isExitPending = true;
+            StopDesktopAutoSortWatcher();
+            await _desktopAutoSortTask;
             _isExit = true;
             IsExiting = true;
             CloseTrayMenuWindow();
@@ -1256,6 +1265,12 @@ if ($isMatch) {{ exit 0 }} else {{ exit 1 }}";
 
         private void OnWindowClosing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
+            if (_isExitPending && !_isExit)
+            {
+                e.Cancel = true;
+                return;
+            }
+
             if (_isExit) return;
 
             if (string.Equals(_closeBehavior, CloseBehaviorExit, StringComparison.OrdinalIgnoreCase))
