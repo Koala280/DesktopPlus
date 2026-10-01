@@ -1,0 +1,35 @@
+<Window x:Class="DesktopPlus.UninstallBackupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="{DynamicResource Loc.UninstallBackupTitle}" Width="700" Height="520"
+        MinWidth="600" MinHeight="460" WindowStartupLocation="CenterScreen"
+        Closing="Window_Closing">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Text="{DynamicResource Loc.UninstallBackupDescription}" TextWrapping="Wrap" Margin="0,0,0,16"/>
+        <ListBox x:Name="BackupsList" Grid.Row="1" HorizontalContentAlignment="Stretch">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <StackPanel Margin="4,6">
+                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding CreatedDisplay}" Margin="0,3,0,0"/>
+                        <TextBlock Text="{Binding Reason}" TextWrapping="Wrap" Foreground="DimGray"/>
+                        <TextBlock Text="{Binding ArchiveFileName}" FontSize="11" Foreground="DimGray" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+        <TextBlock x:Name="StatusText" Grid.Row="2" Margin="0,12,0,0" TextWrapping="Wrap"/>
+        <WrapPanel Grid.Row="3" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="CancelButton" Content="{DynamicResource Loc.UninstallBackupCancel}"
+                    IsCancel="True" Padding="12,8" Margin="0,0,8,0"/>
+            <Button x:Name="RestoreButton" Content="{DynamicResource Loc.UninstallBackupRestore}"
+                    IsDefault="True" Padding="12,8" Click="Restore_Click"/>
+        </WrapPanel>
+    </Grid>
+</Window>

@@ -34,6 +34,14 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[CustomMessages]
+german.UninstallRestoreBackup=Es sind DesktopPlus-Backups vorhanden. Möchten Sie vor der Deinstallation ein Backup wiederherstellen?%n%nSie können anschließend ein Backup auswählen. Einstellungen und gesicherte Desktop-Elemente werden wiederhergestellt; danach wird DesktopPlus deinstalliert. Die Backup-Archive bleiben erhalten.%n%nJa: Backup auswählen und wiederherstellen%nNein: Ohne Wiederherstellung deinstallieren%nAbbrechen: Deinstallation abbrechen
+english.UninstallRestoreBackup=DesktopPlus backups are available. Would you like to restore a backup before uninstalling?%n%nYou can choose a backup next. Settings and backed-up desktop items will be restored, then DesktopPlus will be uninstalled. Backup archives will be kept.%n%nYes: Choose and restore a backup%nNo: Uninstall without restoring%nCancel: Cancel uninstall
+german.UninstallRestoreFailed=Die Wiederherstellung konnte nicht abgeschlossen werden. Die Deinstallation wurde abgebrochen. Ihre Backups bleiben erhalten.
+english.UninstallRestoreFailed=The restore could not be completed. Uninstall has been cancelled. Your backups are kept.
+german.UninstallRestoreAppRunning=Bitte beenden Sie DesktopPlus vollständig (auch im Infobereich) und starten Sie die Deinstallation erneut, um ein Backup wiederherzustellen.
+english.UninstallRestoreAppRunning=Please exit DesktopPlus completely (including the system tray) and start uninstall again to restore a backup.
+
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
@@ -150,8 +158,75 @@ begin
   end;
 end;
 
+function HasUninstallBackups(): Boolean;
+var
+  FindRec: TFindRec;
+begin
+  Result := False;
+  if FindFirst(ExpandConstant('{localappdata}\DesktopPlus\Backups\DesktopPlus-backup-*.zip'), FindRec) then
+  begin
+    try
+      repeat
+        if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0 then
+        begin
+          Result := True;
+          Exit;
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+procedure OfferUninstallBackupRestore();
+var
+  Choice: Integer;
+  ResultCode: Integer;
+begin
+  if UninstallSilent or not HasUninstallBackups() then
+  begin
+    Exit;
+  end;
+
+  Choice := MsgBox(CustomMessage('UninstallRestoreBackup'), mbConfirmation, MB_YESNOCANCEL);
+  if Choice = IDCANCEL then
+  begin
+    Abort;
+  end;
+  if Choice <> IDYES then
+  begin
+    Exit;
+  end;
+
+  if not Exec(ExpandConstant('{app}\{#MyAppExeName}'),
+    '--restore-before-uninstall --language=' + ActiveLanguage(),
+    ExpandConstant('{app}'), SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then
+  begin
+    MsgBox(CustomMessage('UninstallRestoreFailed'), mbError, MB_OK);
+    Abort;
+  end;
+  if ResultCode = 3 then
+  begin
+    MsgBox(CustomMessage('UninstallRestoreAppRunning'), mbInformation, MB_OK);
+    Abort;
+  end;
+  if ResultCode <> 0 then
+  begin
+    if ResultCode <> 2 then
+    begin
+      MsgBox(CustomMessage('UninstallRestoreFailed'), mbError, MB_OK);
+    end;
+    Abort;
+  end;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
+  if CurUninstallStep = usUninstall then
+  begin
+    OfferUninstallBackupRestore();
+  end;
   if CurUninstallStep = usPostUninstall then
   begin
     RegDeleteValue(HKEY_CURRENT_USER, StartupRunRegistryKey, StartupRunRegistryValue);

@@ -732,9 +732,10 @@ namespace DesktopPlus
             """;
         }
 
-        private static string BuildBackupRestoreScript(
+        internal static string BuildBackupRestoreScript(
             UpdateBackupInfo backup,
-            IReadOnlyList<string> launchCandidates)
+            IReadOnlyList<string> launchCandidates,
+            bool restoreBeforeUninstall = false)
         {
             string currentInstallDirectory = GetCurrentInstallDirectory()
                 ?? backup.SourceInstallDirectory
@@ -749,7 +750,10 @@ namespace DesktopPlus
 
             var script = new StringBuilder();
             script.AppendLine("$ErrorActionPreference = 'Stop'");
-            script.AppendLine("Add-Type -AssemblyName PresentationFramework | Out-Null");
+            if (!restoreBeforeUninstall)
+            {
+                script.AppendLine("Add-Type -AssemblyName PresentationFramework | Out-Null");
+            }
             script.AppendLine($"$sourceProcessId = {Environment.ProcessId}");
             script.AppendLine($"$archivePath = '{EscapePowerShellSingleQuotedLiteral(backup.ArchivePath)}'");
             script.AppendLine($"$targetInstallDir = '{EscapePowerShellSingleQuotedLiteral(currentInstallDirectory)}'");
@@ -763,20 +767,29 @@ namespace DesktopPlus
             script.AppendLine($"$launchTargets = @({launchTargetsLiteral})");
             script.AppendLine("$restoreRoot = Join-Path $env:LOCALAPPDATA ('DesktopPlus\\\\Backups\\\\restore-' + [guid]::NewGuid().ToString('N'))");
             script.AppendLine("$extractPath = Join-Path $restoreRoot 'extract'");
-            script.AppendLine("function Show-RestoreError([string]$message) { [System.Windows.MessageBox]::Show($message, $errorTitle, 'OK', 'Error') | Out-Null }");
+            script.AppendLine(restoreBeforeUninstall
+                ? "function Show-RestoreError([string]$message) { [Console]::Error.WriteLine($message) }"
+                : "function Show-RestoreError([string]$message) { [System.Windows.MessageBox]::Show($message, $errorTitle, 'OK', 'Error') | Out-Null }");
             script.AppendLine("function Ensure-Directory([string]$path) { if ([string]::IsNullOrWhiteSpace($path)) { return } if (-not (Test-Path -LiteralPath $path)) { New-Item -ItemType Directory -Path $path -Force | Out-Null } }");
             script.AppendLine("function Reset-DirectoryContents([string]$path) { if ([string]::IsNullOrWhiteSpace($path)) { throw 'Restore target path is missing.' } Ensure-Directory $path; Get-ChildItem -LiteralPath $path -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force }");
             script.AppendLine("function Copy-DirectoryContents([string]$source, [string]$destination) { if (-not (Test-Path -LiteralPath $source)) { return } Ensure-Directory $destination; foreach ($child in Get-ChildItem -LiteralPath $source -Force) { Copy-Item -LiteralPath $child.FullName -Destination (Join-Path $destination $child.Name) -Recurse -Force } }");
-            script.AppendLine("try { Wait-Process -Id $sourceProcessId -ErrorAction SilentlyContinue } catch { }");
-            script.AppendLine("Start-Sleep -Milliseconds 900");
+            if (!restoreBeforeUninstall)
+            {
+                script.AppendLine("try { Wait-Process -Id $sourceProcessId -ErrorAction SilentlyContinue } catch { }");
+                script.AppendLine("Start-Sleep -Milliseconds 900");
+            }
             script.AppendLine("try {");
             script.AppendLine("  Ensure-Directory $restoreRoot");
-            script.AppendLine("  Expand-Archive -LiteralPath $archivePath -DestinationPath $extractPath -Force");
+            script.AppendLine("  Add-Type -AssemblyName System.IO.Compression.FileSystem | Out-Null");
+            script.AppendLine("  [IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $extractPath)");
             script.AppendLine("  $manifestPath = Join-Path $extractPath 'manifest.json'");
             script.AppendLine("  $manifest = if (Test-Path -LiteralPath $manifestPath) { Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json } else { $null }");
             script.AppendLine(BuildDesktopMoveRestoreScript());
-            script.AppendLine("  $appSource = Join-Path $extractPath 'app'");
-            script.AppendLine("  if (Test-Path -LiteralPath $appSource) { Reset-DirectoryContents $targetInstallDir; Copy-DirectoryContents $appSource $targetInstallDir }");
+            if (!restoreBeforeUninstall)
+            {
+                script.AppendLine("  $appSource = Join-Path $extractPath 'app'");
+                script.AppendLine("  if (Test-Path -LiteralPath $appSource) { Reset-DirectoryContents $targetInstallDir; Copy-DirectoryContents $appSource $targetInstallDir }");
+            }
             script.AppendLine("  $settingsSource = Join-Path $extractPath 'user-data\\roaming\\DesktopPlus_Settings.json'");
             script.AppendLine("  if (Test-Path -LiteralPath $settingsSource) { Ensure-Directory (Split-Path -Path $settingsPath -Parent); Copy-Item -LiteralPath $settingsSource -Destination $settingsPath -Force }");
             script.AppendLine("  $languagesSource = Join-Path $extractPath 'user-data\\roaming\\DesktopPlus\\Languages'");
@@ -785,14 +798,17 @@ namespace DesktopPlus
             script.AppendLine("  $capturedAutoSort = ($manifest -and $manifest.CapturedAutoSortStorage) -or (Test-Path -LiteralPath $autoSortSource)");
             script.AppendLine("  if ($capturedAutoSort) { if (Test-Path -LiteralPath $targetAutoSortDir) { Remove-Item -LiteralPath $targetAutoSortDir -Recurse -Force }; if (Test-Path -LiteralPath $autoSortSource) { Ensure-Directory (Split-Path -Path $targetAutoSortDir -Parent); Copy-DirectoryContents $autoSortSource $targetAutoSortDir } }");
             script.AppendLine("  if ($manifest -and $manifest.DesktopItems) {");
+            script.AppendLine("    $desktopItemsRoot = [IO.Path]::GetFullPath((Join-Path $extractPath 'user-data\\desktop-items')) + [IO.Path]::DirectorySeparatorChar");
             script.AppendLine("    foreach ($desktopItem in $manifest.DesktopItems) {");
             script.AppendLine("      if ([string]::IsNullOrWhiteSpace($desktopItem.OriginalPath) -or [string]::IsNullOrWhiteSpace($desktopItem.ArchiveRelativePath)) { continue }");
+            script.AppendLine("      $desktopOriginalPath = [IO.Path]::GetFullPath($desktopItem.OriginalPath)");
             script.AppendLine("      $desktopRelativePath = $desktopItem.ArchiveRelativePath.Replace('/', [IO.Path]::DirectorySeparatorChar)");
-            script.AppendLine("      $desktopSource = Join-Path $extractPath $desktopRelativePath");
+            script.AppendLine("      $desktopSource = [IO.Path]::GetFullPath((Join-Path $extractPath $desktopRelativePath))");
+            script.AppendLine("      if ($desktopRoots -notcontains [IO.Path]::GetDirectoryName($desktopOriginalPath) -or -not $desktopSource.StartsWith($desktopItemsRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid desktop item in backup manifest.' }");
             script.AppendLine("      if (-not (Test-Path -LiteralPath $desktopSource)) { continue }");
-            script.AppendLine("      Ensure-Directory (Split-Path -Path $desktopItem.OriginalPath -Parent)");
-            script.AppendLine("      if (Test-Path -LiteralPath $desktopItem.OriginalPath) { Remove-Item -LiteralPath $desktopItem.OriginalPath -Recurse -Force }");
-            script.AppendLine("      Copy-Item -LiteralPath $desktopSource -Destination $desktopItem.OriginalPath -Recurse -Force");
+            script.AppendLine("      Ensure-Directory (Split-Path -Path $desktopOriginalPath -Parent)");
+            script.AppendLine("      if (Test-Path -LiteralPath $desktopOriginalPath) { Remove-Item -LiteralPath $desktopOriginalPath -Recurse -Force }");
+            script.AppendLine("      Copy-Item -LiteralPath $desktopSource -Destination $desktopOriginalPath -Recurse -Force");
             script.AppendLine("    }");
             script.AppendLine("  }");
             script.AppendLine("  if (Test-Path -LiteralPath $pendingInfoPath) { Remove-Item -LiteralPath $pendingInfoPath -Force -ErrorAction SilentlyContinue }");
@@ -801,7 +817,16 @@ namespace DesktopPlus
             script.AppendLine("  exit 1");
             script.AppendLine("} finally {");
             script.AppendLine("  try { if (Test-Path -LiteralPath $extractPath) { Remove-Item -LiteralPath $extractPath -Recurse -Force } } catch { }");
+            if (restoreBeforeUninstall)
+            {
+                script.AppendLine("  try { if (Test-Path -LiteralPath $restoreRoot) { Remove-Item -LiteralPath $restoreRoot -Recurse -Force } } catch { }");
+            }
             script.AppendLine("}");
+            if (restoreBeforeUninstall)
+            {
+                script.AppendLine("exit 0");
+                return script.ToString();
+            }
             script.AppendLine("$launched = $false");
             script.AppendLine("foreach ($candidate in $launchTargets) {");
             script.AppendLine("  if ([string]::IsNullOrWhiteSpace($candidate) -or -not (Test-Path -LiteralPath $candidate)) { continue }");

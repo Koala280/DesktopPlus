@@ -158,6 +158,7 @@ The `Backups` tab provides one place to create, inspect, restore, and delete bac
 - Manual backups include the installed application files, settings, custom languages, and auto-sort storage.
 - Automatic backup history is bounded per backup type; manual backups are retained until you delete them.
 - Restoring a backup first creates a safety backup of the current state.
+- When uninstalling interactively, DesktopPlus offers to restore an available backup first. You can choose the backup or continue without restoring. Recovery restores user data without replacing application files or restarting DesktopPlus, then uninstall continues. Cancelling recovery keeps the application installed. Backup archives are retained; silent uninstalls skip the offer.
 
 Backup archives are stored in:
 

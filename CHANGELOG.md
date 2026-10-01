@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.6] - 2026-10-01
+
+### Added
+
+- Interactive uninstalls offer to restore an available backup before removing DesktopPlus, with backup selection and a safety backup. Recovery preserves installer files, does not restart the app, and retains backup archives.
+
 ## [1.6.5] - 2026-10-01
 
 ### Fixed

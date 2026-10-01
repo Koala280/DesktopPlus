@@ -38,10 +38,24 @@ namespace DesktopPlus
 
         protected override void OnStartup(StartupEventArgs e)
         {
+            bool restoreBeforeUninstall = Array.Exists(e.Args, argument =>
+                string.Equals(argument, "--restore-before-uninstall", StringComparison.OrdinalIgnoreCase));
             if (!TryAcquireSingleInstanceMutex())
             {
                 ShutdownMode = ShutdownMode.OnExplicitShutdown;
-                Shutdown();
+                Shutdown(restoreBeforeUninstall ? 3 : 0);
+                return;
+            }
+
+            if (restoreBeforeUninstall)
+            {
+                // Run only the recovery dialog: no panels, auto-sort, settings saves or updates.
+                ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                string language = Array.Exists(e.Args, argument =>
+                    string.Equals(argument, "--language=german", StringComparison.OrdinalIgnoreCase))
+                    ? "de"
+                    : "en";
+                Shutdown(DesktopPlus.MainWindow.RunUninstallBackupRestore(language));
                 return;
             }
 
