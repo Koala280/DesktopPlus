@@ -55,6 +55,7 @@ namespace DesktopPlus
         public List<string> metadataOrder = new List<string> { "name", "type", "size", "created", "modified", "dimensions", "authors", "categories", "tags", "title" };
         public Dictionary<string, double> metadataWidths = NormalizeMetadataWidths(null);
         private bool _hoverTemporarilySuspendedByDoubleClick = false;
+        private bool _hoverExpansionSuppressedUntilMouseLeave;
         private bool _hoverExpanded = false;
         private bool _hasHoverRestoreState = false;
         private double _hoverRestoreBaseTop;
@@ -77,6 +78,7 @@ namespace DesktopPlus
         private bool _isManualResizeActive = false;
         private bool _wrapPanelWidthUpdateQueued = false;
         private bool _isUpdatingHeaderIdentityLayout = false;
+        private bool _panelWindowOrderUpdateQueued;
         private long _panelZOrderToken = Interlocked.Increment(ref _nextPanelZOrderToken);
         private UIElement? _dragHandle;
         private Point _dragStartMouseScreen;
@@ -200,6 +202,7 @@ namespace DesktopPlus
         private const int GwlExStyle = -20;
         private const int WsExToolWindow = 0x00000080;
         private const int WsExAppWindow = 0x00040000;
+        private const uint GaRoot = 2;
         private static readonly IntPtr HwndTopmost = new IntPtr(-1);
         private static readonly IntPtr HwndNotTopmost = new IntPtr(-2);
         private static readonly IntPtr HwndBottom = new IntPtr(1);
@@ -231,6 +234,19 @@ namespace DesktopPlus
             int cx,
             int cy,
             uint uFlags);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativePoint
+        {
+            public int X;
+            public int Y;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr WindowFromPoint(NativePoint point);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
         private static readonly Thickness ExpandedChromeBorderThickness = new Thickness(1);
         private static readonly Thickness CollapsedChromeBorderThickness = new Thickness(1);
         private static readonly Thickness ExpandedChromePadding = new Thickness(0);
@@ -246,7 +262,8 @@ namespace DesktopPlus
             set => _isBottomAnchored = value;
         }
 
-        private bool IsHoverBehaviorEnabled => expandOnHover && !_hoverTemporarilySuspendedByDoubleClick;
+        private bool IsHoverBehaviorEnabled => expandOnHover &&
+            !_hoverTemporarilySuspendedByDoubleClick && !_hoverExpansionSuppressedUntilMouseLeave;
 
         public DesktopPanel()
         {
@@ -315,6 +332,8 @@ namespace DesktopPlus
             {
                 _isClosed = true;
                 CancelPendingHoverLeave();
+                _queuedHoverTargetVisible = null;
+                StopPanelAnimations();
                 _searchCts?.Cancel();
                 _searchCts?.Dispose();
                 _searchCts = null;
@@ -359,6 +378,7 @@ namespace DesktopPlus
             this.LocationChanged += DesktopPanel_LocationChanged;
             this.SizeChanged += DesktopPanel_SizeChanged;
             this.Activated += DesktopPanel_Activated;
+            this.PreviewMouseDown += DesktopPanel_PreviewMouseDown;
             this.Deactivated += DesktopPanel_Deactivated;
             this.MouseMove += Window_MouseMoveHoverProbe;
             this.MouseEnter += Window_MouseEnter;
@@ -1163,6 +1183,7 @@ namespace DesktopPlus
         {
             expandOnHover = enabled;
             _hoverTemporarilySuspendedByDoubleClick = false;
+            _hoverExpansionSuppressedUntilMouseLeave = false;
             _queuedHoverTargetVisible = null;
 
             if (!enabled)
@@ -1225,7 +1246,9 @@ namespace DesktopPlus
         {
             CancelPendingHoverLeave();
 
-            if (!IsHoverBehaviorEnabled)
+            if (_isClosed || !IsVisible || !IsHoverBehaviorEnabled || !IsPointerOverPanel() ||
+                Mouse.LeftButton == MouseButtonState.Pressed || Mouse.RightButton == MouseButtonState.Pressed ||
+                Mouse.MiddleButton == MouseButtonState.Pressed || Mouse.Captured != null)
             {
                 _queuedHoverTargetVisible = null;
                 return;
@@ -1251,13 +1274,13 @@ namespace DesktopPlus
 
         private void RequestHoverCollapseAnimated()
         {
-            if (!IsHoverBehaviorEnabled || !_hoverExpanded)
+            if (_isClosed || !IsVisible || !IsHoverBehaviorEnabled || !_hoverExpanded)
             {
                 _queuedHoverTargetVisible = null;
                 return;
             }
 
-            if (IsMouseOver || IsCursorWithinPanelBounds())
+            if (IsPointerOverPanel() || IsMouseCapturedByPanel())
             {
                 _queuedHoverTargetVisible = null;
                 return;
@@ -1283,7 +1306,7 @@ namespace DesktopPlus
 
             if (!_queuedHoverTargetVisible.HasValue)
             {
-                if (_hoverExpanded && IsHoverBehaviorEnabled && !IsMouseOver && !IsCursorWithinPanelBounds())
+                if (_hoverExpanded && IsHoverBehaviorEnabled && !IsPointerOverPanel() && !IsMouseCapturedByPanel())
                 {
                     RequestHoverCollapseAnimated();
                 }
@@ -1391,15 +1414,35 @@ namespace DesktopPlus
                 SwpNoMove | SwpNoSize | SwpNoActivate | SwpNoOwnerZOrder);
         }
 
-        internal void BringPanelToFrontWithinPanels()
+        private void QueuePanelWindowOrderUpdate(bool bringToFront)
         {
-            if (_isTemporarilyForeground) return;
-            if (IsPreviewPanel) return;
+            if (_isClosed || _isTemporarilyForeground || IsPreviewPanel) return;
+
+            if (bringToFront)
+            {
+                _panelZOrderToken = Interlocked.Increment(ref _nextPanelZOrderToken);
+            }
+
+            if (_panelWindowOrderUpdateQueued) return;
+            _panelWindowOrderUpdateQueued = true;
+            // Activation precedes the mouse-down message. Reordering here synchronously
+            // can change its recipient before the clicked button captures the mouse.
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _panelWindowOrderUpdateQueued = false;
+                if (!_isClosed && IsVisible)
+                {
+                    RestorePanelWindowOrder();
+                }
+            }), System.Windows.Threading.DispatcherPriority.Background);
+        }
+
+        private void RestorePanelWindowOrder()
+        {
+            if (_isTemporarilyForeground || IsPreviewPanel) return;
 
             IntPtr handle = _windowSource?.Handle ?? IntPtr.Zero;
             if (handle == IntPtr.Zero) return;
-
-            _panelZOrderToken = Interlocked.Increment(ref _nextPanelZOrderToken);
 
             var orderedPanels = System.Windows.Application.Current?.Windows
                 .OfType<DesktopPanel>()
@@ -1492,7 +1535,14 @@ namespace DesktopPlus
 
         private void DesktopPanel_Activated(object? sender, EventArgs e)
         {
-            BringPanelToFrontWithinPanels();
+            // Automatic activation after another window closes must not promote a
+            // different panel (such as the recycle bin) over the user's chosen panel.
+            QueuePanelWindowOrderUpdate(bringToFront: false);
+        }
+
+        private void DesktopPanel_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            QueuePanelWindowOrderUpdate(bringToFront: true);
         }
 
         private void DesktopPanel_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -3446,7 +3496,27 @@ namespace DesktopPlus
                 return;
             }
 
-            ToggleCollapseAnimated();
+            bool collapse = !_isCollapsedVisualState;
+            CancelPendingHoverLeave();
+            _queuedHoverTargetVisible = null;
+            if (collapse)
+            {
+                ApplyHoverRestoreStateForCollapse();
+            }
+            _hoverExpanded = false;
+            ClearHoverRestoreState();
+            _hoverExpansionSuppressedUntilMouseLeave = collapse;
+
+            // An explicit click wins over an in-flight hover animation.
+            if (_isCollapseAnimationRunning)
+            {
+                ForceCollapseState(collapse);
+            }
+            else
+            {
+                ToggleCollapseAnimated();
+            }
+            e.Handled = true;
         }
 
         private void Close_Click(object sender, RoutedEventArgs e)

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.8] - 2026-10-02
+
+### Fixed
+
+- Panel close and collapse clicks now take priority over hover animations. Automatic focus changes preserve panel order, and covered panels no longer react to hover based only on their screen bounds.
+
 ## [1.6.7] - 2026-10-01
 
 ### Fixed

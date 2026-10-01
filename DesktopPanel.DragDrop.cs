@@ -2878,7 +2878,7 @@ namespace DesktopPlus
             RebaseHoverRestoreStateFromCurrentBounds();
             _hoverExpanded = true;
 
-            if (!IsMouseOver && !IsCursorWithinPanelBounds())
+            if (!IsPointerOverPanel() && !IsMouseCapturedByPanel())
             {
                 RequestHoverCollapseAnimated();
             }
@@ -3037,8 +3037,30 @@ namespace DesktopPlus
                    cursor.Y <= bottom;
         }
 
+        private bool IsPointerOverPanel()
+        {
+            IntPtr handle = _windowSource?.Handle ?? IntPtr.Zero;
+            if (_isClosed || !IsVisible || handle == IntPtr.Zero || !IsCursorWithinPanelBounds())
+            {
+                return false;
+            }
+
+            // Bounds alone include panels covered by another panel or application.
+            // Resolve the real window under the cursor in physical screen coordinates.
+            var cursor = System.Windows.Forms.Control.MousePosition;
+            IntPtr pointedWindow = WindowFromPoint(new NativePoint { X = cursor.X, Y = cursor.Y });
+            return GetAncestor(pointedWindow, GaRoot) == handle;
+        }
+
+        private bool IsMouseCapturedByPanel()
+        {
+            return Mouse.Captured is DependencyObject captured &&
+                ReferenceEquals(Window.GetWindow(captured), this);
+        }
+
         private async void Window_MouseLeave(object sender, MouseEventArgs e)
         {
+            _hoverExpansionSuppressedUntilMouseLeave = false;
             if (!IsHoverBehaviorEnabled || !_hoverExpanded) return;
 
             var leaveCts = new CancellationTokenSource();
