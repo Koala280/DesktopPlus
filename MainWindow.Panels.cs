@@ -1181,6 +1181,19 @@ namespace DesktopPlus
                 .ThenBy(p => p.PanelKey, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
+            var recycleBinItem = items
+                .Where(item => item.PanelType == PanelKind.RecycleBin || IsRecycleBinPanelId(item.PanelKey))
+                .OrderByDescending(item => item.IsOpen)
+                .FirstOrDefault();
+            RecycleBinPanelToggle.Tag = recycleBinItem;
+            RecycleBinPanelToggle.IsChecked = recycleBinItem?.IsOpen == true;
+            RecycleBinPanelToggle.SetResourceReference(
+                FrameworkElement.ToolTipProperty,
+                recycleBinItem?.IsOpen == true ? "Loc.PanelsHideRecycleBin" : "Loc.PanelsShowRecycleBin");
+            items = items
+                .Where(item => item.PanelType != PanelKind.RecycleBin && !IsRecycleBinPanelId(item.PanelKey))
+                .ToList();
+
             PanelOverviewList.ItemsSource = items;
             int hiddenCount = items.Count(p => p.IsHidden);
             PanelOverviewCount.Text = hiddenCount > 0
@@ -1852,9 +1865,25 @@ namespace DesktopPlus
             return null;
         }
 
-        private void OpenRecycleBinPanel_Click(object sender, RoutedEventArgs e)
+        private void RecycleBinPanelToggle_Click(object sender, RoutedEventArgs e)
         {
-            OpenOrRevealRecycleBinPanel();
+            if (sender is not System.Windows.Controls.Primitives.ToggleButton toggle)
+            {
+                return;
+            }
+
+            if (toggle.IsChecked == true)
+            {
+                OpenOrRevealRecycleBinPanel();
+            }
+            else if (toggle.Tag is PanelOverviewItem { IsOpen: true })
+            {
+                TogglePanelVisibility_Click(sender, e);
+            }
+            else
+            {
+                RefreshPanelOverview();
+            }
         }
 
         private void OpenOrRevealRecycleBinPanel()
@@ -1870,7 +1899,7 @@ namespace DesktopPlus
                 {
                     var tab = openPanel.Tabs[tabIndex];
                     tab.PanelId = RecycleBinPanelId;
-                    if (openPanel.GetVisibleTabCount() <= 1)
+                    if (openPanel.Tabs.Count <= 1)
                     {
                         openPanel.PanelId = RecycleBinPanelId;
                     }

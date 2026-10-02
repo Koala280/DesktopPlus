@@ -1238,6 +1238,11 @@ if ($isMatch) {{ exit 0 }} else {{ exit 1 }}";
         {
             if (MainScrollViewer != null)
             {
+                if (MainScrollViewer.VerticalScrollBarVisibility == System.Windows.Controls.ScrollBarVisibility.Disabled)
+                {
+                    return;
+                }
+
                 if (e.OriginalSource is DependencyObject source)
                 {
                     if (FindAncestor<System.Windows.Controls.ComboBox>(source) != null ||

@@ -287,7 +287,20 @@ namespace DesktopPlus
 
         private void ScheduleSavedPanelFolderWarmup()
         {
+            RefreshConfiguredSearchFolders();
+        }
+
+        internal static void RefreshConfiguredSearchFolders()
+        {
+            if (!IsUiReadyForBackgroundWork || IsExiting || System.Windows.Application.Current == null) return;
             var folderPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var preferred = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var panel in System.Windows.Application.Current.Windows.OfType<DesktopPanel>().Where(IsUserPanel))
+            {
+                foreach (string path in panel.GetFolderPathsForBackgroundListingWarmup()) folderPaths.Add(path);
+                if (panel.PanelType == PanelKind.Folder && !string.IsNullOrWhiteSpace(panel.currentFolderPath))
+                    preferred.Add(panel.currentFolderPath);
+            }
 
             foreach (WindowData window in savedWindows.Where(window => window != null))
             {
@@ -319,24 +332,7 @@ namespace DesktopPlus
                 }
             }
 
-            if (folderPaths.Count == 0)
-            {
-                return;
-            }
-
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    // Let the first rendered frame and startup input win over disk warm-up.
-                    await Task.Delay(350).ConfigureAwait(false);
-                    await FolderListingCache.WarmAsync(folderPaths, CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"Panel folder warm-up failed: {ex}");
-                }
-            });
+            FolderSearchIndexService.Shared.Configure(folderPaths, preferred);
         }
 
         public static void SaveSettings()
@@ -476,6 +472,7 @@ namespace DesktopPlus
                         WriteIndented = true
                     });
                 File.WriteAllText(settingsFilePath, json);
+                RefreshConfiguredSearchFolders();
                 NotifyPanelsChanged();
             }
             catch (Exception ex)

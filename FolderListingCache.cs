@@ -18,7 +18,6 @@ namespace DesktopPlus
         private const int MaxEntriesPerRoot = 20_000;
         private const long MaxBytesPerRoot = 8L * 1024L * 1024L;
         private const long CacheBudgetBytes = 24L * 1024L * 1024L;
-        private const int MaxConcurrentWarmups = 2;
 
         private sealed class CacheEntry
         {
@@ -33,8 +32,6 @@ namespace DesktopPlus
             new Dictionary<string, CacheEntry>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, Task> PendingWarmups =
             new Dictionary<string, Task>(StringComparer.OrdinalIgnoreCase);
-        private static readonly SemaphoreSlim WarmupSemaphore =
-            new SemaphoreSlim(MaxConcurrentWarmups, MaxConcurrentWarmups);
         private static long _cacheBytes;
         private static long _accessSequence;
 
@@ -254,7 +251,7 @@ namespace DesktopPlus
                     return pending.WaitAsync(token);
                 }
 
-                Task warmup = Task.Run(() => WarmOneAsync(folderPath));
+                Task warmup = SearchIndexWorkQueue.Shared.RunAsync(() => WarmOneAsync(folderPath), priority: 4);
                 PendingWarmups[folderPath] = warmup;
                 _ = warmup.ContinueWith(
                     _ =>
@@ -273,63 +270,50 @@ namespace DesktopPlus
 
         private static async Task WarmOneAsync(string folderPath)
         {
-            await WarmupSemaphore.WaitAsync().ConfigureAwait(false);
-            try
+            if (TryGet(folderPath, out _) || !Directory.Exists(folderPath))
             {
-                if (TryGet(folderPath, out _) || !Directory.Exists(folderPath))
-                {
-                    return;
-                }
-
-                var paths = new List<string>(Math.Min(512, MaxEntriesPerRoot));
-                if (!TryEnumerateChildren(folderPath, paths))
-                {
-                    return;
-                }
-
-                Store(folderPath, paths);
+                return;
             }
-            finally
+
+            var paths = new List<string>(Math.Min(512, MaxEntriesPerRoot));
+            if (!await TryEnumerateChildrenAsync(folderPath, paths).ConfigureAwait(false))
             {
-                WarmupSemaphore.Release();
+                return;
             }
+            Store(folderPath, paths);
         }
 
-        private static bool TryEnumerateChildren(string folderPath, List<string> paths)
+        private static async Task<bool> TryEnumerateChildrenAsync(string folderPath, List<string> paths)
         {
             try
             {
                 long estimatedBytes = 64;
-                foreach (string directoryPath in Directory.EnumerateDirectories(folderPath))
+                var files = new List<string>();
+                var throttle = new SearchIndexIoThrottle();
+                var options = new EnumerationOptions
                 {
-                    long pathBytes = 32L + directoryPath.Length * sizeof(char);
-                    if (paths.Count >= MaxEntriesPerRoot || estimatedBytes + pathBytes > MaxBytesPerRoot)
+                    AttributesToSkip = FileAttributes.System,
+                    IgnoreInaccessible = false,
+                    RecurseSubdirectories = false,
+                    ReturnSpecialDirectories = false
+                };
+
+                foreach (FileSystemInfo entry in new DirectoryInfo(folderPath).EnumerateFileSystemInfos("*", options))
+                {
+                    await throttle.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+                    string path = entry.FullName;
+                    long pathBytes = 32L + path.Length * sizeof(char);
+                    if (paths.Count + files.Count >= MaxEntriesPerRoot || estimatedBytes + pathBytes > MaxBytesPerRoot)
                     {
                         return false;
                     }
 
-                    if (ShouldCachePath(directoryPath))
-                    {
-                        paths.Add(directoryPath);
-                        estimatedBytes += pathBytes;
-                    }
+                    if (entry is DirectoryInfo) paths.Add(path);
+                    else files.Add(path);
+                    estimatedBytes += pathBytes;
                 }
 
-                foreach (string filePath in Directory.EnumerateFiles(folderPath))
-                {
-                    long pathBytes = 32L + filePath.Length * sizeof(char);
-                    if (paths.Count >= MaxEntriesPerRoot || estimatedBytes + pathBytes > MaxBytesPerRoot)
-                    {
-                        return false;
-                    }
-
-                    if (ShouldCachePath(filePath))
-                    {
-                        paths.Add(filePath);
-                        estimatedBytes += pathBytes;
-                    }
-                }
-
+                paths.AddRange(files);
                 return true;
             }
             catch

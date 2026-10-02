@@ -466,6 +466,7 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <Border x:Name="DropZone"
@@ -500,6 +501,70 @@
                                        TextWrapping="Wrap"
                                        MaxWidth="280"/>
                         </StackPanel>
+                    </Border>
+
+                    <TextBlock x:Name="SearchIndexStatus"
+                               Grid.Row="2"
+                               Text="{DynamicResource Loc.SearchIndexPreparing}"
+                               Foreground="{DynamicResource PanelMuted}"
+                               FontSize="11"
+                               Margin="4,6,14,0"
+                               Visibility="Collapsed"
+                               IsHitTestVisible="False"/>
+
+                    <Border x:Name="RecycleBinEmptyState"
+                            Grid.RowSpan="2"
+                            Margin="4,6,14,4"
+                            Padding="14"
+                            Visibility="Collapsed"
+                            IsHitTestVisible="False">
+                        <Grid VerticalAlignment="Center"
+                              MaxWidth="240"
+                              MaxHeight="180">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Viewbox Grid.Row="0"
+                                     MaxWidth="80" MaxHeight="80"
+                                     StretchDirection="DownOnly"
+                                     HorizontalAlignment="Center"
+                                     Margin="0,0,0,18">
+                                <Grid Width="80" Height="80">
+                                    <Ellipse Fill="{DynamicResource PanelMuted}"
+                                             Opacity="0.07"/>
+                                    <Ellipse Stroke="{DynamicResource PanelMuted}"
+                                             StrokeThickness="1"
+                                             Opacity="0.16"/>
+                                    <Path Data="M8,6 L8,4 Q8,3 9,3 L15,3 Q16,3 16,4 L16,6 M4,6 L20,6 M6,6 L7,20 Q7,21 8,21 L16,21 Q17,21 17,20 L18,6 M10,10 L10,17 M14,10 L14,17"
+                                          Stroke="{DynamicResource PanelMuted}"
+                                          StrokeThickness="1.4"
+                                          StrokeStartLineCap="Round"
+                                          StrokeEndLineCap="Round"
+                                          StrokeLineJoin="Round"
+                                          Width="34" Height="38"
+                                          Stretch="Uniform"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"/>
+                                </Grid>
+                            </Viewbox>
+                            <TextBlock Grid.Row="1"
+                                       Text="{DynamicResource Loc.RecycleBinEmptyTitle}"
+                                       Foreground="{DynamicResource PanelText}"
+                                       FontSize="15"
+                                       FontWeight="SemiBold"
+                                       TextAlignment="Center"
+                                       TextWrapping="Wrap"/>
+                            <TextBlock Grid.Row="2"
+                                       Text="{DynamicResource Loc.RecycleBinEmptyHint}"
+                                       Foreground="{DynamicResource PanelMuted}"
+                                       FontSize="12"
+                                       LineHeight="18"
+                                       Margin="0,8,0,0"
+                                       TextAlignment="Center"
+                                       TextWrapping="Wrap"/>
+                        </Grid>
                     </Border>
 
                     <Border x:Name="DetailsHeaderBorder"
@@ -620,12 +685,13 @@
                       Stretch="Uniform"
                       Width="11"
                       Height="11"
+                      Margin="0,0,4,4"
                       HorizontalAlignment="Right"
                       VerticalAlignment="Bottom"
                       Stroke="{StaticResource PanelBorder}"
                       StrokeThickness="1.2"
-                      StrokeStartLineCap="Round"
-                      StrokeEndLineCap="Round"
+                      StrokeStartLineCap="Flat"
+                      StrokeEndLineCap="Flat"
                       Opacity="0.9"/>
             </Border>
             </Grid>

@@ -1351,7 +1351,6 @@ namespace DesktopPlus
 
                 InvalidateFolderSearchIndex(
                     folderPath,
-                    rebuildInBackground: true,
                     rerunActiveSearch: false);
 
                 if (IsContentViewCurrent(viewGenerationAtStart, tabAtStart) &&

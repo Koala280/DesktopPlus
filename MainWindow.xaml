@@ -24,10 +24,6 @@
         <SolidColorBrush x:Key="Muted" Color="#A7B0C0"/>
         <SolidColorBrush x:Key="TextPrimary" Color="#F2F5FA"/>
         <SolidColorBrush x:Key="TabAccent" Color="#E2C36B"/>
-        <SolidColorBrush x:Key="RecycleBinButtonBackground" Color="#2D271F"/>
-        <SolidColorBrush x:Key="RecycleBinButtonBorder" Color="#80653A"/>
-        <SolidColorBrush x:Key="RecycleBinButtonHoverBorder" Color="#D6A65A"/>
-        <SolidColorBrush x:Key="RecycleBinButtonForeground" Color="#F3E2BD"/>
         <LinearGradientBrush x:Key="AppBackgroundBrush" StartPoint="0,0" EndPoint="0,1">
             <GradientStop Color="#1E232B" Offset="0"/>
             <GradientStop Color="#171A20" Offset="1"/>
@@ -439,41 +435,84 @@
             <Setter Property="BorderBrush" Value="{StaticResource PrimaryDarker}"/>
         </Style>
 
-        <Style x:Key="RecycleBinButton" TargetType="Button">
-            <Setter Property="Foreground" Value="{StaticResource RecycleBinButtonForeground}"/>
-            <Setter Property="Background" Value="{StaticResource RecycleBinButtonBackground}"/>
-            <Setter Property="BorderBrush" Value="{StaticResource RecycleBinButtonBorder}"/>
+        <Style x:Key="RecycleBinToggle" TargetType="ToggleButton">
+            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+            <Setter Property="Background" Value="{StaticResource InputBackground}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource InputBorder}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="12,6"/>
-            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
-            <Setter Property="RenderTransform">
-                <Setter.Value>
-                    <ScaleTransform ScaleX="1" ScaleY="1"/>
-                </Setter.Value>
-            </Setter>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="MinHeight" Value="32"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="Template">
                 <Setter.Value>
-                    <ControlTemplate TargetType="Button">
+                    <ControlTemplate TargetType="ToggleButton">
                         <Border x:Name="Bd"
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
                                 CornerRadius="10"
                                 Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center"
-                                              VerticalAlignment="Center"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter VerticalAlignment="Center"/>
+                                <Grid Grid.Column="1" Width="34" Height="20" Margin="12,0,0,0">
+                                    <Border x:Name="Track"
+                                            Background="{StaticResource InputBorder}"
+                                            BorderBrush="#465062"
+                                            BorderThickness="1"
+                                            CornerRadius="10"/>
+                                    <Ellipse x:Name="Thumb"
+                                             Width="14" Height="14"
+                                             Fill="{StaticResource Muted}"
+                                             HorizontalAlignment="Left"
+                                             Margin="3,0,0,0">
+                                        <Ellipse.RenderTransform>
+                                            <TranslateTransform x:Name="ThumbTransform"/>
+                                        </Ellipse.RenderTransform>
+                                    </Ellipse>
+                                </Grid>
+                            </Grid>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource RecycleBinButtonHoverBorder}"/>
-                                <Setter TargetName="Bd" Property="Background" Value="#352D22"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource Primary}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#253047"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource PrimaryDarker}"/>
+                                <Setter TargetName="Track" Property="Background" Value="{StaticResource Primary}"/>
+                                <Setter TargetName="Track" Property="BorderBrush" Value="{StaticResource PrimaryDarker}"/>
+                                <Setter TargetName="Thumb" Property="Fill" Value="White"/>
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="ThumbTransform"
+                                                             Storyboard.TargetProperty="X"
+                                                             To="14" Duration="0:0:0.12"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="ThumbTransform"
+                                                             Storyboard.TargetProperty="X"
+                                                             To="0" Duration="0:0:0.12"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource Primary}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter Property="RenderTransform">
-                                    <Setter.Value>
-                                        <ScaleTransform ScaleX="0.98" ScaleY="0.98"/>
-                                    </Setter.Value>
-                                </Setter>
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.85"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Bd" Property="Opacity" Value="0.6"/>
@@ -1011,9 +1050,19 @@
 
         <ScrollViewer x:Name="MainScrollViewer"
                       Grid.Row="1"
-                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
                       PreviewMouseWheel="MainScrollViewer_PreviewMouseWheel">
-            <StackPanel Margin="24">
+            <ScrollViewer.Style>
+                <Style TargetType="ScrollViewer" BasedOn="{StaticResource {x:Type ScrollViewer}}">
+                    <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsSelected, ElementName=BackupsTab}" Value="True">
+                            <Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </ScrollViewer.Style>
+            <Grid Margin="24">
                 <TabControl x:Name="MainTabs"
                             Background="Transparent"
                             BorderThickness="0"
@@ -1133,7 +1182,7 @@
                         </Grid>
                     </TabItem>
 
-                    <TabItem Header="{DynamicResource Loc.TabBackups}">
+                    <TabItem x:Name="BackupsTab" Header="{DynamicResource Loc.TabBackups}">
                         <Grid Margin="0,12,0,0">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -1167,7 +1216,7 @@
                                 </Border>
                             </Grid>
 
-                            <Grid Grid.Row="1" Margin="0,14,0,0" MinHeight="430">
+                            <Grid Grid.Row="1" Margin="0,14,0,0">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="1.05*"/>
                                     <ColumnDefinition Width="1.25*"/>
@@ -1208,8 +1257,8 @@
                                             <ListBox x:Name="BackupsList"
                                                      Background="Transparent"
                                                      BorderThickness="0"
-                                                     MaxHeight="350"
                                                      SelectionChanged="BackupsList_SelectionChanged"
+                                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
                                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                                 <ListBox.ItemTemplate>
                                                     <DataTemplate>
@@ -1402,10 +1451,25 @@
                                                     Padding="10,6"
                                                     Margin="6,0,0,0"
                                                     Click="HideAllPanels_Click"/>
-                                            <Button Content="{DynamicResource Loc.PanelsRecycleBin}"
-                                                    Style="{StaticResource RecycleBinButton}"
-                                                    Margin="6,0,0,0"
-                                                    Click="OpenRecycleBinPanel_Click"/>
+                                            <ToggleButton x:Name="RecycleBinPanelToggle"
+                                                          Style="{StaticResource RecycleBinToggle}"
+                                                          Margin="6,0,0,0"
+                                                          AutomationProperties.Name="{DynamicResource Loc.PanelTypeRecycleBin}"
+                                                          Click="RecycleBinPanelToggle_Click">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Path Data="M8,6 L8,4 Q8,3 9,3 L15,3 Q16,3 16,4 L16,6 M4,6 L20,6 M6,6 L7,20 Q7,21 8,21 L16,21 Q17,21 17,20 L18,6 M10,10 L10,17 M14,10 L14,17"
+                                                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
+                                                          StrokeThickness="1.4"
+                                                          StrokeStartLineCap="Round"
+                                                          StrokeEndLineCap="Round"
+                                                          StrokeLineJoin="Round"
+                                                          Width="14" Height="16"
+                                                          Stretch="Uniform"
+                                                          Margin="0,0,7,0"/>
+                                                    <TextBlock Text="{DynamicResource Loc.PanelTypeRecycleBin}"
+                                                               VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                            </ToggleButton>
                                             <Button Content="{DynamicResource Loc.PanelsNew}"
                                                     Style="{StaticResource PrimaryButton}"
                                                     Padding="12,6"
@@ -3009,7 +3073,7 @@
                         </StackPanel>
                     </TabItem>
                 </TabControl>
-            </StackPanel>
+            </Grid>
         </ScrollViewer>
 
         <Popup x:Name="ColorPickerPopup"

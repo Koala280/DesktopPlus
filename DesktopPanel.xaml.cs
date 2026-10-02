@@ -92,11 +92,11 @@ namespace DesktopPlus
         private CancellationTokenSource? _hoverLeaveCts;
         private bool? _queuedHoverTargetVisible;
         private CancellationTokenSource? _searchCts;
+        internal FolderSearchIndexService SearchIndexService { get; set; } = FolderSearchIndexService.Shared;
         private bool _deferSortUntilSearchComplete;
         private bool _isSearchExpandedFromCompactButton = false;
         private CancellationTokenSource? _folderLoadCts;
         private CancellationTokenSource? _runningFolderLoadCts;
-        private CancellationTokenSource? _folderIndexWarmupCts;
         private CancellationTokenSource? _recycleBinLoadCts;
         private bool _useLightweightItemVisuals;
         private FileSystemWatcher? _folderContentWatcher;
@@ -341,9 +341,6 @@ namespace DesktopPlus
                 _folderLoadCts?.Dispose();
                 _folderLoadCts = null;
                 _runningFolderLoadCts = null;
-                _folderIndexWarmupCts?.Cancel();
-                _folderIndexWarmupCts?.Dispose();
-                _folderIndexWarmupCts = null;
                 CancelPendingFolderSearchIndex();
                 _recycleBinLoadCts?.Cancel();
                 _recycleBinLoadCts?.Dispose();
@@ -440,7 +437,9 @@ namespace DesktopPlus
             bool hasContent = FileList.Items.Count > 0 ||
                               !string.IsNullOrWhiteSpace(currentFolderPath) ||
                               PinnedItems.Count > 0;
-            DropZone.Visibility = hasContent ? Visibility.Collapsed : Visibility.Visible;
+            bool isRecycleBin = PanelType == PanelKind.RecycleBin;
+            DropZone.Visibility = hasContent || isRecycleBin ? Visibility.Collapsed : Visibility.Visible;
+            RecycleBinEmptyState.Visibility = !hasContent && isRecycleBin ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private double GetCollapsedHeight()

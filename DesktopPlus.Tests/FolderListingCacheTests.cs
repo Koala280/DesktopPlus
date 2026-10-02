@@ -7,6 +7,34 @@ namespace DesktopPlus.Tests;
 public sealed class FolderListingCacheTests
 {
     [Fact]
+    public async System.Threading.Tasks.Task WarmAsync_CachesOnlyDirectChildrenWithDirectoriesFirst()
+    {
+        using var folder = new TempDir();
+        string file = folder.File("one.txt");
+        string directory = folder.Dir("nested");
+        string nestedFile = System.IO.Path.Combine(directory, "deeper.txt");
+        System.IO.File.WriteAllText(nestedFile, "nested");
+        string hidden = folder.File("hidden.txt");
+        System.IO.File.SetAttributes(hidden, System.IO.FileAttributes.Hidden);
+
+        try
+        {
+            await FolderListingCache.WarmAsync(new[] { folder.Path });
+
+            Assert.True(FolderListingCache.TryGet(folder.Path, out var cached));
+            Assert.Equal(directory, cached[0]);
+            Assert.Contains(file, cached);
+            Assert.Contains(hidden, cached);
+            Assert.DoesNotContain(nestedFile, cached);
+        }
+        finally
+        {
+            FolderListingCache.Invalidate(folder.Path);
+            System.IO.File.SetAttributes(hidden, System.IO.FileAttributes.Normal);
+        }
+    }
+
+    [Fact]
     public void StoreAndInvalidate_ControlsCachedSnapshot()
     {
         using var folder = new TempDir();

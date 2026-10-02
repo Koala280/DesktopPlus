@@ -66,11 +66,14 @@ namespace DesktopPlus
                 return;
             }
 
+            FolderSearchIndexService.Shared.IndexChanged += DesktopPanel.OnSearchIndexChanged;
             base.OnStartup(e);
         }
 
         protected override void OnExit(ExitEventArgs e)
         {
+            FolderSearchIndexService.Shared.IndexChanged -= DesktopPanel.OnSearchIndexChanged;
+            FolderSearchIndexService.Shared.Dispose();
             if (_singleInstanceMutex != null)
             {
                 try

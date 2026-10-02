@@ -1900,7 +1900,6 @@ namespace DesktopPlus
                 {
                     InvalidateFolderSearchIndex(
                         folderPathAtStart,
-                        rebuildInBackground: true,
                         rerunActiveSearch: false);
 
                     // The previous progressive load and watcher queue were cancelled before the

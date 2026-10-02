@@ -177,18 +177,7 @@ namespace DesktopPlus
                 removedPath,
                 addedOrChangedPath);
 
-            if (TryApplyFolderSearchIndexChange(currentFolderPath, kind, fullPath, oldFullPath))
-            {
-                RerunSearchForPanelsBoundToFolder(NormalizeFolderSearchIndexRoot(currentFolderPath));
-            }
-            else
-            {
-                InvalidateFolderSearchIndex(
-                    currentFolderPath,
-                    rebuildInBackground: true,
-                    rerunActiveSearch: true,
-                    invalidateFolderListing: false);
-            }
+            // Names are indexed by the application-wide watcher, including inactive tabs.
 
             bool refreshVisibleItems =
                 ShouldRefreshVisibleFolderItemsForWatcherPath(fullPath) ||
@@ -481,7 +470,7 @@ namespace DesktopPlus
                 return;
             }
 
-            InvalidateFolderSearchIndex(currentFolderPath, rebuildInBackground: true, rerunActiveSearch: true);
+            InvalidateFolderSearchIndex(currentFolderPath, rerunActiveSearch: true);
             RequireFullFolderWatcherRefresh();
             QueueFolderRefreshFromWatcher(immediate: true);
         }
@@ -493,7 +482,7 @@ namespace DesktopPlus
                 return;
             }
 
-            InvalidateFolderSearchIndex(currentFolderPath, rebuildInBackground: false, rerunActiveSearch: true);
+            InvalidateFolderSearchIndex(currentFolderPath, rerunActiveSearch: true);
             RequireFullFolderWatcherRefresh();
             QueueFolderRefreshFromWatcher(immediate: true);
         }
@@ -520,8 +509,8 @@ namespace DesktopPlus
                     defaultFolderPath = currentFolderPath;
                 }
 
-                InvalidateFolderSearchIndex(e.OldFullPath ?? currentFolderPath, rebuildInBackground: false, rerunActiveSearch: false);
-                InvalidateFolderSearchIndex(currentFolderPath, rebuildInBackground: true, rerunActiveSearch: true);
+                InvalidateFolderSearchIndex(e.OldFullPath ?? currentFolderPath, rerunActiveSearch: false);
+                InvalidateFolderSearchIndex(currentFolderPath, rerunActiveSearch: true);
                 SetPanelTitleFromFolderPath(currentFolderPath);
                 StartOrUpdateFolderWatchers(currentFolderPath);
                 RequireFullFolderWatcherRefresh();
@@ -533,9 +522,9 @@ namespace DesktopPlus
         {
             if (PanelType == PanelKind.Folder && !string.IsNullOrWhiteSpace(currentFolderPath))
             {
+                FolderSearchIndexService.Shared.RequestRefresh(currentFolderPath);
                 InvalidateFolderSearchIndex(
                     currentFolderPath,
-                    rebuildInBackground: true,
                     rerunActiveSearch: true);
             }
 

@@ -89,6 +89,8 @@ namespace DesktopPlus
                     ["Loc.PanelsShowAll"] = "Alle zeigen",
                     ["Loc.PanelsHideAll"] = "Alle ausblenden",
                     ["Loc.PanelsRecycleBin"] = "Papierkorb-Panel öffnen",
+                    ["Loc.PanelsShowRecycleBin"] = "Papierkorb einblenden",
+                    ["Loc.PanelsHideRecycleBin"] = "Papierkorb ausblenden",
                     ["Loc.PanelsDelete"] = "Löschen",
                     ["Loc.PanelsSettings"] = "Einstellungen",
                     ["Loc.ContextRevealInExplorer"] = "Im Explorer anzeigen",
@@ -100,6 +102,8 @@ namespace DesktopPlus
                     ["Loc.ContextMoreOptions"] = "Weitere Optionen anzeigen",
                     ["Loc.PanelDropHint"] = "Ordner hierher ziehen um Standardordner zu setzen\noder Dateien ablegen",
                     ["Loc.PanelDropHintShort"] = "Dateien oder Ordner hierher ziehen",
+                    ["Loc.RecycleBinEmptyTitle"] = "Papierkorb ist leer",
+                    ["Loc.RecycleBinEmptyHint"] = "Dateien oder Ordner hierher ziehen, um sie zu löschen.",
                     ["Loc.LayoutsTitle"] = "Layouts",
                     ["Loc.LayoutsCreateFromCurrent"] = "Layout hinzufügen",
                     ["Loc.LayoutsCreateEmpty"] = "Leeres Layout",
@@ -544,6 +548,8 @@ namespace DesktopPlus
                     ["Loc.PanelsShowAll"] = "Show all",
                     ["Loc.PanelsHideAll"] = "Hide all",
                     ["Loc.PanelsRecycleBin"] = "Open Recycle Bin Panel",
+                    ["Loc.PanelsShowRecycleBin"] = "Show Recycle Bin",
+                    ["Loc.PanelsHideRecycleBin"] = "Hide Recycle Bin",
                     ["Loc.PanelsDelete"] = "Delete",
                     ["Loc.PanelsSettings"] = "Settings",
                     ["Loc.ContextRevealInExplorer"] = "Reveal in Explorer",
@@ -555,6 +561,8 @@ namespace DesktopPlus
                     ["Loc.ContextMoreOptions"] = "Show more options",
                     ["Loc.PanelDropHint"] = "Drop a folder here to set as default\nor drop individual files",
                     ["Loc.PanelDropHintShort"] = "Drop files or folders here",
+                    ["Loc.RecycleBinEmptyTitle"] = "Recycle Bin is empty",
+                    ["Loc.RecycleBinEmptyHint"] = "Drag files or folders here to delete them.",
                     ["Loc.LayoutsTitle"] = "Layouts",
                     ["Loc.LayoutsCreateFromCurrent"] = "Add layout",
                     ["Loc.LayoutsCreateEmpty"] = "Add empty",
@@ -966,6 +974,7 @@ namespace DesktopPlus
 
             if (LocalizationData.TryGetValue("de", out var german))
             {
+                german["Loc.SearchIndexPreparing"] = "Index wird vorbereitet …";
                 german["Loc.ShortcutSelectAll"] = "Alle sichtbaren Einträge auswählen.";
                 german["Loc.ShortcutFocusSearch"] = "Suche fokussieren.";
                 german["Loc.ShortcutRenameSelection"] = "Ausgewähltes Element umbenennen.";
@@ -975,6 +984,7 @@ namespace DesktopPlus
             }
 
             english["Loc.ShortcutSelectAll"] = "Select all visible items.";
+            english["Loc.SearchIndexPreparing"] = "Preparing search index …";
             english["Loc.ShortcutFocusSearch"] = "Focus search.";
             english["Loc.ShortcutRenameSelection"] = "Rename the selected item.";
             english["Loc.ShortcutOpenSelection"] = "Open the selected item.";
@@ -1031,6 +1041,9 @@ namespace DesktopPlus
             };
 
             latvian["Loc.PanelTypeRecycleBin"] = "Atkritne";
+            latvian["Loc.SearchIndexPreparing"] = "Tiek sagatavots meklēšanas indekss …";
+            latvian["Loc.RecycleBinEmptyTitle"] = "Atkritne ir tukša";
+            latvian["Loc.RecycleBinEmptyHint"] = "Velciet šeit failus vai mapes, lai tos izdzēstu.";
             latvian["Loc.ShortcutSelectAll"] = "Atlasīt visus redzamos ierakstus.";
             latvian["Loc.ShortcutFocusSearch"] = "Fokusēt meklēšanu.";
             latvian["Loc.ShortcutRenameSelection"] = "Pārsaukt atlasīto vienumu.";
@@ -1085,6 +1098,8 @@ namespace DesktopPlus
                 ["Loc.PanelsShowAll"] = "Rādīt visus",
                 ["Loc.PanelsHideAll"] = "Paslēpt visus",
                 ["Loc.PanelsRecycleBin"] = "Atvērt atkritnes paneli",
+                ["Loc.PanelsShowRecycleBin"] = "Rādīt atkritni",
+                ["Loc.PanelsHideRecycleBin"] = "Paslēpt atkritni",
                 ["Loc.PanelsDelete"] = "Dzēst",
                 ["Loc.PanelsSettings"] = "Iestatījumi",
                 ["Loc.LayoutsCreateFromCurrent"] = "Pievienot izkārtojumu",

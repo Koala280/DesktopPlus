@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.9] - 2026-10-03
+
+### Changed
+
+- The Recycle Bin now has a localized visibility toggle in the Panels header and no longer appears in the panel overview or its count. Its empty view shows a trash icon and a matching drag-and-drop hint.
+- The Backups page stays fixed while its list scrolls within the available window height. Panel resize grip lines sit farther inside the rounded corner.
+
+### Fixed
+
+- Folder search now prepares all configured folders, including inactive tabs, before searching. A single throttled background queue reuses saved indexes, starts recursive checks after five seconds, and continues when the search is cleared. Cached results have no artificial delay; initial builds publish partial results with a localized status. Name changes and new subfolders update the index incrementally, writes are coalesced at 30-second intervals, and complete large indexes remain searchable from disk within the RAM budget.
+
 ## [1.6.8] - 2026-10-02
 
 ### Fixed
