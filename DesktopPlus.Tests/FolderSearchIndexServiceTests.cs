@@ -1,9 +1,13 @@
 using System.Diagnostics;
+using System.Collections.Specialized;
+using System.ComponentModel;
 using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Threading;
+using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Threading;
 using Xunit;
 using Xunit.Abstractions;
@@ -353,9 +357,14 @@ public sealed class FolderSearchIndexServiceTests
             {
                 var injected = (HashSet<string>)typeof(DesktopPanel).GetField("_searchInjectedPaths",
                     BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(panel)!;
-                var cached = (Task<List<string>>)Invoke(panel, "GetIndexedMatchesAsync", data.Path, "needle",
-                    CancellationToken.None)!;
-                Assert.True(cached.IsCompletedSuccessfully); // A RAM lookup contains no asynchronous debounce.
+                Task<List<string>> cached;
+                // Block index access to prove even a RAM lookup returns control to the UI thread.
+                lock (GetField<object>(service, "_sync"))
+                {
+                    cached = (Task<List<string>>)Invoke(panel, "GetIndexedMatchesAsync", data.Path, "needle",
+                        CancellationToken.None)!;
+                    Assert.False(cached.IsCompleted);
+                }
                 Assert.Contains(wanted, await cached);
                 var elapsed = Stopwatch.StartNew();
                 Invoke(panel, "BeginSearch", "needle");
@@ -363,6 +372,150 @@ public sealed class FolderSearchIndexServiceTests
                 elapsed.Stop();
                 _output.WriteLine($"Panel result visible after {elapsed.Elapsed.TotalMilliseconds:F2} ms.");
                 Assert.Equal(1, service.GetStatus(data.Path).Scans);
+            }
+            finally { panel.Close(); }
+        });
+    }
+
+    [Fact]
+    public async Task IndexRefreshPreservesUnchangedResultsVisibilityAndSelection()
+    {
+        using var data = new TempDir();
+        using var cache = new TempDir();
+        string localPath = data.File("needle-local.txt");
+        string nested = data.Dir("nested");
+        string keptPath = Path.Combine(nested, "needle-kept.txt");
+        string removedPath = Path.Combine(nested, "needle-removed.txt");
+        File.WriteAllText(keptPath, "x");
+        File.WriteAllText(removedPath, "x");
+        using var service = NewService(cache.Path);
+        service.Configure(new[] { data.Path });
+        await WaitFor(() => service.GetStatus(data.Path).Writes == 1 && service.GetDirectChildren(data.Path) != null);
+
+        RunSta(async () =>
+        {
+            var panel = new DesktopPanel { IsPreviewPanel = true, SearchIndexService = service,
+                PanelType = PanelKind.Folder, currentFolderPath = data.Path };
+            try
+            {
+                var list = (ListBox)panel.FindName("FileList");
+                var search = (TextBox)panel.FindName("SearchBox");
+                var local = new ListBoxItem { Tag = localPath, Content = "needle-local" };
+                var other = new ListBoxItem { Tag = data.File("other.txt"), Content = "other" };
+                list.Items.Add(local);
+                list.Items.Add(other);
+                GetField<HashSet<string>>(panel, "_baseItemPaths").UnionWith(new[] { localPath, (string)other.Tag });
+                search.Text = "needle";
+                await WaitForSearch(panel);
+                var kept = Assert.Single(list.Items.OfType<ListBoxItem>(), item => Equals(item.Tag, keptPath));
+                kept.IsSelected = true;
+                Assert.Equal(Visibility.Visible, local.Visibility);
+                Assert.Equal(Visibility.Collapsed, other.Visibility);
+
+                int collectionChanges = 0, visibilityChanges = 0;
+                ((INotifyCollectionChanged)list.Items).CollectionChanged += (_, _) => collectionChanges++;
+                var descriptor = DependencyPropertyDescriptor.FromProperty(UIElement.VisibilityProperty, typeof(ListBoxItem))!;
+                EventHandler visibilityChanged = (_, _) => visibilityChanges++;
+                descriptor.AddValueChanged(local, visibilityChanged);
+                try
+                {
+                    for (int i = 0; i < 3; i++)
+                    {
+                        Invoke(panel, "RefreshActiveSearch");
+                        await WaitForSearch(panel);
+                    }
+                    string unrelated = data.File("unrelated.txt");
+                    service.NotifyChange(data.Path, SearchIndexChangeKind.Created, unrelated);
+                    await WaitFor(() => service.GetDirectChildren(data.Path)?.Contains(unrelated) == true);
+                    Invoke(panel, "RefreshActiveSearch");
+                    await WaitForSearch(panel);
+
+                    Assert.Equal(0, collectionChanges);
+                    Assert.Equal(0, visibilityChanges);
+                    Assert.True(kept.IsSelected);
+                    Assert.Same(kept, Assert.Single(list.Items.OfType<ListBoxItem>(), item => Equals(item.Tag, keptPath)));
+
+                    File.Delete(removedPath);
+                    service.NotifyChange(data.Path, SearchIndexChangeKind.Deleted, removedPath);
+                    string addedPath = Path.Combine(nested, "needle-znew.txt");
+                    File.WriteAllText(addedPath, "x");
+                    service.NotifyChange(data.Path, SearchIndexChangeKind.Created, addedPath);
+                    await WaitFor(() => service.GetStatus(data.Path).Writes >= 2);
+                    await WaitFor(async () => (await Read(service, data.Path)).Any(entry => entry.Path == addedPath));
+                    collectionChanges = 0;
+                    Invoke(panel, "RefreshActiveSearch");
+                    await WaitForSearch(panel);
+
+                    Assert.Equal(2, collectionChanges); // Only one removal and one addition.
+                    Assert.DoesNotContain(list.Items.OfType<ListBoxItem>(), item => Equals(item.Tag, removedPath));
+                    Assert.Contains(list.Items.OfType<ListBoxItem>(), item => Equals(item.Tag, addedPath));
+                    Assert.True(kept.IsSelected);
+                    Assert.Equal(0, visibilityChanges);
+
+                    string renamedPath = Path.Combine(nested, "NEEDLE-KEPT.txt");
+                    File.Move(keptPath, renamedPath);
+                    service.NotifyChange(data.Path, SearchIndexChangeKind.Renamed, renamedPath, keptPath);
+                    await WaitFor(async () => (await Read(service, data.Path)).Any(entry =>
+                        string.Equals(entry.Path, renamedPath, StringComparison.Ordinal)));
+                    collectionChanges = 0;
+                    Invoke(panel, "RefreshActiveSearch");
+                    await WaitForSearch(panel);
+                    Assert.Equal(renamedPath, kept.Tag);
+                    Assert.StartsWith("NEEDLE-KEPT", (string)Invoke(panel, "GetSearchCandidateText", kept)!);
+                    Assert.True(kept.IsSelected);
+                    Assert.Equal(0, collectionChanges);
+
+                    File.Delete(renamedPath);
+                    File.Delete(addedPath);
+                    service.NotifyChange(data.Path, SearchIndexChangeKind.Deleted, renamedPath);
+                    service.NotifyChange(data.Path, SearchIndexChangeKind.Deleted, addedPath);
+                    await WaitFor(async () => !(await Read(service, data.Path)).Any(entry =>
+                        entry.Path == keptPath || entry.Path == addedPath));
+                    Invoke(panel, "RefreshActiveSearch");
+                    await WaitForSearch(panel);
+                    Assert.Empty(GetField<HashSet<string>>(panel, "_searchInjectedPaths"));
+                    Assert.Equal(Visibility.Visible, local.Visibility);
+                }
+                finally { descriptor.RemoveValueChanged(local, visibilityChanged); }
+            }
+            finally { panel.Close(); }
+        });
+    }
+
+    [Fact]
+    public async Task IndexNotificationsDoNotCancelCurrentSearchAndRapidEditsDiscardOldResults()
+    {
+        using var data = new TempDir();
+        using var cache = new TempDir();
+        string nested = data.Dir("nested");
+        File.WriteAllText(Path.Combine(nested, "needle.txt"), "x");
+        using var service = NewService(cache.Path);
+        service.Configure(new[] { data.Path });
+        await WaitFor(() => service.GetStatus(data.Path).Writes == 1 && service.GetDirectChildren(data.Path) != null);
+        RunSta(async () =>
+        {
+            var panel = new DesktopPanel { IsPreviewPanel = true, SearchIndexService = service,
+                PanelType = PanelKind.Folder, currentFolderPath = data.Path };
+            try
+            {
+                var search = (TextBox)panel.FindName("SearchBox");
+                search.Text = "needle";
+                var current = GetField<CancellationTokenSource>(panel, "_searchCts");
+                for (int i = 0; i < 10; i++) Invoke(panel, "RefreshActiveSearch");
+                Assert.Same(current, GetField<CancellationTokenSource>(panel, "_searchCts"));
+                Assert.False(current.IsCancellationRequested);
+                await WaitForSearch(panel);
+                Assert.Single(GetField<HashSet<string>>(panel, "_searchInjectedPaths"));
+
+                search.Text = "absent";
+                await WaitForSearch(panel);
+                Assert.Empty(GetField<HashSet<string>>(panel, "_searchInjectedPaths"));
+                search.Text = "absent";
+                search.Text = "needle";
+                search.Clear();
+                await WaitForSearch(panel);
+                Assert.Empty(GetField<HashSet<string>>(panel, "_searchInjectedPaths"));
+                Assert.False(GetField<bool>(panel, "_searchRefreshPending"));
             }
             finally { panel.Close(); }
         });
@@ -563,6 +716,16 @@ public sealed class FolderSearchIndexServiceTests
         try { while (!condition()) await Task.Delay(10, cts.Token); }
         catch (OperationCanceledException) { Assert.Fail("Index operation timed out."); }
     }
+    private static async Task WaitFor(Func<Task<bool>> condition)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try { while (!await condition()) await Task.Delay(10, cts.Token); }
+        catch (OperationCanceledException) { Assert.Fail("Index operation timed out."); }
+    }
+    private static Task WaitForSearch(DesktopPanel panel) =>
+        WaitFor(() => GetField<CancellationTokenSource?>(panel, "_searchCts") == null);
+    private static T GetField<T>(object instance, string name) =>
+        (T)instance.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(instance)!;
     private static object? Invoke(DesktopPanel panel, string method, params object[] arguments) =>
         typeof(DesktopPanel).GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(panel, arguments);
     private static void RunSta(Func<Task> test)

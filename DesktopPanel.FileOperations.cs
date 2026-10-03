@@ -166,9 +166,7 @@ namespace DesktopPlus
                         if (panel._isClosed || panel.IsPreviewPanel || panel.PanelType != PanelKind.Folder ||
                             string.IsNullOrWhiteSpace(panel.currentFolderPath) ||
                             !changed.Contains(NormalizeFolderSearchIndexRoot(panel.currentFolderPath))) continue;
-                        panel.UpdateSearchIndexStatus();
-                        string filter = panel.SearchBox?.Text ?? string.Empty;
-                        if (filter.Trim().Length >= SearchMinCharsForDeepLookup) panel.BeginSearch(filter);
+                        panel.RefreshActiveSearch();
                     }
                 };
                 timer.Start();
@@ -180,11 +178,12 @@ namespace DesktopPlus
             bool preparing = PanelType == PanelKind.Folder && !string.IsNullOrWhiteSpace(currentFolderPath) &&
                 (SearchBox?.Text.Trim().Length ?? 0) >= SearchMinCharsForDeepLookup &&
                 SearchIndexService.GetStatus(currentFolderPath).IsPreparing;
-            SearchIndexStatus.Visibility = preparing ? Visibility.Visible : Visibility.Collapsed;
+            Visibility target = preparing ? Visibility.Visible : Visibility.Collapsed;
+            if (SearchIndexStatus.Visibility != target) SearchIndexStatus.Visibility = target;
         }
-        private string GetSearchDisplayName(FolderSearchIndexEntry entry)
+        private static string GetSearchDisplayName(FolderSearchIndexEntry entry, bool showExtensions)
         {
-            if (entry.IsDirectory || showFileExtensions)
+            if (entry.IsDirectory || showExtensions)
             {
                 return entry.Name;
             }
@@ -306,18 +305,18 @@ namespace DesktopPlus
             return score;
         }
 
-        private FolderSearchMatch? TryCreateSearchMatch(FolderSearchIndexEntry entry, string filter)
+        private static FolderSearchMatch? TryCreateSearchMatch(FolderSearchIndexEntry entry,
+            IReadOnlyList<string> terms, string root, bool showExtensions)
         {
-            IReadOnlyList<string> terms = GetSearchTerms(filter);
             if (terms.Count == 0)
             {
                 return null;
             }
 
-            string displayName = GetSearchDisplayName(entry);
+            string displayName = GetSearchDisplayName(entry, showExtensions);
             string fullName = entry.Name;
             string relativePath = string.IsNullOrWhiteSpace(entry.RelativePath)
-                ? BuildRelativeSearchPath(currentFolderPath, entry.Path, entry.Name)
+                ? BuildRelativeSearchPath(root, entry.Path, entry.Name)
                 : entry.RelativePath;
             int totalScore = 0;
 
@@ -371,19 +370,26 @@ namespace DesktopPlus
                 .ToList();
         }
 
-        private async Task<List<string>> GetIndexedMatchesAsync(string root, string filter, CancellationToken token)
+        private Task<List<string>> GetIndexedMatchesAsync(string root, string filter, CancellationToken token)
         {
-            var matches = new List<FolderSearchMatch>(SearchResultLimit * 2);
-            await foreach (var entry in SearchIndexService.SearchEntriesAsync(root, token))
+            var service = SearchIndexService;
+            bool showExtensions = showFileExtensions;
+            IReadOnlyList<string> terms = GetSearchTerms(filter);
+            return Task.Run(async () =>
             {
-                FolderSearchMatch? match = TryCreateSearchMatch(entry, filter);
-                if (match != null) matches.Add(match);
-                if (matches.Count >= SearchResultLimit * 4)
-                    matches = matches.OrderBy(match => match.Score).ThenBy(match => match.Depth)
-                        .ThenBy(match => match.SortName, StringComparer.OrdinalIgnoreCase)
-                        .Take(SearchResultLimit * 2).ToList();
-            }
-            return FinalizeSearchMatches(matches);
+                var matches = new List<FolderSearchMatch>(SearchResultLimit * 2);
+                await foreach (var entry in service.SearchEntriesAsync(root, token).ConfigureAwait(false))
+                {
+                    FolderSearchMatch? match = TryCreateSearchMatch(entry, terms, root, showExtensions);
+                    if (match != null) matches.Add(match);
+                    if (matches.Count >= SearchResultLimit * 4)
+                        matches = matches.OrderBy(match => match.Score).ThenBy(match => match.Depth)
+                            .ThenBy(match => match.SortName, StringComparer.OrdinalIgnoreCase)
+                            .Take(SearchResultLimit * 2).ToList();
+                }
+                token.ThrowIfCancellationRequested();
+                return FinalizeSearchMatches(matches);
+            }, token);
         }
 
         private List<string>? TryGetIndexedVisibleFolderEntries(string folderPath)
@@ -1424,8 +1430,25 @@ namespace DesktopPlus
                 System.Windows.Threading.DispatcherPriority.Input);
         }
 
+        private void RefreshActiveSearch()
+        {
+            if (_isClosed) return;
+            UpdateSearchIndexStatus();
+            string filter = SearchBox?.Text ?? string.Empty;
+            if (filter.Trim().Length < SearchMinCharsForDeepLookup) return;
+            if (_searchCts != null)
+            {
+                // Let a lookup finish even when the index publishes more entries.
+                _searchRefreshPending = true;
+                return;
+            }
+            BeginSearch(filter);
+        }
+
         private void BeginSearch(string rawFilter)
         {
+            if (_isClosed) return;
+            _searchRefreshPending = false;
             UpdateSearchIndexStatus();
             if (string.IsNullOrWhiteSpace(rawFilter) || rawFilter.Trim().Length < SearchMinCharsForDeepLookup)
             {
@@ -1447,28 +1470,31 @@ namespace DesktopPlus
             try
             {
                 string filter = rawFilter.Trim();
-                await ApplyLocalSearchFilterAsync(filter, cts, token);
+                bool localChanged = await ApplyLocalSearchFilterAsync(filter, cts, token);
+                token.ThrowIfCancellationRequested();
+                if (!IsSearchRequestCurrent(cts)) return;
+                if (localChanged) QueueWrapPanelWidthUpdate();
 
-                if (!IsSearchRequestCurrent(cts) ||
-                    string.IsNullOrWhiteSpace(filter) ||
+                if (string.IsNullOrWhiteSpace(filter) ||
                     filter.Length < SearchMinCharsForDeepLookup ||
                     PanelType != PanelKind.Folder ||
                     string.IsNullOrWhiteSpace(currentFolderPath))
                 {
+                    if (RemoveInjectedSearchItems()) QueueWrapPanelWidthUpdate();
                     return;
                 }
 
                 string root = currentFolderPath;
                 UpdateSearchIndexStatus();
-                List<string> results = await Task.Run(() => GetIndexedMatchesAsync(root, filter, token), token);
+                List<string> results = await GetIndexedMatchesAsync(root, filter, token);
 
                 token.ThrowIfCancellationRequested();
-                if (!IsSearchRequestCurrent(cts) || results.Count == 0)
+                if (!IsSearchRequestCurrent(cts))
                 {
                     return;
                 }
 
-                await AppendInjectedSearchResultsAsync(results, cts, token);
+                await SynchronizeInjectedSearchResultsAsync(results, cts, token);
             }
             catch (OperationCanceledException)
             {
@@ -1480,23 +1506,22 @@ namespace DesktopPlus
             finally
             {
                 bool shouldApplyDeferredSort = ReferenceEquals(_searchCts, cts) && _deferSortUntilSearchComplete;
-                if (ReferenceEquals(_searchCts, cts))
-                {
-                    _searchCts = null;
-                }
-
                 if (shouldApplyDeferredSort)
                 {
                     _deferSortUntilSearchComplete = false;
                     await Dispatcher.InvokeAsync(() =>
                     {
+                        if (!IsSearchRequestCurrent(cts)) return;
                         SortCurrentFolderItemsInPlace();
                         RefreshParentNavigationItemVisual();
                         _ = Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Background);
                     }, System.Windows.Threading.DispatcherPriority.Background);
                 }
 
+                bool isCurrent = IsSearchRequestCurrent(cts);
+                if (isCurrent) _searchCts = null;
                 cts.Dispose();
+                if (isCurrent && _searchRefreshPending) RefreshActiveSearch();
             }
         }
 
@@ -1507,6 +1532,7 @@ namespace DesktopPlus
             var pendingSearchCts = _searchCts;
             _searchCts = null;
             pendingSearchCts?.Cancel();
+            _searchRefreshPending = false;
             _deferSortUntilSearchComplete = false;
             _isSearchExpandedFromCompactButton = false;
             if (removeInjectedItems)
@@ -1553,120 +1579,67 @@ namespace DesktopPlus
             _ = Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Background);
         }
 
-        private async Task ApplyLocalSearchFilterAsync(string filter, CancellationTokenSource cts, CancellationToken token)
+        private async Task<bool> ApplyLocalSearchFilterAsync(string filter, CancellationTokenSource cts, CancellationToken token)
         {
             IReadOnlyList<string> terms = GetSearchTerms(filter);
-            List<(ListBoxItem Item, bool IsParentNavigationItem, string CandidateText)> items = await Dispatcher.InvokeAsync(() =>
+            var items = await Dispatcher.InvokeAsync(() =>
             {
-                if (!IsSearchRequestCurrent(cts))
-                {
-                    return new List<(ListBoxItem Item, bool IsParentNavigationItem, string CandidateText)>();
-                }
-
-                RemoveInjectedSearchItems();
+                var injected = _searchInjectedItems.ToHashSet();
                 return FileList.Items
                     .OfType<ListBoxItem>()
+                    .Where(item => !injected.Contains(item))
                     .Select(item => (
                         Item: item,
                         IsParentNavigationItem: IsParentNavigationItem(item),
-                        CandidateText: GetSearchCandidateText(item)))
+                        CandidateText: GetSearchCandidateText(item),
+                        Visibility: item.Visibility))
                     .ToList();
-            }, System.Windows.Threading.DispatcherPriority.Send, token);
+            }, System.Windows.Threading.DispatcherPriority.Background, token);
 
-            if (!IsSearchRequestCurrent(cts) || items.Count == 0)
+            token.ThrowIfCancellationRequested();
+            if (!IsSearchRequestCurrent(cts) || items.Count == 0) return false;
+            bool showParent = ShouldShowParentNavigationListItem();
+            var changes = await Task.Run(() =>
             {
-                return;
-            }
-
-            bool showAll = terms.Count == 0;
-            if (showAll)
-            {
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    if (!IsSearchRequestCurrent(cts))
-                    {
-                        return;
-                    }
-
-                    foreach (var entry in items)
-                    {
-                        bool isVisible = entry.IsParentNavigationItem
-                            ? ShouldShowParentNavigationListItem()
-                            : true;
-                        var target = isVisible ? Visibility.Visible : Visibility.Collapsed;
-                        if (entry.Item.Visibility != target)
-                        {
-                            entry.Item.Visibility = target;
-                        }
-                    }
-                }, System.Windows.Threading.DispatcherPriority.Send, token);
-            }
-            else
-            {
-                List<ListBoxItem> matchingItems = items
-                    .Where(entry => !entry.IsParentNavigationItem &&
-                        MatchesSearchTerms(entry.CandidateText, terms))
-                    .Select(entry => entry.Item)
-                    .ToList();
-
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    if (!IsSearchRequestCurrent(cts))
-                    {
-                        return;
-                    }
-
-                    foreach (var entry in items)
-                    {
-                        Visibility target = entry.IsParentNavigationItem && ShouldShowParentNavigationListItem()
-                            ? Visibility.Visible
-                            : Visibility.Collapsed;
-                        if (entry.Item.Visibility != target)
-                        {
-                            entry.Item.Visibility = target;
-                        }
-                    }
-                }, System.Windows.Threading.DispatcherPriority.Send, token);
-
-                for (int start = 0; start < matchingItems.Count; start += SearchFilterBatchSize)
+                var changed = new List<(ListBoxItem Item, Visibility Target)>();
+                foreach (var entry in items)
                 {
                     token.ThrowIfCancellationRequested();
-                    int end = Math.Min(matchingItems.Count, start + SearchFilterBatchSize);
-
-                    await Dispatcher.InvokeAsync(() =>
-                    {
-                        if (!IsSearchRequestCurrent(cts))
-                        {
-                            return;
-                        }
-
-                        for (int i = start; i < end; i++)
-                        {
-                            var item = matchingItems[i];
-                            if (item.Visibility != Visibility.Visible)
-                            {
-                                item.Visibility = Visibility.Visible;
-                            }
-                        }
-                    }, System.Windows.Threading.DispatcherPriority.Background, token);
-
-                    if (end < matchingItems.Count)
-                    {
-                        await Task.Delay(1, token);
-                    }
+                    bool visible = entry.IsParentNavigationItem
+                        ? showParent
+                        : MatchesSearchTerms(entry.CandidateText, terms);
+                    Visibility target = visible ? Visibility.Visible : Visibility.Collapsed;
+                    if (entry.Visibility != target) changed.Add((entry.Item, target));
                 }
-            }
+                return changed;
+            }, token);
 
-            SortCurrentFolderItemsInPlace();
-            _ = Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Background);
+            bool uiChanged = false;
+            for (int start = 0; start < changes.Count; start += SearchFilterBatchSize)
+            {
+                token.ThrowIfCancellationRequested();
+                int end = Math.Min(changes.Count, start + SearchFilterBatchSize);
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    if (!IsSearchRequestCurrent(cts)) return;
+                    for (int i = start; i < end; i++)
+                    {
+                        var change = changes[i];
+                        if (change.Item.Visibility == change.Target) continue;
+                        change.Item.Visibility = change.Target;
+                        uiChanged = true;
+                    }
+                }, System.Windows.Threading.DispatcherPriority.Background, token);
+            }
+            return uiChanged;
         }
 
-        private void RemoveInjectedSearchItems()
+        private bool RemoveInjectedSearchItems()
         {
             if (_searchInjectedItems.Count == 0)
             {
                 _searchInjectedPaths.Clear();
-                return;
+                return false;
             }
 
             foreach (var item in _searchInjectedItems)
@@ -1676,25 +1649,75 @@ namespace DesktopPlus
 
             _searchInjectedItems.Clear();
             _searchInjectedPaths.Clear();
+            return true;
         }
 
-        private async Task AppendInjectedSearchResultsAsync(IEnumerable<string> results, CancellationTokenSource cts, CancellationToken token)
+        private async Task SynchronizeInjectedSearchResultsAsync(IEnumerable<string> results, CancellationTokenSource cts, CancellationToken token)
         {
-            var candidatePaths = results
-                .Where(path => !string.IsNullOrWhiteSpace(path))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(SearchResultLimit)
-                .ToList();
-
-            if (candidatePaths.Count == 0)
+            bool showHidden = showHiddenItems;
+            bool showExtensions = showFileExtensions;
+            var basePaths = _baseItemPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var candidates = await Task.Run(() =>
             {
-                return;
+                var found = new List<(string Path, string DisplayName)>();
+                foreach (string path in results.Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Distinct(StringComparer.OrdinalIgnoreCase).Take(SearchResultLimit))
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (basePaths.Contains(path)) continue;
+                    try
+                    {
+                        FileAttributes attributes = File.GetAttributes(path);
+                        if ((attributes & FileAttributes.System) != 0 ||
+                            (!showHidden && (attributes & FileAttributes.Hidden) != 0)) continue;
+                        string name = GetPathLeafName(path);
+                        if (!showExtensions && (attributes & FileAttributes.Directory) == 0)
+                        {
+                            string withoutExtension = Path.GetFileNameWithoutExtension(name);
+                            if (!string.IsNullOrWhiteSpace(withoutExtension)) name = withoutExtension;
+                        }
+                        found.Add((path, name));
+                    }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                }
+                return found;
+            }, token);
+
+            token.ThrowIfCancellationRequested();
+            if (!IsSearchRequestCurrent(cts)) return;
+            var desiredPaths = candidates.Select(candidate => candidate.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var removed = _searchInjectedItems.Where(item => item.Tag is not string path ||
+                !desiredPaths.Contains(path) || _baseItemPaths.Contains(path)).ToArray();
+            var added = candidates.Where(candidate => !_searchInjectedPaths.Contains(candidate.Path)).ToList();
+            bool changed = removed.Length > 0;
+
+            foreach (var item in removed)
+            {
+                FileList.Items.Remove(item);
+                _searchInjectedItems.Remove(item);
+                if (item.Tag is string path) _searchInjectedPaths.Remove(path);
             }
 
-            for (int start = 0; start < candidatePaths.Count; start += SearchResultBatchSize)
+            var candidatesByPath = candidates.ToDictionary(candidate => candidate.Path, StringComparer.OrdinalIgnoreCase);
+            foreach (var item in _searchInjectedItems)
+            {
+                string oldPath = (string)item.Tag;
+                var candidate = candidatesByPath[oldPath];
+                if (string.Equals(oldPath, candidate.Path, StringComparison.Ordinal) &&
+                    string.Equals(GetSearchCandidateText(item), candidate.DisplayName, StringComparison.Ordinal)) continue;
+                item.Tag = candidate.Path;
+                item.Content = CreateListBoxItem(candidate.DisplayName, candidate.Path, isBackButton: false, _currentAppearance);
+                ApplyListItemContainerSpacing(item);
+                _searchInjectedPaths.Remove(oldPath);
+                _searchInjectedPaths.Add(candidate.Path);
+                changed = true;
+            }
+
+            for (int start = 0; start < added.Count; start += SearchResultBatchSize)
             {
                 token.ThrowIfCancellationRequested();
-                string[] batch = candidatePaths
+                var batch = added
                     .Skip(start)
                     .Take(SearchResultBatchSize)
                     .ToArray();
@@ -1706,23 +1729,16 @@ namespace DesktopPlus
                         return;
                     }
 
-                    foreach (var foundPath in batch)
+                    foreach (var candidate in batch)
                     {
-                        if ((!File.Exists(foundPath) && !Directory.Exists(foundPath)) || !ShouldShowPath(foundPath) ||
-                            _baseItemPaths.Contains(foundPath) ||
-                            _searchInjectedPaths.Contains(foundPath))
+                        string foundPath = candidate.Path;
+                        if (_baseItemPaths.Contains(foundPath) || _searchInjectedPaths.Contains(foundPath))
                         {
                             continue;
                         }
 
-                        string displayName = GetDisplayNameForPath(foundPath);
-                        if (string.IsNullOrWhiteSpace(displayName))
-                        {
-                            displayName = foundPath;
-                        }
-
                         var listItem = CreateFileListBoxItem(
-                            displayName,
+                            candidate.DisplayName,
                             foundPath,
                             isBackButton: false,
                             _currentAppearance);
@@ -1730,28 +1746,36 @@ namespace DesktopPlus
                         FileList.Items.Add(listItem);
                         _searchInjectedPaths.Add(foundPath);
                         _searchInjectedItems.Add(listItem);
+                        changed = true;
                     }
-                }, System.Windows.Threading.DispatcherPriority.Input, token);
-
-                if (start + SearchResultBatchSize < candidatePaths.Count)
-                {
-                    await Task.Delay(1, token);
-                }
+                }, System.Windows.Threading.DispatcherPriority.Background, token);
             }
 
-            await Dispatcher.InvokeAsync(() =>
+            token.ThrowIfCancellationRequested();
+            if (!IsSearchRequestCurrent(cts)) return;
+            var injectedByPath = _searchInjectedItems.ToDictionary(item => (string)item.Tag, StringComparer.OrdinalIgnoreCase);
+            var desiredInjected = candidates.Where(candidate => injectedByPath.ContainsKey(candidate.Path))
+                .Select(candidate => injectedByPath[candidate.Path]).ToList();
+            bool orderChanged = !_searchInjectedItems.SequenceEqual(desiredInjected);
+            if (orderChanged)
             {
-                if (!IsSearchRequestCurrent(cts))
+                _searchInjectedItems.Clear();
+                _searchInjectedItems.AddRange(desiredInjected);
+                if (!_detailsSortActive)
                 {
-                    return;
+                    var injected = desiredInjected.ToHashSet();
+                    var desiredOrder = FileList.Items.OfType<ListBoxItem>().Where(item => !injected.Contains(item)).ToList();
+                    desiredOrder.AddRange(desiredInjected);
+                    var selectedPaths = FileList.SelectedItems.OfType<ListBoxItem>().Select(item => item.Tag)
+                        .OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    ApplyFileListOrderInPlace(desiredOrder, selectedPaths);
                 }
-
+            }
+            if (changed || orderChanged)
+            {
                 SortCurrentFolderItemsInPlace();
-                RefreshParentNavigationItemVisual();
-                _deferSortUntilSearchComplete = false;
-            }, System.Windows.Threading.DispatcherPriority.Background, token);
-
-            _ = Dispatcher.BeginInvoke(new Action(UpdateWrapPanelWidth), System.Windows.Threading.DispatcherPriority.Background);
+                QueueWrapPanelWidthUpdate();
+            }
         }
 
         private string GetSearchCandidateText(ListBoxItem item)

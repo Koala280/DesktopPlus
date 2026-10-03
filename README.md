@@ -43,7 +43,7 @@ DesktopPlus is built for people who want a fast desktop workflow without replaci
 | Views | Tile view, details/list view, and photo album view. |
 | Metadata | Show/hide metadata fields and reorder them via drag and drop. |
 | Sorting | Click metadata headers in list view to toggle ascending/descending sort. |
-| Search | In-panel search with async loading behavior for large folders. |
+| Search | Asynchronous in-panel search; index updates change only affected results and preserve selection. |
 | Auto-sort | Rule-based desktop sorting with built-in and custom extension rules. |
 | Backups | Manual backups plus automatic restore points before auto-sort, updates, and critical configuration changes. |
 | Target suggestions | Auto-sort target input suggests existing panel and tab names. |

@@ -92,6 +92,7 @@ namespace DesktopPlus
         private CancellationTokenSource? _hoverLeaveCts;
         private bool? _queuedHoverTargetVisible;
         private CancellationTokenSource? _searchCts;
+        private bool _searchRefreshPending;
         internal FolderSearchIndexService SearchIndexService { get; set; } = FolderSearchIndexService.Shared;
         private bool _deferSortUntilSearchComplete;
         private bool _isSearchExpandedFromCompactButton = false;
@@ -335,8 +336,8 @@ namespace DesktopPlus
                 _queuedHoverTargetVisible = null;
                 StopPanelAnimations();
                 _searchCts?.Cancel();
-                _searchCts?.Dispose();
                 _searchCts = null;
+                _searchRefreshPending = false;
                 _folderLoadCts?.Cancel();
                 _folderLoadCts?.Dispose();
                 _folderLoadCts = null;

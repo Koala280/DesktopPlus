@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.10] - 2026-10-03
+
+### Fixed
+
+- Search now filters and checks indexed results in the background and updates only changed items. Unchanged matches stay visible and selected instead of being removed and rebuilt on every index notification.
+- Index notifications are coalesced during an active search without cancelling it. Rapid search edits discard stale results, and deleted or renamed matches update correctly.
+
 ## [1.6.9] - 2026-10-03
 
 ### Changed
