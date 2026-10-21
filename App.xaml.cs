@@ -71,7 +71,14 @@ namespace DesktopPlus
             base.OnStartup(e);
             ShutdownMode = ShutdownMode.OnLastWindowClose;
             MainWindow = new DesktopPlus.MainWindow();
-            MainWindow.Show();
+            ShowStartupWindow(MainWindow);
+        }
+
+        internal static void ShowStartupWindow(Window window)
+        {
+            // Match WPF StartupUri: respect visibility explicitly chosen by the window constructor.
+            if (window.ReadLocalValue(UIElement.VisibilityProperty) == DependencyProperty.UnsetValue)
+                window.Show();
         }
 
         protected override void OnExit(ExitEventArgs e)

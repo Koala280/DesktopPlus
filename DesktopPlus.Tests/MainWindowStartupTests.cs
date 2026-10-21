@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Runtime.ExceptionServices;
 using System.Threading;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using Xunit;
@@ -10,6 +11,38 @@ namespace DesktopPlus.Tests;
 
 public sealed class MainWindowStartupTests
 {
+    [Fact]
+    public void StartupKeepsAnExplicitlyHiddenWindowHidden()
+    {
+        RunSta(() =>
+        {
+            var window = new MainWindow(initializeRuntime: false);
+            try
+            {
+                window.Hide();
+                App.ShowStartupWindow(window);
+                Assert.False(window.IsVisible);
+                Assert.Equal(Visibility.Hidden, window.Visibility);
+            }
+            finally { window.Close(); }
+        });
+    }
+
+    [Fact]
+    public void StartupShowsTheWindowWhenVisibilityWasNotSpecified()
+    {
+        RunSta(() =>
+        {
+            var window = new MainWindow(initializeRuntime: false);
+            try
+            {
+                App.ShowStartupWindow(window);
+                Assert.True(window.IsVisible);
+            }
+            finally { window.Close(); }
+        });
+    }
+
     [Fact]
     public void WindowMarkupInitializesAndBackupDetailsCanBeRefreshed()
     {

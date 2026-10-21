@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.13] - 2026-10-22
+
+### Fixed
+
+- Keep the start-in-tray preference when opening the main window after asynchronous update preparation. Includes the startup and backup responsiveness fixes from v1.6.12; startup tests cover both visible and explicitly hidden windows.
+
 ## [1.6.12] - 2026-10-22
 
 ### Fixed
