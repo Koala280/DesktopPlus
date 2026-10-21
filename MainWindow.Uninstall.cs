@@ -8,7 +8,7 @@ namespace DesktopPlus
 {
     public partial class MainWindow
     {
-        internal static int RunUninstallBackupRestore(string language)
+        internal static async Task<int> RunUninstallBackupRestoreAsync(string language)
         {
             CurrentLanguageCode = language;
             foreach (var pair in LocalizationData[language])
@@ -18,7 +18,7 @@ namespace DesktopPlus
 
             try
             {
-                var backups = LoadAvailableUpdateBackups()
+                var backups = (await Task.Run(() => LoadAvailableUpdateBackups()))
                     .Where(backup => backup.CanRestore && (backup.ContainsSettingsSnapshot || backup.ContainsCustomLanguages ||
                         backup.ContainsAutoSortStorage || backup.ContainsDesktopSnapshot ||
                         backup.ContainsDesktopMoveHistory || backup.ContainsFileReferences))

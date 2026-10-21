@@ -1534,11 +1534,11 @@ namespace DesktopPlus
             }
         }
 
-        private void DeletePanelFromList_Click(object sender, RoutedEventArgs e)
+        private async void DeletePanelFromList_Click(object sender, RoutedEventArgs e)
         {
             if (sender is FrameworkElement fe && fe.Tag is PanelOverviewItem item)
             {
-                if (!EnsureCriticalBackup(GetString("Loc.BackupsReasonBeforePanelDelete")))
+                if (!await EnsureCriticalBackupAsync(GetString("Loc.BackupsReasonBeforePanelDelete")))
                 {
                     return;
                 }

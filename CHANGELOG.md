@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.12] - 2026-10-22
+
+### Fixed
+
+- Startup and backup history refresh now load and prune archives on background workers, keeping the window responsive while large legacy backups are removed. Unavailable backup folders show an error without stopping startup.
+- Update preparation, safety backups, and manual archive deletion no longer perform large file operations on the UI thread. Pending updates are processed asynchronously before the main window opens.
+- Backup refresh ignores outdated results, restores controls after failures, and preserves pending auto-sort work across backup operations.
+- Archived XAML source snapshots are excluded from the main build. Startup regression tests exercise the window with blocked backup I/O and failed history reads.
+
 ## [1.6.11] - 2026-10-21
 
 ### Changed

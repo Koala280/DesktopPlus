@@ -13,8 +13,18 @@ namespace DesktopPlus
 {
     public partial class MainWindow
     {
-        private bool _isManualBackupInProgress;
+        private bool _isBackupOperationInProgress;
+        private bool _isBackupRefreshInProgress;
+        private int _backupRefreshGeneration;
         private static bool _backupCleanupScheduled;
+
+        private void FinishBackupOperation()
+        {
+            _isBackupOperationInProgress = false;
+            UpdateBackupDetails(BackupsList.SelectedItem as UpdateBackupInfo);
+            if (_desktopAutoSortPending && _desktopAutoSort.AutoSortEnabled && !_isExitPending && !IsExiting)
+                _desktopAutoSortDebounceTimer?.Start();
+        }
 
         private static bool TryCreateManagedBackup(
             string backupKind,
@@ -107,27 +117,33 @@ namespace DesktopPlus
             }
         }
 
-        private bool EnsureCriticalBackup(string reason)
+        private async Task<bool> EnsureCriticalBackupAsync(string reason)
         {
+            if (_isBackupOperationInProgress || _desktopAutoSortInProgress) return false;
+            _isBackupOperationInProgress = true;
+            UpdateBackupDetails(BackupsList.SelectedItem as UpdateBackupInfo);
             SaveSettingsImmediate();
-            bool created = TryCreateManagedBackup(
-                "critical",
-                reason,
-                reason,
-                out _,
-                out string errorMessage);
-            if (created)
+            try
             {
-                RefreshBackupsTab();
-                return true;
+                var result = await Task.Run(() =>
+                {
+                    bool created = TryCreateManagedBackup("critical", reason, reason, out _, out string error);
+                    return (created, error);
+                });
+                if (result.created)
+                {
+                    RefreshBackupsTab();
+                    return true;
+                }
+                System.Windows.MessageBox.Show(
+                    string.Format(GetString("Loc.BackupsSafetyFailed"), result.error),
+                    GetString("Loc.MsgError"), MessageBoxButton.OK, MessageBoxImage.Error);
+                return false;
             }
-
-            System.Windows.MessageBox.Show(
-                string.Format(GetString("Loc.BackupsSafetyFailed"), errorMessage),
-                GetString("Loc.MsgError"),
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
-            return false;
+            finally
+            {
+                FinishBackupOperation();
+            }
         }
 
         private static bool TryCreateAutoSortBackup(
@@ -140,37 +156,64 @@ namespace DesktopPlus
                 out _, out errorMessage, desktopMoves: desktopMoves);
         }
 
-        private void RefreshBackupsTab(string? preferredArchivePath = null)
+        private async void RefreshBackupsTab(string? preferredArchivePath = null)
+        {
+            await RefreshBackupsTabAsync(preferredArchivePath);
+        }
+
+        internal async Task RefreshBackupsTabAsync(string? preferredArchivePath = null,
+            Func<IReadOnlyList<UpdateBackupInfo>>? loadBackups = null)
         {
             if (BackupsList == null)
             {
                 return;
             }
 
-            if (!_backupCleanupScheduled)
+            if (loadBackups == null && !_backupCleanupScheduled)
             {
                 _backupCleanupScheduled = true;
                 _ = Task.Run(() => BackupRetention.CleanAbandonedWorkDirectories(UpdateBackupsDirectory));
             }
 
-            IReadOnlyList<UpdateBackupInfo> backups = LoadAvailableUpdateBackups();
-            BackupsList.ItemsSource = backups;
-            BackupsEmptyText.Visibility = backups.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            BackupsList.Visibility = backups.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-            BackupsCountText.Text = string.Format(GetString("Loc.BackupsCount"), backups.Count);
-
-            UpdateBackupInfo? preferred = !string.IsNullOrWhiteSpace(preferredArchivePath)
-                ? backups.FirstOrDefault(backup =>
-                    string.Equals(backup.ArchivePath, preferredArchivePath, StringComparison.OrdinalIgnoreCase))
-                : null;
-            BackupsList.SelectedItem = preferred ?? backups.FirstOrDefault();
+            int generation = ++_backupRefreshGeneration;
+            _isBackupRefreshInProgress = true;
+            string loading = GetString("Loc.BackupsLoading");
+            BackupOperationStatusText.Text = loading;
             UpdateBackupDetails(BackupsList.SelectedItem as UpdateBackupInfo);
+            try
+            {
+                var backups = await Task.Run(loadBackups ?? (() => LoadAvailableUpdateBackups()));
+                if (generation != _backupRefreshGeneration || Dispatcher.HasShutdownStarted) return;
+                BackupsList.ItemsSource = backups;
+                BackupsEmptyText.Visibility = backups.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+                BackupsList.Visibility = backups.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+                BackupsCountText.Text = string.Format(GetString("Loc.BackupsCount"), backups.Count);
+                UpdateBackupInfo? preferred = !string.IsNullOrWhiteSpace(preferredArchivePath)
+                    ? backups.FirstOrDefault(backup => string.Equals(backup.ArchivePath, preferredArchivePath, StringComparison.OrdinalIgnoreCase))
+                    : null;
+                BackupsList.SelectedItem = preferred ?? backups.FirstOrDefault();
+                if (BackupOperationStatusText.Text == loading) BackupOperationStatusText.Text = string.Empty;
+            }
+            catch (Exception ex)
+            {
+                if (generation != _backupRefreshGeneration || Dispatcher.HasShutdownStarted) return;
+                Debug.WriteLine($"Failed to refresh backup history: {ex}");
+                BackupOperationStatusText.Text = string.Format(GetString("Loc.BackupsLoadFailed"), ex.Message);
+            }
+            finally
+            {
+                if (generation == _backupRefreshGeneration && !Dispatcher.HasShutdownStarted)
+                {
+                    _isBackupRefreshInProgress = false;
+                    UpdateBackupDetails(BackupsList.SelectedItem as UpdateBackupInfo);
+                }
+            }
         }
 
         private void UpdateBackupDetails(UpdateBackupInfo? backup)
         {
             bool hasSelection = backup != null;
-            bool busy = _desktopAutoSortInProgress || _isManualBackupInProgress;
+            bool busy = _desktopAutoSortInProgress || _isBackupOperationInProgress || _isBackupRefreshInProgress;
             BackupRestoreSelectedButton.IsEnabled = hasSelection && backup!.CanRestore && !busy;
             BackupDeleteSelectedButton.IsEnabled = hasSelection && !busy;
             CreateManualBackupButton.IsEnabled = !busy;
@@ -215,12 +258,12 @@ namespace DesktopPlus
 
         private async void CreateManualBackup_Click(object sender, RoutedEventArgs e)
         {
-            if (_isManualBackupInProgress || _desktopAutoSortInProgress)
+            if (_isBackupOperationInProgress || _desktopAutoSortInProgress)
             {
                 return;
             }
 
-            _isManualBackupInProgress = true;
+            _isBackupOperationInProgress = true;
             CreateManualBackupButton.IsEnabled = false;
             UpdateBackupDetails(BackupsList.SelectedItem as UpdateBackupInfo);
             BackupOperationStatusText.Text = GetString("Loc.BackupsCreating");
@@ -254,8 +297,7 @@ namespace DesktopPlus
             }
             finally
             {
-                _isManualBackupInProgress = false;
-                UpdateBackupDetails(BackupsList.SelectedItem as UpdateBackupInfo);
+                FinishBackupOperation();
             }
         }
 
@@ -269,17 +311,17 @@ namespace DesktopPlus
             UpdateBackupDetails(BackupsList.SelectedItem as UpdateBackupInfo);
         }
 
-        private void RestoreSelectedBackup_Click(object sender, RoutedEventArgs e)
+        private async void RestoreSelectedBackup_Click(object sender, RoutedEventArgs e)
         {
             if (BackupsList.SelectedItem is UpdateBackupInfo backup)
             {
-                RestoreBackup(backup);
+                await RestoreBackupAsync(backup);
             }
         }
 
-        private void RestoreBackup(UpdateBackupInfo backup)
+        private async Task RestoreBackupAsync(UpdateBackupInfo backup)
         {
-            if (_desktopAutoSortInProgress || _isManualBackupInProgress || !backup.CanRestore)
+            if (_desktopAutoSortInProgress || _isBackupOperationInProgress || !backup.CanRestore)
             {
                 return;
             }
@@ -298,16 +340,25 @@ namespace DesktopPlus
             }
 
             SaveSettingsImmediate();
-            if (!TryCreateManagedBackup(
-                "critical",
-                GetString("Loc.BackupsReasonBeforeRestore"),
-                GetString("Loc.BackupsNameBeforeRestore"),
-                out _,
-                out string safetyError,
-                preserveArchivePath: backup.ArchivePath))
+            _isBackupOperationInProgress = true;
+            UpdateBackupDetails(backup);
+            string reason = GetString("Loc.BackupsReasonBeforeRestore");
+            string name = GetString("Loc.BackupsNameBeforeRestore");
+            (bool created, string error) safety;
+            try
+            {
+                safety = await Task.Run(() =>
+                {
+                    bool created = TryCreateManagedBackup("critical", reason, name, out _, out string error,
+                        preserveArchivePath: backup.ArchivePath);
+                    return (created, error);
+                });
+            }
+            finally { FinishBackupOperation(); }
+            if (!safety.created)
             {
                 System.Windows.MessageBox.Show(
-                    string.Format(GetString("Loc.BackupsSafetyFailed"), safetyError),
+                    string.Format(GetString("Loc.BackupsSafetyFailed"), safety.error),
                     GetString("Loc.MsgError"),
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
@@ -327,9 +378,9 @@ namespace DesktopPlus
             ShutdownForUpdateInstall();
         }
 
-        private void DeleteSelectedBackup_Click(object sender, RoutedEventArgs e)
+        private async void DeleteSelectedBackup_Click(object sender, RoutedEventArgs e)
         {
-            if (_desktopAutoSortInProgress || _isManualBackupInProgress) return;
+            if (_desktopAutoSortInProgress || _isBackupOperationInProgress) return;
             if (BackupsList.SelectedItem is not UpdateBackupInfo backup)
             {
                 return;
@@ -347,13 +398,19 @@ namespace DesktopPlus
 
             try
             {
-                lock (BackupRetention.SyncRoot) { File.Delete(backup.ArchivePath); }
+                _isBackupOperationInProgress = true;
+                UpdateBackupDetails(backup);
+                await Task.Run(() => { lock (BackupRetention.SyncRoot) { File.Delete(backup.ArchivePath); } });
                 BackupOperationStatusText.Text = GetString("Loc.BackupsDeleted");
                 RefreshBackupsTab();
             }
             catch (Exception ex)
             {
                 BackupOperationStatusText.Text = string.Format(GetString("Loc.BackupsDeleteFailed"), ex.Message);
+            }
+            finally
+            {
+                FinishBackupOperation();
             }
         }
 

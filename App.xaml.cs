@@ -36,8 +36,9 @@ namespace DesktopPlus
             return false;
         }
 
-        protected override void OnStartup(StartupEventArgs e)
+        protected override async void OnStartup(StartupEventArgs e)
         {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
             bool restoreBeforeUninstall = Array.Exists(e.Args, argument =>
                 string.Equals(argument, "--restore-before-uninstall", StringComparison.OrdinalIgnoreCase));
             if (!TryAcquireSingleInstanceMutex())
@@ -55,11 +56,11 @@ namespace DesktopPlus
                     string.Equals(argument, "--language=german", StringComparison.OrdinalIgnoreCase))
                     ? "de"
                     : "en";
-                Shutdown(DesktopPlus.MainWindow.RunUninstallBackupRestore(language));
+                Shutdown(await DesktopPlus.MainWindow.RunUninstallBackupRestoreAsync(language));
                 return;
             }
 
-            if (DesktopPlus.MainWindow.TryStartPendingUpdateInstall())
+            if (await DesktopPlus.MainWindow.TryStartPendingUpdateInstallAsync())
             {
                 ShutdownMode = ShutdownMode.OnExplicitShutdown;
                 Shutdown();
@@ -68,6 +69,9 @@ namespace DesktopPlus
 
             FolderSearchIndexService.Shared.IndexChanged += DesktopPanel.OnSearchIndexChanged;
             base.OnStartup(e);
+            ShutdownMode = ShutdownMode.OnLastWindowClose;
+            MainWindow = new DesktopPlus.MainWindow();
+            MainWindow.Show();
         }
 
         protected override void OnExit(ExitEventArgs e)

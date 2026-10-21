@@ -429,9 +429,18 @@ namespace DesktopPlus
             return wd;
         }
 
-        public MainWindow()
+        public MainWindow() : this(initializeRuntime: true)
+        {
+        }
+
+        internal MainWindow(bool initializeRuntime)
         {
             InitializeComponent();
+            if (!initializeRuntime)
+            {
+                Loaded -= MainWindow_Loaded;
+                return;
+            }
             InitializeGlobalShortcuts();
             AddHandler(MouseWheelEvent, new MouseWheelEventHandler(MainScrollViewer_PreviewMouseWheel), true);
             TrySetWindowIcon();

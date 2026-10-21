@@ -24,6 +24,7 @@
 
 	<ItemGroup>
 		<Compile Remove="artifacts\**\*.cs" />
+		<Page Remove="artifacts\**\*.xaml" />
 		<!-- The test project lives in a subfolder; keep its sources out of the app assembly. -->
 		<Compile Remove="DesktopPlus.Tests\**\*.cs" />
 		<EmbeddedResource Remove="DesktopPlus.Tests\**" />

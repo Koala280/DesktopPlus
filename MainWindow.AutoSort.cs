@@ -792,7 +792,7 @@ namespace DesktopPlus
                     return;
                 }
 
-                if (_desktopAutoSortInProgress)
+                if (_desktopAutoSortInProgress || _isBackupOperationInProgress)
                 {
                     _desktopAutoSortPending = true;
                     return;
@@ -1807,7 +1807,7 @@ namespace DesktopPlus
 
         private Task RunDesktopSortAsync(bool showResultMessage)
         {
-            if (_desktopAutoSortInProgress || _isManualBackupInProgress || _isExitPending || IsExiting)
+            if (_desktopAutoSortInProgress || _isBackupOperationInProgress || _isExitPending || IsExiting)
             {
                 return _desktopAutoSortTask;
             }
@@ -2265,9 +2265,9 @@ namespace DesktopPlus
             await RunDesktopSortAsync(showResultMessage: true);
         }
 
-        private void ResetAutoSortRules_Click(object sender, RoutedEventArgs e)
+        private async void ResetAutoSortRules_Click(object sender, RoutedEventArgs e)
         {
-            if (!EnsureCriticalBackup(GetString("Loc.BackupsReasonBeforeRulesReset")))
+            if (!await EnsureCriticalBackupAsync(GetString("Loc.BackupsReasonBeforeRulesReset")))
             {
                 return;
             }

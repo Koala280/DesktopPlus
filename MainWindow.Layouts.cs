@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -1043,11 +1043,11 @@ namespace DesktopPlus
             NotifyPanelsChanged();
         }
 
-        private void ApplyLayout_Click(object sender, RoutedEventArgs e)
+        private async void ApplyLayout_Click(object sender, RoutedEventArgs e)
         {
             if (sender is FrameworkElement fe && fe.Tag is LayoutDefinition layout)
             {
-                if (!EnsureCriticalBackup(GetString("Loc.BackupsReasonBeforeLayout")))
+                if (!await EnsureCriticalBackupAsync(GetString("Loc.BackupsReasonBeforeLayout")))
                 {
                     return;
                 }
@@ -1056,11 +1056,11 @@ namespace DesktopPlus
             }
         }
 
-        private void UpdateLayoutFromCurrent_Click(object sender, RoutedEventArgs e)
+        private async void UpdateLayoutFromCurrent_Click(object sender, RoutedEventArgs e)
         {
             if (sender is FrameworkElement fe && fe.Tag is LayoutDefinition layout)
             {
-                if (!EnsureCriticalBackup(GetString("Loc.BackupsReasonBeforeLayoutUpdate")))
+                if (!await EnsureCriticalBackupAsync(GetString("Loc.BackupsReasonBeforeLayoutUpdate")))
                 {
                     return;
                 }
@@ -1076,11 +1076,11 @@ namespace DesktopPlus
             }
         }
 
-        private void DeleteLayout_Click(object sender, RoutedEventArgs e)
+        private async void DeleteLayout_Click(object sender, RoutedEventArgs e)
         {
             if (sender is FrameworkElement fe && fe.Tag is LayoutDefinition layout)
             {
-                if (!EnsureCriticalBackup(GetString("Loc.BackupsReasonBeforeLayoutDelete")))
+                if (!await EnsureCriticalBackupAsync(GetString("Loc.BackupsReasonBeforeLayoutDelete")))
                 {
                     return;
                 }

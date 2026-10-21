@@ -775,7 +775,7 @@ namespace DesktopPlus
             }
         }
 
-        private void DeletePreset_Click(object sender, RoutedEventArgs e)
+        private async void DeletePreset_Click(object sender, RoutedEventArgs e)
         {
             if (PresetComboTop.SelectedItem is AppearancePreset preset)
             {
@@ -789,7 +789,7 @@ namespace DesktopPlus
                     return;
                 }
 
-                if (!EnsureCriticalBackup(GetString("Loc.BackupsReasonBeforePresetDelete")))
+                if (!await EnsureCriticalBackupAsync(GetString("Loc.BackupsReasonBeforePresetDelete")))
                 {
                     return;
                 }
@@ -800,7 +800,7 @@ namespace DesktopPlus
             }
         }
 
-        private void ResetStandardPresets_Click(object sender, RoutedEventArgs e)
+        private async void ResetStandardPresets_Click(object sender, RoutedEventArgs e)
         {
             var result = System.Windows.MessageBox.Show(
                 GetString("Loc.MsgResetConfirmMessage"),
@@ -810,7 +810,7 @@ namespace DesktopPlus
 
             if (result != MessageBoxResult.Yes) return;
 
-            if (!EnsureCriticalBackup(GetString("Loc.BackupsReasonBeforePresetReset")))
+            if (!await EnsureCriticalBackupAsync(GetString("Loc.BackupsReasonBeforePresetReset")))
             {
                 return;
             }

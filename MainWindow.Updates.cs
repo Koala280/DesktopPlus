@@ -1242,6 +1242,7 @@ namespace DesktopPlus
             LatestReleaseInfo latestRelease,
             string latestVersionText)
         {
+            if (_isBackupOperationInProgress || _isExit || _isExitPending) return false;
             if (latestRelease == null)
             {
                 return false;
@@ -1315,11 +1316,26 @@ namespace DesktopPlus
             await _desktopAutoSortTask;
             SaveSettingsImmediate();
             SetManualUpdateStatus(GetString("Loc.UpdateStatusBackingUp"));
-            if (!TryCreatePreUpdateBackup(normalizedLatestVersion, out _, out string backupError))
+            (bool created, string error) backupResult;
+            _isBackupOperationInProgress = true;
+            UpdateBackupDetails(BackupsList.SelectedItem as UpdateBackupInfo);
+            try
+            {
+                backupResult = await Task.Run(() =>
+                {
+                    bool created = TryCreatePreUpdateBackup(normalizedLatestVersion, out _, out string error);
+                    return (created, error);
+                });
+            }
+            finally
+            {
+                FinishBackupOperation();
+            }
+            if (!backupResult.created)
             {
                 SetManualUpdateStatus(string.Empty);
                 System.Windows.MessageBox.Show(
-                    string.Format(GetString("Loc.MsgUpdateBackupFailed"), backupError),
+                    string.Format(GetString("Loc.MsgUpdateBackupFailed"), backupResult.error),
                     GetString("Loc.MsgError"),
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
@@ -1353,8 +1369,25 @@ namespace DesktopPlus
             return true;
         }
 
-        internal static bool TryStartPendingUpdateInstall()
+        internal static async Task<bool> TryStartPendingUpdateInstallAsync()
         {
+            var result = await Task.Run(() =>
+            {
+                bool started = TryStartPendingUpdateInstall(out string error);
+                return (started, error);
+            });
+            if (!string.IsNullOrWhiteSpace(result.error))
+            {
+                System.Windows.MessageBox.Show(
+                    string.Format(GetString("Loc.MsgUpdateBackupFailed"), result.error),
+                    GetString("Loc.MsgError"), MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            return result.started;
+        }
+
+        private static bool TryStartPendingUpdateInstall(out string backupError)
+        {
+            backupError = string.Empty;
             if (IsDevelopmentBuildForUpdates)
             {
                 return false;
@@ -1374,13 +1407,8 @@ namespace DesktopPlus
                 return false;
             }
 
-            if (!TryCreatePreUpdateBackup(pendingVersion, out _, out string backupError))
+            if (!TryCreatePreUpdateBackup(pendingVersion, out _, out backupError))
             {
-                System.Windows.MessageBox.Show(
-                    string.Format(GetString("Loc.MsgUpdateBackupFailed"), backupError),
-                    GetString("Loc.MsgError"),
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
                 return false;
             }
 
