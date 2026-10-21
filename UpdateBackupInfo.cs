@@ -21,6 +21,8 @@ namespace DesktopPlus
         public bool ContainsAutoSortStorage { get; set; }
         public bool ContainsDesktopSnapshot { get; set; }
         public bool ContainsDesktopMoveHistory { get; set; }
+        public bool ContainsFileReferences { get; set; }
+        public bool CanRestore { get; set; } = true;
 
         public string DisplayName
         {

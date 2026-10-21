@@ -132,13 +132,16 @@ public sealed class DesktopAutoSorterTests
     {
         using var data = new TempDir();
         string settings = data.File("settings.json", "{\"Language\":\"de\"}");
-        string source = data.File("large-desktop-file.bin");
+        string desktop = data.Dir("desktop");
+        string source = Path.Combine(desktop, "large-desktop-file.bin");
+        File.WriteAllText(source, "contents");
         using var lockedSource = new FileStream(source, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         lockedSource.SetLength(128 * 1024 * 1024);
         string archivePath = data.Combine("auto-sort.zip");
         var moves = new[] { new DesktopSortMovedItem { SourcePath = source, TargetPath = data.Combine("sorted.bin") } };
 
-        MainWindow.WriteDesktopAutoSortBackupArchive(archivePath, settings, moves, "Before sort", "Move history");
+        MainWindow.WriteReferenceBackupArchive(archivePath, settings, "", new[] { desktop }, data.Combine("storage"),
+            "auto-sort", "Before sort", "Move history", desktopMoves: moves);
 
         using var archive = ZipFile.OpenRead(archivePath);
         Assert.Equal(3, archive.Entries.Count);

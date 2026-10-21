@@ -57,7 +57,7 @@ All configured folder panels and tabs, including inactive tabs, prepare their se
 
 To measure preparation and cached lookup with many files and empty subfolders, run `powershell -ExecutionPolicy Bypass -File .\scripts\measure-search-index.ps1 -Files 16384`. Results and physical disk samples are saved under `artifacts/search-index-benchmark`; disk samples include activity from other Windows processes.
 
-Auto-sort runs in the background and saves only settings and a move history before sorting. Its restore point moves existing sorted items back to their original desktop locations without copying desktop contents or overwriting new files. It cannot recover items deleted after sorting; use a manual backup for file-content recovery.
+Auto-sort runs in the background and saves settings and file position references before sorting. Its restore point moves existing items back to their recorded locations without copying desktop contents or overwriting new files. No DesktopPlus backup recovers deleted file contents; use a separate file backup for that.
 
 Within each target panel, shortcuts with the same launch target and settings appear once. Auto-sort saves extra `.lnk` and `.url` files under `%LOCALAPPDATA%\DesktopPlus\AutoSortStorage\.DuplicateShortcuts\` and records their original paths for Restore. Running Sort now also repairs duplicates already present in the active target folders.
 
@@ -160,9 +160,11 @@ Sorted files are moved from your desktop into:
 The `Backups` tab provides one place to create, inspect, restore, and delete backups.
 
 - DesktopPlus automatically creates restore points before auto-sort, updates, layout application, destructive panel/layout changes, rule resets, and restores.
-- Auto-sort backups preserve settings and the original and sorted paths, without copying desktop contents.
-- Manual backups include the installed application files, settings, custom languages, and auto-sort storage.
-- Automatic backup history is bounded per backup type; manual backups are retained until you delete them.
+- All new backups preserve settings, custom languages, and file/folder positions. They do not copy installed applications, desktop contents, or auto-sort storage contents.
+- At most five backups are retained **in total**, across manual, auto-sort, update, and safety backups. The oldest archives are removed automatically, including existing legacy backups. The selected restore archive remains protected while creating its safety backup.
+- Each backup is independent: deleting one archive does not break another or delete your files. Use **Delete backup** beside the backup list to remove the selected archive manually.
+- Restore identifies existing items by their volume/file ID and creation time, including renamed items within the desktop and managed sort folders. It never overwrites an occupied destination. Deleted, inaccessible, ambiguous, or externally moved items are skipped; other items and settings still restore. Skipped items are listed in `DesktopPlus-last-restore.txt` in the backup folder.
+- Abandoned `staging-<guid>` and `restore-<guid>` directories from older versions are cleaned in the background after they are at least 24 hours old, including read-only copies. Cleanup never follows junctions into original user folders. New backups stream directly into an archive and create no staging copies.
 - Restoring a backup first creates a safety backup of the current state.
 - When uninstalling interactively, DesktopPlus offers to restore an available backup first. You can choose the backup or continue without restoring. Recovery restores user data without replacing application files or restarting DesktopPlus, then uninstall continues. Cancelling recovery keeps the application installed. Backup archives are retained; silent uninstalls skip the offer.
 

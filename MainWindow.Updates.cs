@@ -33,7 +33,6 @@ namespace DesktopPlus
         private static readonly HttpClient UpdateHttpClient = CreateUpdateRequestHttpClient();
         private static readonly HttpClient UpdateDownloadHttpClient = CreateUpdateDownloadHttpClient();
         private static readonly TimeSpan AutomaticUpdateCheckDelay = TimeSpan.FromMinutes(10);
-        private const int MaxUpdateBackupsToKeep = 5;
         private bool _autoCheckUpdates = false;
         private bool _isUpdateCheckInProgress = false;
         private bool _isAutomaticUpdateRoutineInProgress = false;
@@ -106,6 +105,8 @@ namespace DesktopPlus
             public List<string> IncludedEntries { get; set; } = new List<string>();
             public List<DesktopBackupItemManifest> DesktopItems { get; set; } = new List<DesktopBackupItemManifest>();
             public List<DesktopSortMovedItem> DesktopMoves { get; set; } = new List<DesktopSortMovedItem>();
+            public bool UsesFileReferences { get; set; }
+            public List<BackupFileReference> FileReferences { get; set; } = new();
         }
 
         private sealed class DesktopBackupItemManifest
@@ -200,25 +201,6 @@ namespace DesktopPlus
                 if (File.Exists(path))
                 {
                     File.Delete(path);
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        private static void TryDeleteDirectory(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return;
-            }
-
-            try
-            {
-                if (Directory.Exists(path))
-                {
-                    Directory.Delete(path, recursive: true);
                 }
             }
             catch
@@ -346,79 +328,20 @@ namespace DesktopPlus
                 "AutoSortStorage");
         }
 
-        private static void CopyDirectoryRecursive(string sourceDirectory, string targetDirectory)
-        {
-            Directory.CreateDirectory(targetDirectory);
-
-            foreach (string directory in Directory.GetDirectories(sourceDirectory, "*", SearchOption.AllDirectories))
-            {
-                string relativeDirectory = Path.GetRelativePath(sourceDirectory, directory);
-                Directory.CreateDirectory(Path.Combine(targetDirectory, relativeDirectory));
-            }
-
-            foreach (string file in Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories))
-            {
-                string relativeFile = Path.GetRelativePath(sourceDirectory, file);
-                string targetFile = Path.Combine(targetDirectory, relativeFile);
-                string? targetFileDirectory = Path.GetDirectoryName(targetFile);
-                if (!string.IsNullOrWhiteSpace(targetFileDirectory))
-                {
-                    Directory.CreateDirectory(targetFileDirectory);
-                }
-
-                File.Copy(file, targetFile, overwrite: true);
-            }
-        }
-
         private static string BuildUpdateBackupRestoreInstructions(string archiveFileName)
         {
             return string.Join(Environment.NewLine, new[]
             {
-                "DesktopPlus backup",
-                string.Empty,
+                "DesktopPlus reference backup",
                 $"Archive: {archiveFileName}",
-                string.Empty,
-                "Restore steps:",
-                "1. Open DesktopPlus and select this archive in the Backups tab.",
-                "2. Choose Restore and confirm the safety prompt.",
-                string.Empty,
-                "Manual recovery:",
-                "1. Close DesktopPlus and extract this archive to a temporary folder.",
-                $"2. Restore 'user-data\\roaming\\{Path.GetFileName(settingsFilePath)}' to '%APPDATA%\\{Path.GetFileName(settingsFilePath)}' if present.",
-                "3. Restore 'user-data\\roaming\\DesktopPlus\\' to '%APPDATA%\\DesktopPlus\\' if present.",
-                "4. Restore 'user-data\\local\\AutoSortStorage\\' to '%LOCALAPPDATA%\\DesktopPlus\\AutoSortStorage\\' if present.",
-                "5. The optional 'app\\' folder contains the backed-up program files."
+                "Open the Backups tab, select this archive and choose Restore.",
+                "Contains settings, custom languages and file/folder positions only.",
+                "No program files or desktop/AutoSortStorage file contents are copied.",
+                "Restore moves existing matching items without overwriting other files.",
+                "Missing, deleted, inaccessible or ambiguous items are skipped and reported.",
+                "Deleted file contents cannot be recovered from a reference backup.",
+                "The five newest backups are retained across all backup types."
             });
-        }
-
-        private static void PruneOldUpdateBackups(string keepArchivePath)
-        {
-            try
-            {
-                if (!Directory.Exists(UpdateBackupsDirectory))
-                {
-                    return;
-                }
-
-                var oldBackups = Directory
-                    .EnumerateFiles(UpdateBackupsDirectory, "DesktopPlus-backup-*.zip", SearchOption.TopDirectoryOnly)
-                    .Where(path =>
-                        !Path.GetFileName(path).StartsWith("DesktopPlus-backup-manual-", StringComparison.OrdinalIgnoreCase) &&
-                        !Path.GetFileName(path).StartsWith("DesktopPlus-backup-auto-sort-", StringComparison.OrdinalIgnoreCase) &&
-                        !Path.GetFileName(path).StartsWith("DesktopPlus-backup-critical-", StringComparison.OrdinalIgnoreCase))
-                    .Where(path => !string.Equals(path, keepArchivePath, StringComparison.OrdinalIgnoreCase))
-                    .Select(path => new FileInfo(path))
-                    .OrderByDescending(info => info.LastWriteTimeUtc)
-                    .Skip(Math.Max(0, MaxUpdateBackupsToKeep - 1));
-
-                foreach (FileInfo backup in oldBackups)
-                {
-                    TryDeleteFile(backup.FullName);
-                }
-            }
-            catch
-            {
-            }
         }
 
         private static bool TryCreatePreUpdateBackup(
@@ -426,107 +349,10 @@ namespace DesktopPlus
             out string backupArchivePath,
             out string errorMessage)
         {
-            backupArchivePath = string.Empty;
-            errorMessage = string.Empty;
-
-            string currentVersion = NormalizeVersionToken(GetInstalledVersionText());
-            if (string.IsNullOrWhiteSpace(currentVersion))
-            {
-                currentVersion = "current";
-            }
-
-            string normalizedTargetVersion = NormalizeVersionToken(targetVersion);
-            if (string.IsNullOrWhiteSpace(normalizedTargetVersion))
-            {
-                normalizedTargetVersion = "next";
-            }
-
-            string timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff");
-            string archiveFileName =
-                $"DesktopPlus-backup-{SanitizeVersionTokenForFileName(currentVersion)}-before-{SanitizeVersionTokenForFileName(normalizedTargetVersion)}-{timestamp}.zip";
-            string archivePath = Path.Combine(UpdateBackupsDirectory, archiveFileName);
-            string stagingDirectory = Path.Combine(UpdateBackupsDirectory, $"staging-{Guid.NewGuid():N}");
-
-            try
-            {
-                Directory.CreateDirectory(UpdateBackupsDirectory);
-                Directory.CreateDirectory(stagingDirectory);
-
-                var includedEntries = new List<string>();
-
-                string? installDirectory = GetCurrentInstallDirectory();
-                if (!string.IsNullOrWhiteSpace(installDirectory) && Directory.Exists(installDirectory))
-                {
-                    CopyDirectoryRecursive(installDirectory, Path.Combine(stagingDirectory, "app"));
-                    includedEntries.Add(installDirectory);
-                }
-
-                if (File.Exists(settingsFilePath))
-                {
-                    string settingsTargetDirectory = Path.Combine(stagingDirectory, "user-data", "roaming");
-                    Directory.CreateDirectory(settingsTargetDirectory);
-                    File.Copy(
-                        settingsFilePath,
-                        Path.Combine(settingsTargetDirectory, Path.GetFileName(settingsFilePath)),
-                        overwrite: true);
-                    includedEntries.Add(settingsFilePath);
-                }
-
-                if (Directory.Exists(CustomLanguageFolderPath))
-                {
-                    string roamingDesktopPlusDirectory = Path.Combine(stagingDirectory, "user-data", "roaming", "DesktopPlus");
-                    CopyDirectoryRecursive(CustomLanguageFolderPath, Path.Combine(roamingDesktopPlusDirectory, "Languages"));
-                    includedEntries.Add(CustomLanguageFolderPath);
-                }
-
-                string autoSortStorageRootPath = GetAutoSortStorageRootPathForBackup();
-                if (Directory.Exists(autoSortStorageRootPath))
-                {
-                    CopyDirectoryRecursive(
-                        autoSortStorageRootPath,
-                        Path.Combine(stagingDirectory, "user-data", "local", "AutoSortStorage"));
-                    includedEntries.Add(autoSortStorageRootPath);
-                }
-
-                var manifest = new UpdateBackupManifest
-                {
-                    BackupKind = "update",
-                    Reason = $"Before update to {normalizedTargetVersion}",
-                    DisplayName = $"Before update {currentVersion} → {normalizedTargetVersion}",
-                    CurrentVersion = currentVersion,
-                    TargetVersion = normalizedTargetVersion,
-                    CreatedUtc = DateTime.UtcNow.ToString("O"),
-                    SourceExecutablePath = Environment.ProcessPath ?? string.Empty,
-                    SourceInstallDirectory = installDirectory ?? string.Empty,
-                    CapturedAutoSortStorage = true,
-                    IncludedEntries = includedEntries
-                };
-
-                File.WriteAllText(
-                    Path.Combine(stagingDirectory, "manifest.json"),
-                    JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
-                File.WriteAllText(
-                    Path.Combine(stagingDirectory, "RESTORE.txt"),
-                    BuildUpdateBackupRestoreInstructions(archiveFileName));
-
-                TryDeleteFile(archivePath);
-                ZipFile.CreateFromDirectory(stagingDirectory, archivePath, CompressionLevel.Optimal, includeBaseDirectory: false);
-                PruneOldUpdateBackups(archivePath);
-                backupArchivePath = archivePath;
-                Debug.WriteLine($"Created pre-update backup: {archivePath}");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Failed to create pre-update backup: {ex}");
-                errorMessage = ex.Message;
-                TryDeleteFile(archivePath);
-                return false;
-            }
-            finally
-            {
-                TryDeleteDirectory(stagingDirectory);
-            }
+            string version = NormalizeVersionToken(targetVersion);
+            return TryCreateManagedBackup("update", $"Before update to {version}",
+                $"Before update {NormalizeVersionToken(GetInstalledVersionText())} → {version}",
+                out backupArchivePath, out errorMessage, targetVersion: version);
         }
 
         private static string EscapePowerShellSingleQuotedLiteral(string value)
@@ -591,71 +417,85 @@ namespace DesktopPlus
             }
         }
 
-        internal static IReadOnlyList<UpdateBackupInfo> LoadAvailableUpdateBackups()
+        internal static IReadOnlyList<UpdateBackupInfo> LoadAvailableUpdateBackups(string? directory = null)
         {
-            var backups = new List<UpdateBackupInfo>();
-            if (!Directory.Exists(UpdateBackupsDirectory))
+            lock (BackupRetention.SyncRoot)
             {
-                return backups;
-            }
-
-            IEnumerable<string> backupArchives = Directory
-                .EnumerateFiles(UpdateBackupsDirectory, "DesktopPlus-backup-*.zip", SearchOption.TopDirectoryOnly)
-                .OrderByDescending(path => new FileInfo(path).LastWriteTimeUtc);
-
-            foreach (string archivePath in backupArchives)
-            {
-                var fileInfo = new FileInfo(archivePath);
-                var backup = new UpdateBackupInfo
+                string backupDirectory = directory ?? UpdateBackupsDirectory;
+                BackupRetention.Maintain(backupDirectory);
+                var backups = new List<UpdateBackupInfo>();
+                if (!Directory.Exists(backupDirectory))
                 {
-                    ArchivePath = archivePath,
-                    ArchiveFileName = fileInfo.Name,
-                    CreatedUtc = fileInfo.LastWriteTimeUtc,
-                    FileSizeBytes = fileInfo.Exists ? fileInfo.Length : 0
-                };
+                    return backups;
+                }
 
-                try
+                IEnumerable<string> backupArchives = Directory
+                    .EnumerateFiles(backupDirectory, "DesktopPlus-backup-*.zip", SearchOption.TopDirectoryOnly)
+                    .OrderByDescending(path => new FileInfo(path).LastWriteTimeUtc);
+
+                foreach (string archivePath in backupArchives)
                 {
-                    using ZipArchive archive = ZipFile.OpenRead(archivePath);
-                    if (TryReadUpdateBackupManifest(archive, out UpdateBackupManifest manifest))
+                    var fileInfo = new FileInfo(archivePath);
+                    var backup = new UpdateBackupInfo
                     {
-                        backup.CurrentVersion = manifest.CurrentVersion ?? string.Empty;
-                        backup.TargetVersion = manifest.TargetVersion ?? string.Empty;
-                        backup.SourceInstallDirectory = manifest.SourceInstallDirectory ?? string.Empty;
-                        backup.SourceExecutablePath = manifest.SourceExecutablePath ?? string.Empty;
-                        backup.BackupKind = string.IsNullOrWhiteSpace(manifest.BackupKind)
-                            ? "update"
-                            : manifest.BackupKind;
-                        backup.Reason = manifest.Reason ?? string.Empty;
-                        backup.CustomDisplayName = manifest.DisplayName ?? string.Empty;
-                        backup.ContainsDesktopSnapshot = manifest.DesktopItems?.Count > 0;
-                        backup.ContainsDesktopMoveHistory = manifest.DesktopMoves?.Count > 0;
-                        backup.ContainsAutoSortStorage = manifest.CapturedAutoSortStorage;
+                        ArchivePath = archivePath,
+                        ArchiveFileName = fileInfo.Name,
+                        CreatedUtc = fileInfo.LastWriteTimeUtc,
+                        FileSizeBytes = fileInfo.Exists ? fileInfo.Length : 0
+                    };
 
-                        if (DateTime.TryParse(
-                            manifest.CreatedUtc,
-                            CultureInfo.InvariantCulture,
-                            DateTimeStyles.RoundtripKind,
-                            out DateTime createdUtc))
+                    try
+                    {
+                        using ZipArchive archive = ZipFile.OpenRead(archivePath);
+                        bool hasManifest = TryReadUpdateBackupManifest(archive, out UpdateBackupManifest manifest);
+                        if (!hasManifest && archive.GetEntry("manifest.json") != null)
+                            throw new InvalidDataException("Invalid backup manifest.");
+                        if (hasManifest)
                         {
-                            backup.CreatedUtc = createdUtc;
-                        }
-                    }
+                            backup.CurrentVersion = manifest.CurrentVersion ?? string.Empty;
+                            backup.TargetVersion = manifest.TargetVersion ?? string.Empty;
+                            backup.SourceInstallDirectory = manifest.SourceInstallDirectory ?? string.Empty;
+                            backup.SourceExecutablePath = manifest.SourceExecutablePath ?? string.Empty;
+                            backup.BackupKind = string.IsNullOrWhiteSpace(manifest.BackupKind)
+                                ? "update"
+                                : manifest.BackupKind;
+                            backup.Reason = manifest.Reason ?? string.Empty;
+                            backup.CustomDisplayName = manifest.DisplayName ?? string.Empty;
+                            backup.ContainsDesktopSnapshot = manifest.DesktopItems?.Count > 0;
+                            backup.ContainsDesktopMoveHistory = manifest.DesktopMoves?.Count > 0;
+                            backup.ContainsFileReferences = manifest.UsesFileReferences;
+                            backup.ContainsAutoSortStorage = manifest.CapturedAutoSortStorage;
 
-                    backup.ContainsAppSnapshot = ZipArchiveContainsEntryPrefix(archive, "app/");
-                    backup.ContainsSettingsSnapshot = ZipArchiveContainsEntryPrefix(archive, "user-data/roaming/DesktopPlus_Settings.json");
-                    backup.ContainsCustomLanguages = ZipArchiveContainsEntryPrefix(archive, "user-data/roaming/DesktopPlus/Languages/");
-                    backup.ContainsAutoSortStorage |= ZipArchiveContainsEntryPrefix(archive, "user-data/local/AutoSortStorage/");
-                    backup.ContainsDesktopSnapshot |= ZipArchiveContainsEntryPrefix(archive, "user-data/desktop-items/");
+                            if (DateTime.TryParse(
+                                manifest.CreatedUtc,
+                                CultureInfo.InvariantCulture,
+                                DateTimeStyles.RoundtripKind,
+                                out DateTime createdUtc))
+                            {
+                                backup.CreatedUtc = createdUtc;
+                            }
+                        }
+
+                        backup.ContainsAppSnapshot = ZipArchiveContainsEntryPrefix(archive, "app/");
+                        backup.ContainsSettingsSnapshot = ZipArchiveContainsEntryPrefix(archive, "user-data/roaming/DesktopPlus_Settings.json");
+                        backup.ContainsCustomLanguages = ZipArchiveContainsEntryPrefix(archive, "user-data/roaming/DesktopPlus/Languages/");
+                        backup.ContainsAutoSortStorage |= ZipArchiveContainsEntryPrefix(archive, "user-data/local/AutoSortStorage/");
+                        backup.ContainsDesktopSnapshot |= ZipArchiveContainsEntryPrefix(archive, "user-data/desktop-items/");
+                        backup.CanRestore = backup.ContainsAppSnapshot || backup.ContainsSettingsSnapshot || backup.ContainsCustomLanguages ||
+                            backup.ContainsAutoSortStorage || backup.ContainsDesktopSnapshot || backup.ContainsDesktopMoveHistory || backup.ContainsFileReferences;
+                        if (!backup.CanRestore) backup.Reason = GetString("Loc.BackupsUnreadable");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"Unreadable backup archive '{archivePath}': {ex}");
+                        backup.CanRestore = false;
+                        backup.Reason = GetString("Loc.BackupsUnreadable");
+                    }
                     backups.Add(backup);
                 }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"Skipping unreadable backup archive '{archivePath}': {ex}");
-                }
-            }
 
-            return backups;
+                return backups;
+            }
         }
 
         private static IReadOnlyList<string> BuildBackupRestoreLaunchCandidates(UpdateBackupInfo backup)
@@ -726,12 +566,86 @@ namespace DesktopPlus
                   $originalParent = [IO.Path]::GetDirectoryName($originalPath)
                   $isStoredDuplicate = $originalPath.StartsWith($sortRoot, [StringComparison]::OrdinalIgnoreCase) -and $sortedPath.StartsWith($duplicatesRoot, [StringComparison]::OrdinalIgnoreCase)
                   if (($desktopRoots -notcontains $originalParent -and -not $isStoredDuplicate) -or -not $sortedPath.StartsWith($sortRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid desktop move in backup manifest.' }
-                  if (-not (Test-Path -LiteralPath $sortedPath) -or (Test-Path -LiteralPath $originalPath)) { continue }
-                  Ensure-Directory $originalParent
-                  if ([IO.Directory]::Exists($sortedPath)) { [IO.Directory]::Move($sortedPath, $originalPath) } else { [IO.File]::Move($sortedPath, $originalPath) }
+                  if (-not (Test-Path -LiteralPath $sortedPath) -or (Test-Path -LiteralPath $originalPath)) {
+                    if ($null -ne $restoreSkipped) { $restoreSkipped.Add($originalPath + ' - missing source or occupied destination') }
+                    continue
+                  }
+                  try {
+                    Ensure-Directory $originalParent
+                    if ([IO.Directory]::Exists($sortedPath)) { [IO.Directory]::Move($sortedPath, $originalPath) } else { [IO.File]::Move($sortedPath, $originalPath) }
+                  } catch { if ($null -ne $restoreSkipped) { $restoreSkipped.Add($originalPath + ' - ' + $_.Exception.Message) } }
                 }
               }
             """;
+        }
+
+        internal static string BuildFileReferenceRestoreScript()
+        {
+            return "Add-Type -TypeDefinition @'" + Environment.NewLine + BackupFileReferences.RestoreIdentityType +
+                Environment.NewLine + "'@" + Environment.NewLine + """
+                  $sortRoot = [IO.Path]::GetFullPath($targetAutoSortDir).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+                  $wantedPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+                  foreach ($reference in $manifest.FileReferences) {
+                    if ([string]::IsNullOrWhiteSpace($reference.Path)) { continue }
+                    $path = [IO.Path]::GetFullPath($reference.Path)
+                    if ($desktopRoots -notcontains [IO.Path]::GetDirectoryName($path) -and -not $path.StartsWith($sortRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid file reference in backup manifest.' }
+                    [void]$wantedPaths.Add($path)
+                  }
+                  $inventory = New-Object 'System.Collections.Generic.List[System.IO.FileSystemInfo]'
+                  foreach ($root in $desktopRoots) {
+                    foreach ($item in Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue) { $inventory.Add($item) }
+                  }
+                  foreach ($category in Get-ChildItem -LiteralPath $targetAutoSortDir -Force -ErrorAction SilentlyContinue) {
+                    if (-not $category.PSIsContainer) { $inventory.Add($category); continue }
+                    if ($category.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+                    if ($category.Name -eq '.DuplicateShortcuts') {
+                      foreach ($group in Get-ChildItem -LiteralPath $category.FullName -Directory -Force -ErrorAction SilentlyContinue) {
+                        if ($group.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+                        foreach ($item in Get-ChildItem -LiteralPath $group.FullName -Force -ErrorAction SilentlyContinue) { $inventory.Add($item) }
+                      }
+                    } else {
+                      foreach ($item in Get-ChildItem -LiteralPath $category.FullName -Force -ErrorAction SilentlyContinue) { $inventory.Add($item) }
+                    }
+                  }
+                  $byId = @{}
+                  foreach ($item in $inventory) {
+                    try {
+                      $id = [DesktopPlusBackupIdentity]::GetId($item.FullName)
+                      if ([string]::IsNullOrWhiteSpace($id)) { continue }
+                      if (-not $byId.ContainsKey($id)) { $byId[$id] = New-Object 'System.Collections.Generic.List[System.IO.FileSystemInfo]' }
+                      $byId[$id].Add($item)
+                    } catch { }
+                  }
+                  foreach ($reference in $manifest.FileReferences) {
+                    if ([string]::IsNullOrWhiteSpace($reference.Path)) { continue }
+                    $destination = [IO.Path]::GetFullPath($reference.Path)
+                    try {
+                      if (Test-Path -LiteralPath $destination) {
+                        if ([DesktopPlusBackupIdentity]::GetId($destination) -ne $reference.FileId) {
+                          $restoreSkipped.Add($destination + ' - destination occupied by another item')
+                        }
+                        continue
+                      }
+                      $matches = @()
+                      if (-not [string]::IsNullOrWhiteSpace($reference.FileId) -and $byId.ContainsKey($reference.FileId)) {
+                        $matches = @($byId[$reference.FileId] | Where-Object {
+                          -not $wantedPaths.Contains($_.FullName) -and
+                          $_.CreationTimeUtc.Ticks -eq $reference.CreationTimeUtcTicks -and
+                          [bool]$_.PSIsContainer -eq [bool]$reference.IsDirectory -and
+                          (Test-Path -LiteralPath $_.FullName) -and
+                          [DesktopPlusBackupIdentity]::GetId($_.FullName) -eq $reference.FileId
+                        })
+                      }
+                      if ($matches.Count -ne 1) {
+                        $restoreSkipped.Add($destination + ' - deleted, moved outside the managed folders, inaccessible or ambiguous')
+                        continue
+                      }
+                      Ensure-Directory ([IO.Path]::GetDirectoryName($destination))
+                      if ($reference.IsDirectory) { [IO.Directory]::Move($matches[0].FullName, $destination) }
+                      else { [IO.File]::Move($matches[0].FullName, $destination) }
+                    } catch { $restoreSkipped.Add($destination + ' - ' + $_.Exception.Message) }
+                  }
+                """;
         }
 
         internal static string BuildBackupRestoreScript(
@@ -752,6 +666,7 @@ namespace DesktopPlus
 
             var script = new StringBuilder();
             script.AppendLine("$ErrorActionPreference = 'Stop'");
+            script.AppendLine("$restoreSkipped = New-Object 'System.Collections.Generic.List[string]'");
             if (!restoreBeforeUninstall)
             {
                 script.AppendLine("Add-Type -AssemblyName PresentationFramework | Out-Null");
@@ -765,6 +680,7 @@ namespace DesktopPlus
             script.AppendLine($"$desktopRoots = @({desktopRootsLiteral})");
             script.AppendLine($"$pendingInfoPath = '{EscapePowerShellSingleQuotedLiteral(PendingUpdateInfoPath)}'");
             script.AppendLine($"$errorTitle = '{EscapePowerShellSingleQuotedLiteral(errorTitle)}'");
+            script.AppendLine($"$restoreTitle = '{EscapePowerShellSingleQuotedLiteral(GetString("Loc.BackupsRestore"))}'");
             script.AppendLine($"$launchMissingMessage = '{EscapePowerShellSingleQuotedLiteral(launchMissingMessage)}'");
             script.AppendLine($"$launchTargets = @({launchTargetsLiteral})");
             script.AppendLine("$restoreRoot = Join-Path $env:LOCALAPPDATA ('DesktopPlus\\\\Backups\\\\restore-' + [guid]::NewGuid().ToString('N'))");
@@ -772,9 +688,22 @@ namespace DesktopPlus
             script.AppendLine(restoreBeforeUninstall
                 ? "function Show-RestoreError([string]$message) { [Console]::Error.WriteLine($message) }"
                 : "function Show-RestoreError([string]$message) { [System.Windows.MessageBox]::Show($message, $errorTitle, 'OK', 'Error') | Out-Null }");
-            script.AppendLine("function Ensure-Directory([string]$path) { if ([string]::IsNullOrWhiteSpace($path)) { return } if (-not (Test-Path -LiteralPath $path)) { New-Item -ItemType Directory -Path $path -Force | Out-Null } }");
+            script.AppendLine("function Ensure-Directory([string]$path) { if ([string]::IsNullOrWhiteSpace($path)) { return } [IO.Directory]::CreateDirectory($path) | Out-Null }");
             script.AppendLine("function Reset-DirectoryContents([string]$path) { if ([string]::IsNullOrWhiteSpace($path)) { throw 'Restore target path is missing.' } Ensure-Directory $path; Get-ChildItem -LiteralPath $path -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force }");
             script.AppendLine("function Copy-DirectoryContents([string]$source, [string]$destination) { if (-not (Test-Path -LiteralPath $source)) { return } Ensure-Directory $destination; foreach ($child in Get-ChildItem -LiteralPath $source -Force) { Copy-Item -LiteralPath $child.FullName -Destination (Join-Path $destination $child.Name) -Recurse -Force } }");
+            script.AppendLine("function Copy-MissingDirectoryContents([string]$source, [string]$destination) {");
+            script.AppendLine("  if (-not (Test-Path -LiteralPath $source)) { return }");
+            script.AppendLine("  foreach ($child in Get-ChildItem -LiteralPath $source -Force) {");
+            script.AppendLine("    $target = Join-Path $destination $child.Name");
+            script.AppendLine("    try {");
+            script.AppendLine("      if (Test-Path -LiteralPath $target) {");
+            script.AppendLine("        $existing = Get-Item -LiteralPath $target -Force");
+            script.AppendLine("        if ($child.PSIsContainer -and $existing.PSIsContainer -and -not ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint)) { Copy-MissingDirectoryContents $child.FullName $target }");
+            script.AppendLine("        else { $restoreSkipped.Add($target + ' - destination already exists') }");
+            script.AppendLine("      } else { Ensure-Directory $destination; Copy-Item -LiteralPath $child.FullName -Destination $target -Recurse }");
+            script.AppendLine("    } catch { $restoreSkipped.Add($target + ' - ' + $_.Exception.Message) }");
+            script.AppendLine("  }");
+            script.AppendLine("}");
             if (!restoreBeforeUninstall)
             {
                 script.AppendLine("try { Wait-Process -Id $sourceProcessId -ErrorAction SilentlyContinue } catch { }");
@@ -786,7 +715,11 @@ namespace DesktopPlus
             script.AppendLine("  [IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $extractPath)");
             script.AppendLine("  $manifestPath = Join-Path $extractPath 'manifest.json'");
             script.AppendLine("  $manifest = if (Test-Path -LiteralPath $manifestPath) { Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json } else { $null }");
+            script.AppendLine("  if ($manifest -and $manifest.UsesFileReferences) {");
+            script.AppendLine(BuildFileReferenceRestoreScript());
+            script.AppendLine("  } else {");
             script.AppendLine(BuildDesktopMoveRestoreScript());
+            script.AppendLine("  }");
             if (!restoreBeforeUninstall)
             {
                 script.AppendLine("  $appSource = Join-Path $extractPath 'app'");
@@ -798,7 +731,7 @@ namespace DesktopPlus
             script.AppendLine("  if (Test-Path -LiteralPath $languagesSource) { if (Test-Path -LiteralPath $targetLanguagesDir) { Remove-Item -LiteralPath $targetLanguagesDir -Recurse -Force }; Ensure-Directory (Split-Path -Path $targetLanguagesDir -Parent); Copy-DirectoryContents $languagesSource $targetLanguagesDir }");
             script.AppendLine("  $autoSortSource = Join-Path $extractPath 'user-data\\local\\AutoSortStorage'");
             script.AppendLine("  $capturedAutoSort = ($manifest -and $manifest.CapturedAutoSortStorage) -or (Test-Path -LiteralPath $autoSortSource)");
-            script.AppendLine("  if ($capturedAutoSort) { if (Test-Path -LiteralPath $targetAutoSortDir) { Remove-Item -LiteralPath $targetAutoSortDir -Recurse -Force }; if (Test-Path -LiteralPath $autoSortSource) { Ensure-Directory (Split-Path -Path $targetAutoSortDir -Parent); Copy-DirectoryContents $autoSortSource $targetAutoSortDir } }");
+            script.AppendLine("  if ($capturedAutoSort) { Copy-MissingDirectoryContents $autoSortSource $targetAutoSortDir }");
             script.AppendLine("  if ($manifest -and $manifest.DesktopItems) {");
             script.AppendLine("    $desktopItemsRoot = [IO.Path]::GetFullPath((Join-Path $extractPath 'user-data\\desktop-items')) + [IO.Path]::DirectorySeparatorChar");
             script.AppendLine("    foreach ($desktopItem in $manifest.DesktopItems) {");
@@ -809,11 +742,19 @@ namespace DesktopPlus
             script.AppendLine("      if ($desktopRoots -notcontains [IO.Path]::GetDirectoryName($desktopOriginalPath) -or -not $desktopSource.StartsWith($desktopItemsRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid desktop item in backup manifest.' }");
             script.AppendLine("      if (-not (Test-Path -LiteralPath $desktopSource)) { continue }");
             script.AppendLine("      Ensure-Directory (Split-Path -Path $desktopOriginalPath -Parent)");
-            script.AppendLine("      if (Test-Path -LiteralPath $desktopOriginalPath) { Remove-Item -LiteralPath $desktopOriginalPath -Recurse -Force }");
-            script.AppendLine("      Copy-Item -LiteralPath $desktopSource -Destination $desktopOriginalPath -Recurse -Force");
+            script.AppendLine("      if (Test-Path -LiteralPath $desktopOriginalPath) { $restoreSkipped.Add($desktopOriginalPath + ' - destination already exists'); continue }");
+            script.AppendLine("      try { Copy-Item -LiteralPath $desktopSource -Destination $desktopOriginalPath -Recurse } catch { $restoreSkipped.Add($desktopOriginalPath + ' - ' + $_.Exception.Message) }");
             script.AppendLine("    }");
             script.AppendLine("  }");
             script.AppendLine("  if (Test-Path -LiteralPath $pendingInfoPath) { Remove-Item -LiteralPath $pendingInfoPath -Force -ErrorAction SilentlyContinue }");
+            script.AppendLine("  $reportPath = Join-Path ([IO.Path]::GetDirectoryName($archivePath)) 'DesktopPlus-last-restore.txt'");
+            script.AppendLine("  $report = @([DateTime]::Now.ToString('s'), ('Skipped items: ' + $restoreSkipped.Count)) + @($restoreSkipped.ToArray())");
+            script.AppendLine("  try { [IO.File]::WriteAllLines($reportPath, [string[]]$report) } catch { }");
+            if (!restoreBeforeUninstall)
+            {
+                string skippedMessage = EscapePowerShellSingleQuotedLiteral(GetString("Loc.BackupsRestoreSkipped"));
+                script.AppendLine($"  if ($restoreSkipped.Count -gt 0) {{ [System.Windows.MessageBox]::Show(('{skippedMessage}' -f $restoreSkipped.Count, $reportPath), $restoreTitle, 'OK', 'Information') | Out-Null }}");
+            }
             script.AppendLine("} catch {");
             script.AppendLine("  Show-RestoreError($_.Exception.Message)");
             script.AppendLine("  exit 1");
@@ -866,7 +807,7 @@ namespace DesktopPlus
                 string script = BuildBackupRestoreScript(
                     backup,
                     BuildBackupRestoreLaunchCandidates(backup));
-                string encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+                string encodedScript = EncodeBackupRestoreScript(script);
                 Process? process = Process.Start(new ProcessStartInfo
                 {
                     FileName = "powershell.exe",
@@ -889,6 +830,23 @@ namespace DesktopPlus
                 errorMessage = ex.Message;
                 return false;
             }
+        }
+
+        internal static string EncodeBackupRestoreScript(string script)
+        {
+            // Stay below Windows' command-line limit even with the identity/restore helpers and long paths.
+            using var buffer = new MemoryStream();
+            using (var compressed = new GZipStream(buffer, CompressionLevel.Optimal, leaveOpen: true))
+            {
+                byte[] bytes = Encoding.UTF8.GetBytes(script);
+                compressed.Write(bytes, 0, bytes.Length);
+            }
+            string payload = Convert.ToBase64String(buffer.ToArray());
+            string wrapper = "$stream = New-Object IO.MemoryStream(,[Convert]::FromBase64String('" + payload + "')); " +
+                "$gzip = New-Object IO.Compression.GZipStream($stream, [IO.Compression.CompressionMode]::Decompress); " +
+                "$reader = New-Object IO.StreamReader($gzip, [Text.Encoding]::UTF8); " +
+                "try { & ([ScriptBlock]::Create($reader.ReadToEnd())) } finally { $reader.Dispose(); $stream.Dispose() }";
+            return Convert.ToBase64String(Encoding.Unicode.GetBytes(wrapper));
         }
 
         private static async Task<LatestReleaseInfo> FetchLatestReleaseInfoAsync()

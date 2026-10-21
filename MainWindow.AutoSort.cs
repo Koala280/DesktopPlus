@@ -1807,7 +1807,7 @@ namespace DesktopPlus
 
         private Task RunDesktopSortAsync(bool showResultMessage)
         {
-            if (_desktopAutoSortInProgress || _isExitPending || IsExiting)
+            if (_desktopAutoSortInProgress || _isManualBackupInProgress || _isExitPending || IsExiting)
             {
                 return _desktopAutoSortTask;
             }

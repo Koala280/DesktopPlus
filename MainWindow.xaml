@@ -1236,7 +1236,7 @@
                                             <RowDefinition Height="Auto"/>
                                         </Grid.RowDefinitions>
 
-                                        <StackPanel Orientation="Horizontal">
+                                        <WrapPanel>
                                             <Button x:Name="CreateManualBackupButton"
                                                     Content="{DynamicResource Loc.BackupsCreate}"
                                                     Style="{StaticResource PrimaryButton}"
@@ -1245,7 +1245,12 @@
                                                     Style="{StaticResource GhostButton}"
                                                     Margin="8,0,0,0"
                                                     Click="RefreshBackups_Click"/>
-                                        </StackPanel>
+                                            <Button x:Name="BackupDeleteSelectedButton"
+                                                    Content="{DynamicResource Loc.BackupsDelete}"
+                                                    Style="{StaticResource DangerButton}"
+                                                    Margin="8,0,0,0"
+                                                    Click="DeleteSelectedBackup_Click"/>
+                                        </WrapPanel>
 
                                         <Grid Grid.Row="1" Margin="0,12,0,10">
                                             <TextBlock x:Name="BackupsEmptyText"
@@ -1400,11 +1405,6 @@
                                                         Content="{DynamicResource Loc.BackupsRestore}"
                                                         Style="{StaticResource PrimaryButton}"
                                                         Click="RestoreSelectedBackup_Click"/>
-                                                <Button x:Name="BackupDeleteSelectedButton"
-                                                        Content="{DynamicResource Loc.BackupsDelete}"
-                                                        Style="{StaticResource DangerButton}"
-                                                        Margin="8,0,0,0"
-                                                        Click="DeleteSelectedBackup_Click"/>
                                             </StackPanel>
                                         </StackPanel>
                                     </Grid>

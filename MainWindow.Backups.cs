@@ -13,19 +13,18 @@ namespace DesktopPlus
 {
     public partial class MainWindow
     {
-        private const int MaxAutomaticBackupsPerKind = 10;
         private bool _isManualBackupInProgress;
+        private static bool _backupCleanupScheduled;
 
         private static bool TryCreateManagedBackup(
             string backupKind,
             string reason,
             string displayName,
-            bool includeApplication,
-            bool captureAutoSortStorage,
-            IReadOnlyCollection<string>? desktopItems,
             out string backupArchivePath,
             out string errorMessage,
-            string? preserveArchivePath = null)
+            string? preserveArchivePath = null,
+            string targetVersion = "",
+            IReadOnlyCollection<DesktopSortMovedItem>? desktopMoves = null)
         {
             backupArchivePath = string.Empty;
             errorMessage = string.Empty;
@@ -33,205 +32,88 @@ namespace DesktopPlus
             string normalizedKind = string.IsNullOrWhiteSpace(backupKind)
                 ? "manual"
                 : backupKind.Trim().ToLowerInvariant();
-            string currentVersion = NormalizeVersionToken(GetInstalledVersionText());
-            if (string.IsNullOrWhiteSpace(currentVersion))
-            {
-                currentVersion = "current";
-            }
-
             string timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff");
             string archiveFileName =
-                $"DesktopPlus-backup-{SanitizeVersionTokenForFileName(normalizedKind)}-{timestamp}.zip";
+                $"DesktopPlus-backup-{SanitizeVersionTokenForFileName(normalizedKind)}-{timestamp}-{Guid.NewGuid():N}.zip";
             string archivePath = Path.Combine(UpdateBackupsDirectory, archiveFileName);
-            string stagingDirectory = Path.Combine(UpdateBackupsDirectory, $"staging-{Guid.NewGuid():N}");
+            string pendingPath = Path.Combine(UpdateBackupsDirectory, $".pending-{Guid.NewGuid():N}.zip");
 
-            try
+            lock (BackupRetention.SyncRoot)
             {
-                Directory.CreateDirectory(UpdateBackupsDirectory);
-                Directory.CreateDirectory(stagingDirectory);
-
-                var includedEntries = new List<string>();
-                var desktopManifestItems = new List<DesktopBackupItemManifest>();
-                string? installDirectory = GetCurrentInstallDirectory();
-
-                if (includeApplication &&
-                    !string.IsNullOrWhiteSpace(installDirectory) &&
-                    Directory.Exists(installDirectory))
+                try
                 {
-                    CopyDirectoryRecursive(installDirectory, Path.Combine(stagingDirectory, "app"));
-                    includedEntries.Add(installDirectory);
+                    Directory.CreateDirectory(UpdateBackupsDirectory);
+                    WriteReferenceBackupArchive(pendingPath, settingsFilePath, CustomLanguageFolderPath,
+                        GetDesktopDirectoryPaths(), GetAutoSortStorageRootPathForBackup(),
+                        normalizedKind, reason, displayName, targetVersion, desktopMoves);
+                    File.Move(pendingPath, archivePath);
+                    BackupRetention.Maintain(UpdateBackupsDirectory, archivePath, preserveArchivePath);
+                    backupArchivePath = archivePath;
+                    return true;
                 }
-
-                if (File.Exists(settingsFilePath))
+                catch (Exception ex)
                 {
-                    string settingsTargetDirectory = Path.Combine(stagingDirectory, "user-data", "roaming");
-                    Directory.CreateDirectory(settingsTargetDirectory);
-                    File.Copy(
-                        settingsFilePath,
-                        Path.Combine(settingsTargetDirectory, Path.GetFileName(settingsFilePath)),
-                        overwrite: true);
-                    includedEntries.Add(settingsFilePath);
+                    Debug.WriteLine($"Failed to create {normalizedKind} backup: {ex}");
+                    errorMessage = ex.Message;
+                    return false;
                 }
-
-                if (Directory.Exists(CustomLanguageFolderPath))
-                {
-                    string languageTarget = Path.Combine(
-                        stagingDirectory,
-                        "user-data",
-                        "roaming",
-                        "DesktopPlus",
-                        "Languages");
-                    CopyDirectoryRecursive(CustomLanguageFolderPath, languageTarget);
-                    includedEntries.Add(CustomLanguageFolderPath);
-                }
-
-                string autoSortStorageRootPath = GetAutoSortStorageRootPathForBackup();
-                if (captureAutoSortStorage && Directory.Exists(autoSortStorageRootPath))
-                {
-                    CopyDirectoryRecursive(
-                        autoSortStorageRootPath,
-                        Path.Combine(stagingDirectory, "user-data", "local", "AutoSortStorage"));
-                    includedEntries.Add(autoSortStorageRootPath);
-                }
-
-                int desktopItemIndex = 0;
-                foreach (string sourcePath in (desktopItems ?? Array.Empty<string>())
-                    .Where(path => !string.IsNullOrWhiteSpace(path))
-                    .Distinct(StringComparer.OrdinalIgnoreCase))
-                {
-                    bool isDirectory = Directory.Exists(sourcePath);
-                    bool isFile = File.Exists(sourcePath);
-                    if (!isDirectory && !isFile)
-                    {
-                        continue;
-                    }
-
-                    string itemName = Path.GetFileName(
-                        sourcePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-                    if (string.IsNullOrWhiteSpace(itemName))
-                    {
-                        itemName = $"item-{desktopItemIndex:D4}";
-                    }
-
-                    string archiveRelativePath = Path.Combine(
-                        "user-data",
-                        "desktop-items",
-                        desktopItemIndex.ToString("D4"),
-                        itemName);
-                    string targetPath = Path.Combine(stagingDirectory, archiveRelativePath);
-                    Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-
-                    if (isDirectory)
-                    {
-                        CopyDirectoryRecursive(sourcePath, targetPath);
-                    }
-                    else
-                    {
-                        File.Copy(sourcePath, targetPath, overwrite: true);
-                    }
-
-                    desktopManifestItems.Add(new DesktopBackupItemManifest
-                    {
-                        OriginalPath = Path.GetFullPath(sourcePath),
-                        ArchiveRelativePath = archiveRelativePath.Replace('\\', '/')
-                    });
-                    includedEntries.Add(sourcePath);
-                    desktopItemIndex++;
-                }
-
-                var manifest = new UpdateBackupManifest
-                {
-                    SchemaVersion = 2,
-                    BackupKind = normalizedKind,
-                    Reason = reason ?? string.Empty,
-                    DisplayName = displayName ?? string.Empty,
-                    CurrentVersion = currentVersion,
-                    TargetVersion = string.Empty,
-                    CreatedUtc = DateTime.UtcNow.ToString("O"),
-                    SourceExecutablePath = Environment.ProcessPath ?? string.Empty,
-                    SourceInstallDirectory = installDirectory ?? string.Empty,
-                    CapturedAutoSortStorage = captureAutoSortStorage,
-                    IncludedEntries = includedEntries,
-                    DesktopItems = desktopManifestItems
-                };
-
-                File.WriteAllText(
-                    Path.Combine(stagingDirectory, "manifest.json"),
-                    JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
-                File.WriteAllText(
-                    Path.Combine(stagingDirectory, "RESTORE.txt"),
-                    BuildUpdateBackupRestoreInstructions(archiveFileName));
-
-                TryDeleteFile(archivePath);
-                ZipFile.CreateFromDirectory(
-                    stagingDirectory,
-                    archivePath,
-                    CompressionLevel.Optimal,
-                    includeBaseDirectory: false);
-
-                if (!string.Equals(normalizedKind, "manual", StringComparison.OrdinalIgnoreCase))
-                {
-                    PruneManagedBackups(normalizedKind, archivePath, preserveArchivePath);
-                }
-
-                backupArchivePath = archivePath;
-                Debug.WriteLine($"Created {normalizedKind} backup: {archivePath}");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Failed to create {normalizedKind} backup: {ex}");
-                errorMessage = ex.Message;
-                TryDeleteFile(archivePath);
-                return false;
-            }
-            finally
-            {
-                TryDeleteDirectory(stagingDirectory);
+                finally { TryDeleteFile(pendingPath); }
             }
         }
 
-        private static void PruneManagedBackups(string backupKind, string keepArchivePath, string? preserveArchivePath = null)
+        internal static void WriteReferenceBackupArchive(
+            string archivePath, string settingsPath, string languageDirectory,
+            IReadOnlyList<string> desktopRoots, string storageRoot,
+            string backupKind, string reason, string displayName, string targetVersion = "",
+            IReadOnlyCollection<DesktopSortMovedItem>? desktopMoves = null)
         {
-            try
+            var moves = desktopMoves?.ToList() ?? new List<DesktopSortMovedItem>();
+            var manifest = new UpdateBackupManifest
             {
-                if (!Directory.Exists(UpdateBackupsDirectory))
+                SchemaVersion = 4,
+                BackupKind = backupKind,
+                Reason = reason,
+                DisplayName = displayName,
+                CurrentVersion = NormalizeVersionToken(GetInstalledVersionText()),
+                TargetVersion = targetVersion,
+                CreatedUtc = DateTime.UtcNow.ToString("O"),
+                SourceExecutablePath = Environment.ProcessPath ?? string.Empty,
+                SourceInstallDirectory = GetCurrentInstallDirectory() ?? string.Empty,
+                UsesFileReferences = true,
+                FileReferences = BackupFileReferences.Capture(desktopRoots, storageRoot),
+                DesktopMoves = moves
+            };
+            using ZipArchive archive = ZipFile.Open(archivePath, ZipArchiveMode.Create);
+            if (File.Exists(settingsPath))
+            {
+                archive.CreateEntryFromFile(settingsPath, "user-data/roaming/DesktopPlus_Settings.json", CompressionLevel.Fastest);
+                manifest.IncludedEntries.Add(settingsPath);
+            }
+            if (Directory.Exists(languageDirectory))
+            {
+                foreach (string path in Directory.EnumerateFiles(languageDirectory, "*.json", SearchOption.TopDirectoryOnly))
                 {
-                    return;
-                }
-
-                string pattern = $"DesktopPlus-backup-{backupKind}-*.zip";
-                var backupFiles = Directory
-                    .EnumerateFiles(UpdateBackupsDirectory, pattern, SearchOption.TopDirectoryOnly)
-                    .Select(path => new FileInfo(path))
-                    .ToList();
-                bool IsProtected(FileInfo file) =>
-                    string.Equals(file.FullName, keepArchivePath, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(file.FullName, preserveArchivePath, StringComparison.OrdinalIgnoreCase);
-                int protectedCount = backupFiles.Count(IsProtected);
-                foreach (FileInfo backup in backupFiles
-                    .Where(file => !IsProtected(file))
-                    .OrderByDescending(info => info.LastWriteTimeUtc)
-                    .Skip(Math.Max(0, MaxAutomaticBackupsPerKind - protectedCount)))
-                {
-                    TryDeleteFile(backup.FullName);
+                    archive.CreateEntryFromFile(path, "user-data/roaming/DesktopPlus/Languages/" + Path.GetFileName(path), CompressionLevel.Fastest);
+                    manifest.IncludedEntries.Add(path);
                 }
             }
-            catch
+            using (var writer = new StreamWriter(archive.CreateEntry("manifest.json", CompressionLevel.Fastest).Open()))
             {
+                writer.Write(JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
+            }
+            using (var writer = new StreamWriter(archive.CreateEntry("RESTORE.txt", CompressionLevel.Fastest).Open()))
+            {
+                writer.Write(BuildUpdateBackupRestoreInstructions(Path.GetFileName(archivePath)));
             }
         }
 
-        private bool EnsureCriticalBackup(string reason, bool captureAutoSortStorage = false)
+        private bool EnsureCriticalBackup(string reason)
         {
             SaveSettingsImmediate();
             bool created = TryCreateManagedBackup(
                 "critical",
                 reason,
                 reason,
-                includeApplication: false,
-                captureAutoSortStorage,
-                desktopItems: null,
                 out _,
                 out string errorMessage);
             if (created)
@@ -254,58 +136,8 @@ namespace DesktopPlus
             string displayName,
             out string errorMessage)
         {
-            string archivePath = Path.Combine(UpdateBackupsDirectory,
-                $"DesktopPlus-backup-auto-sort-{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}-{Guid.NewGuid():N}.zip");
-            errorMessage = string.Empty;
-            try
-            {
-                Directory.CreateDirectory(UpdateBackupsDirectory);
-                WriteDesktopAutoSortBackupArchive(archivePath, settingsFilePath, desktopMoves, reason, displayName);
-                PruneManagedBackups("auto-sort", archivePath);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Failed to create auto-sort move backup: {ex}");
-                errorMessage = ex.Message;
-                TryDeleteFile(archivePath);
-                return false;
-            }
-        }
-
-        internal static void WriteDesktopAutoSortBackupArchive(
-            string archivePath,
-            string settingsSnapshotPath,
-            IReadOnlyCollection<DesktopSortMovedItem> desktopMoves,
-            string reason,
-            string displayName)
-        {
-            using ZipArchive archive = ZipFile.Open(archivePath, ZipArchiveMode.Create);
-            archive.CreateEntryFromFile(settingsSnapshotPath,
-                "user-data/roaming/DesktopPlus_Settings.json", CompressionLevel.Fastest);
-            var manifest = new UpdateBackupManifest
-            {
-                SchemaVersion = 3,
-                BackupKind = "auto-sort",
-                Reason = reason,
-                DisplayName = displayName,
-                CurrentVersion = NormalizeVersionToken(GetInstalledVersionText()),
-                CreatedUtc = DateTime.UtcNow.ToString("O"),
-                SourceExecutablePath = Environment.ProcessPath ?? string.Empty,
-                SourceInstallDirectory = GetCurrentInstallDirectory() ?? string.Empty,
-                IncludedEntries = new List<string> { settingsSnapshotPath },
-                DesktopMoves = desktopMoves.ToList()
-            };
-            using (var writer = new StreamWriter(archive.CreateEntry("manifest.json", CompressionLevel.Fastest).Open()))
-            {
-                writer.Write(JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
-            }
-            using (var writer = new StreamWriter(archive.CreateEntry("RESTORE.txt", CompressionLevel.Fastest).Open()))
-            {
-                writer.WriteLine("DesktopPlus auto-sort move history (no desktop file copies).");
-                writer.WriteLine("Use Restore in the Backups tab to move existing sorted items back to the desktop.");
-                writer.WriteLine("Items deleted after sorting cannot be recovered from this move history.");
-            }
+            return TryCreateManagedBackup("auto-sort", reason, displayName,
+                out _, out errorMessage, desktopMoves: desktopMoves);
         }
 
         private void RefreshBackupsTab(string? preferredArchivePath = null)
@@ -313,6 +145,12 @@ namespace DesktopPlus
             if (BackupsList == null)
             {
                 return;
+            }
+
+            if (!_backupCleanupScheduled)
+            {
+                _backupCleanupScheduled = true;
+                _ = Task.Run(() => BackupRetention.CleanAbandonedWorkDirectories(UpdateBackupsDirectory));
             }
 
             IReadOnlyList<UpdateBackupInfo> backups = LoadAvailableUpdateBackups();
@@ -332,8 +170,10 @@ namespace DesktopPlus
         private void UpdateBackupDetails(UpdateBackupInfo? backup)
         {
             bool hasSelection = backup != null;
-            BackupRestoreSelectedButton.IsEnabled = hasSelection && !_desktopAutoSortInProgress;
-            BackupDeleteSelectedButton.IsEnabled = hasSelection;
+            bool busy = _desktopAutoSortInProgress || _isManualBackupInProgress;
+            BackupRestoreSelectedButton.IsEnabled = hasSelection && backup!.CanRestore && !busy;
+            BackupDeleteSelectedButton.IsEnabled = hasSelection && !busy;
+            CreateManualBackupButton.IsEnabled = !busy;
             BackupNoSelectionText.Visibility = hasSelection ? Visibility.Collapsed : Visibility.Visible;
             BackupDetailsPanel.Visibility = hasSelection ? Visibility.Visible : Visibility.Collapsed;
 
@@ -356,6 +196,7 @@ namespace DesktopPlus
             if (backup.ContainsAutoSortStorage) includes.Add(GetString("Loc.BackupRestoreContainsAutoSort"));
             if (backup.ContainsDesktopSnapshot) includes.Add(GetString("Loc.BackupsContainsDesktop"));
             if (backup.ContainsDesktopMoveHistory) includes.Add(GetString("Loc.BackupsContainsDesktopMoves"));
+            if (backup.ContainsFileReferences) includes.Add(GetString("Loc.BackupsContainsFileReferences"));
             BackupDetailsIncludesText.Text = includes.Count == 0
                 ? "-"
                 : string.Join(Environment.NewLine, includes.Select(item => "• " + item));
@@ -374,13 +215,14 @@ namespace DesktopPlus
 
         private async void CreateManualBackup_Click(object sender, RoutedEventArgs e)
         {
-            if (_isManualBackupInProgress)
+            if (_isManualBackupInProgress || _desktopAutoSortInProgress)
             {
                 return;
             }
 
             _isManualBackupInProgress = true;
             CreateManualBackupButton.IsEnabled = false;
+            UpdateBackupDetails(BackupsList.SelectedItem as UpdateBackupInfo);
             BackupOperationStatusText.Text = GetString("Loc.BackupsCreating");
             SaveSettingsImmediate();
             string manualReason = GetString("Loc.BackupsReasonManual");
@@ -394,9 +236,6 @@ namespace DesktopPlus
                         "manual",
                         manualReason,
                         manualDisplayName,
-                        includeApplication: true,
-                        captureAutoSortStorage: true,
-                        desktopItems: null,
                         out string archivePath,
                         out string errorMessage);
                     return (success, archivePath, errorMessage);
@@ -416,7 +255,7 @@ namespace DesktopPlus
             finally
             {
                 _isManualBackupInProgress = false;
-                CreateManualBackupButton.IsEnabled = true;
+                UpdateBackupDetails(BackupsList.SelectedItem as UpdateBackupInfo);
             }
         }
 
@@ -440,7 +279,7 @@ namespace DesktopPlus
 
         private void RestoreBackup(UpdateBackupInfo backup)
         {
-            if (_desktopAutoSortInProgress)
+            if (_desktopAutoSortInProgress || _isManualBackupInProgress || !backup.CanRestore)
             {
                 return;
             }
@@ -458,15 +297,14 @@ namespace DesktopPlus
                 return;
             }
 
+            SaveSettingsImmediate();
             if (!TryCreateManagedBackup(
                 "critical",
                 GetString("Loc.BackupsReasonBeforeRestore"),
                 GetString("Loc.BackupsNameBeforeRestore"),
-                includeApplication: !backup.ContainsDesktopMoveHistory,
-                captureAutoSortStorage: !backup.ContainsDesktopMoveHistory,
-                desktopItems: null,
                 out _,
-                out string safetyError))
+                out string safetyError,
+                preserveArchivePath: backup.ArchivePath))
             {
                 System.Windows.MessageBox.Show(
                     string.Format(GetString("Loc.BackupsSafetyFailed"), safetyError),
@@ -491,6 +329,7 @@ namespace DesktopPlus
 
         private void DeleteSelectedBackup_Click(object sender, RoutedEventArgs e)
         {
+            if (_desktopAutoSortInProgress || _isManualBackupInProgress) return;
             if (BackupsList.SelectedItem is not UpdateBackupInfo backup)
             {
                 return;
@@ -508,7 +347,7 @@ namespace DesktopPlus
 
             try
             {
-                File.Delete(backup.ArchivePath);
+                lock (BackupRetention.SyncRoot) { File.Delete(backup.ArchivePath); }
                 BackupOperationStatusText.Text = GetString("Loc.BackupsDeleted");
                 RefreshBackupsTab();
             }

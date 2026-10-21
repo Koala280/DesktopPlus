@@ -9,35 +9,152 @@ namespace DesktopPlus.Tests;
 
 public sealed class UninstallBackupRestoreTests
 {
-    [Fact]
-    public void UninstallSafetyBackup_IncludesDesktopItemsThatWillBeOverwritten()
+    [Theory]
+    [InlineData("manual")]
+    [InlineData("update")]
+    [InlineData("critical")]
+    [InlineData("auto-sort")]
+    public void ReferenceBackups_NeverReadOrCopyUserFileContents(string kind)
     {
         using var data = new RestoreFixture();
-        data.Write("desktop/file.txt", "current desktop contents");
-        string archivePath = data.CreateArchive(new
-        {
-            DesktopItems = new[] { new
-            {
-                OriginalPath = data.PathFor("desktop/file.txt"),
-                ArchiveRelativePath = "user-data/desktop-items/0000/file.txt"
-            } }
-        }, new Dictionary<string, string> { ["user-data/desktop-items/0000/file.txt"] = "old contents" });
+        data.Write("settings.json", "{\"Language\":\"de\"}");
+        data.Write("desktop/folder/large.bin", "contents");
+        data.Write("storage/Files/stored.bin", "contents");
+        using var lockedDesktopFile = new FileStream(data.PathFor("desktop/folder/large.bin"), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        using var lockedStoredFile = new FileStream(data.PathFor("storage/Files/stored.bin"), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        lockedDesktopFile.SetLength(128 * 1024 * 1024);
+        lockedStoredFile.SetLength(128 * 1024 * 1024);
 
-        Assert.Equal(new[] { data.PathFor("desktop/file.txt") },
-            MainWindow.ReadDesktopItemsForUninstallSafety(archivePath, new[] { data.PathFor("desktop") }));
+        string path = data.CreateReferenceArchive(kind);
+
+        using var archive = ZipFile.OpenRead(path);
+        Assert.Equal(3, archive.Entries.Count);
+        Assert.True(new FileInfo(path).Length < 16 * 1024);
+        using var manifest = JsonDocument.Parse(archive.GetEntry("manifest.json")!.Open());
+        Assert.True(manifest.RootElement.GetProperty("UsesFileReferences").GetBoolean());
+        Assert.Equal(2, manifest.RootElement.GetProperty("FileReferences").GetArrayLength());
+        Assert.Empty(manifest.RootElement.GetProperty("DesktopItems").EnumerateArray());
+        Assert.False(manifest.RootElement.GetProperty("CapturedAutoSortStorage").GetBoolean());
     }
 
     [Fact]
-    public void UninstallSafetyBackup_RejectsDesktopItemsOutsideDesktop()
+    public async Task ReferenceRestore_ContinuesAfterDeletionConflictsExternalMovesAndLockedFiles()
     {
         using var data = new RestoreFixture();
-        string archivePath = data.CreateArchive(new
-        {
-            DesktopItems = new[] { new { OriginalPath = data.PathFor("unrelated/file.txt") } }
-        }, new Dictionary<string, string>());
+        data.Write("settings.json", "settings before sorting");
+        data.Write("desktop/folder/child.txt", "folder contents");
+        foreach (string name in new[] { "renamed", "deleted", "conflict", "external", "locked" })
+            data.Write("desktop/" + name + ".txt", name);
+        string archive = data.CreateReferenceArchive();
+        data.Write("settings.json", "settings after sorting");
+        Directory.CreateDirectory(data.PathFor("storage/Files"));
+        Directory.Move(data.PathFor("desktop/folder"), data.PathFor("storage/Files/renamed-folder"));
+        File.Move(data.PathFor("desktop/renamed.txt"), data.PathFor("storage/Files/new-name.txt"));
+        File.Delete(data.PathFor("desktop/deleted.txt"));
+        File.Move(data.PathFor("desktop/conflict.txt"), data.PathFor("storage/Files/conflict.txt"));
+        data.Write("desktop/conflict.txt", "new unrelated file");
+        File.Move(data.PathFor("desktop/external.txt"), data.PathFor("external.txt"));
+        File.Move(data.PathFor("desktop/locked.txt"), data.PathFor("storage/Files/locked.txt"));
+        using var locked = new FileStream(data.PathFor("storage/Files/locked.txt"), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
 
-        Assert.Throws<InvalidDataException>(() => MainWindow.ReadDesktopItemsForUninstallSafety(
-            archivePath, new[] { data.PathFor("desktop") }));
+        var result = await data.RestoreAsync(archive);
+
+        Assert.True(result.ExitCode == 0, result.Error);
+        Assert.Equal("settings before sorting", data.Read("settings.json"));
+        Assert.Equal("folder contents", data.Read("desktop/folder/child.txt"));
+        Assert.Equal("renamed", data.Read("desktop/renamed.txt"));
+        Assert.False(File.Exists(data.PathFor("desktop/deleted.txt")));
+        Assert.Equal("new unrelated file", data.Read("desktop/conflict.txt"));
+        Assert.Equal("conflict", data.Read("storage/Files/conflict.txt"));
+        Assert.Equal("external", data.Read("external.txt"));
+        Assert.True(File.Exists(data.PathFor("storage/Files/locked.txt")));
+        string report = data.Read("DesktopPlus-last-restore.txt");
+        Assert.Contains("Skipped items: 4", report);
+        Assert.Contains("deleted.txt", report);
+        Assert.Contains("conflict.txt", report);
+        Assert.Contains("external.txt", report);
+        Assert.Contains("locked.txt", report);
+        Assert.True(File.Exists(archive));
+    }
+
+    [Fact]
+    public async Task ReferenceRestore_DoesNotSubstituteAnUnrelatedFileWithTheSameName()
+    {
+        using var data = new RestoreFixture();
+        data.Write("desktop/file.txt", "original");
+        string archive = data.CreateReferenceArchive();
+        // Keep the original ID allocated so a replacement cannot reuse it in this test.
+        File.Move(data.PathFor("desktop/file.txt"), data.PathFor("outside.txt"));
+        data.Write("storage/Files/file.txt", "unrelated replacement");
+
+        var result = await data.RestoreAsync(archive);
+
+        Assert.True(result.ExitCode == 0, result.Error);
+        Assert.False(File.Exists(data.PathFor("desktop/file.txt")));
+        Assert.Equal("unrelated replacement", data.Read("storage/Files/file.txt"));
+        Assert.Equal("original", data.Read("outside.txt"));
+        Assert.Contains("Skipped items: 1", data.Read("DesktopPlus-last-restore.txt"));
+    }
+
+    [Fact]
+    public async Task ReferenceRestore_PreservesEditsAndHandlesUnicodeAndLiteralPathCharacters()
+    {
+        using var data = new RestoreFixture();
+        const string original = "desktop/Überblick [1] O'Brien $.txt";
+        data.Write(original, "original contents");
+        string archive = data.CreateReferenceArchive();
+        Directory.CreateDirectory(data.PathFor("storage/Files [1]"));
+        string moved = data.PathFor("storage/Files [1]/renamed.txt");
+        File.Move(data.PathFor(original), moved);
+        File.WriteAllText(moved, "edited contents after backup");
+
+        var result = await data.RestoreAsync(archive);
+
+        Assert.True(result.ExitCode == 0, result.Error);
+        Assert.Equal("edited contents after backup", data.Read(original));
+        Assert.Contains("Skipped items: 0", data.Read("DesktopPlus-last-restore.txt"));
+    }
+
+    [Fact]
+    public async Task ReferenceRestore_IsIndependentAndCanRestoreInEitherDirectionRepeatedly()
+    {
+        using var data = new RestoreFixture();
+        data.Write("desktop/file.txt", "original");
+        string desktopArchive = data.CreateReferenceArchive();
+        Directory.CreateDirectory(data.PathFor("storage/Files"));
+        File.Move(data.PathFor("desktop/file.txt"), data.PathFor("storage/Files/sorted.txt"));
+        string sortedArchive = data.CreateReferenceArchive();
+        string extraArchive = data.CreateReferenceArchive();
+        File.Delete(extraArchive);
+
+        var first = await data.RestoreAsync(desktopArchive);
+        Assert.True(first.ExitCode == 0, first.Error);
+        Assert.Equal("original", data.Read("desktop/file.txt"));
+        var second = await data.RestoreAsync(sortedArchive);
+        Assert.True(second.ExitCode == 0, second.Error);
+        Assert.Equal("original", data.Read("storage/Files/sorted.txt"));
+        var third = await data.RestoreAsync(sortedArchive);
+        Assert.True(third.ExitCode == 0, third.Error);
+        Assert.Equal("original", data.Read("storage/Files/sorted.txt"));
+        Assert.Contains("Skipped items: 0", data.Read("DesktopPlus-last-restore.txt"));
+    }
+
+    [Fact]
+    public async Task ReferenceRestore_RejectsDestinationsOutsideManagedDirectories()
+    {
+        using var data = new RestoreFixture();
+        data.Write("settings.json", "current settings");
+        string archive = data.CreateArchive(new
+        {
+            UsesFileReferences = true,
+            FileReferences = new[] { new { Path = data.PathFor("unrelated/file.txt"), FileId = "fake" } }
+        }, new Dictionary<string, string> { ["user-data/roaming/DesktopPlus_Settings.json"] = "old settings" });
+
+        var result = await data.RestoreAsync(archive);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("Invalid file reference", result.Error);
+        Assert.Equal("current settings", data.Read("settings.json"));
     }
 
     [Fact]
@@ -76,8 +193,9 @@ public sealed class UninstallBackupRestoreTests
         Assert.Equal("restored language", data.Read("languages/new.json"));
         Assert.False(File.Exists(data.PathFor("languages/old.json")));
         Assert.Equal("restored storage", data.Read("storage/new.txt"));
-        Assert.False(File.Exists(data.PathFor("storage/old.txt")));
-        Assert.Equal("restored desktop file", data.Read("desktop/folder/restored.txt"));
+        Assert.Equal("old storage", data.Read("storage/old.txt"));
+        Assert.Equal("old desktop snapshot", data.Read("desktop/folder/old.txt"));
+        Assert.False(File.Exists(data.PathFor("desktop/folder/restored.txt")));
         Assert.True(File.Exists(archivePath));
         Assert.False(Directory.Exists(data.PathFor("restore-work")));
     }
@@ -177,6 +295,14 @@ public sealed class UninstallBackupRestoreTests
             return path;
         }
 
+        public string CreateReferenceArchive(string kind = "manual")
+        {
+            string path = PathFor("DesktopPlus-backup-" + kind + "-" + Guid.NewGuid().ToString("N") + ".zip");
+            MainWindow.WriteReferenceBackupArchive(path, PathFor("settings.json"), PathFor("languages"),
+                new[] { PathFor("desktop") }, PathFor("storage"), kind, "test", "test");
+            return path;
+        }
+
         public async Task<(int ExitCode, string Error)> RestoreAsync(string archivePath)
         {
             string script = MainWindow.BuildBackupRestoreScript(
@@ -202,7 +328,9 @@ public sealed class UninstallBackupRestoreTests
             start.ArgumentList.Add("-NoProfile");
             start.ArgumentList.Add("-NonInteractive");
             start.ArgumentList.Add("-EncodedCommand");
-            start.ArgumentList.Add(Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
+            string encoded = MainWindow.EncodeBackupRestoreScript(script);
+            Assert.True(encoded.Length < 30_000, "Restore helper exceeds the Windows command-line limit.");
+            start.ArgumentList.Add(encoded);
             using Process process = Process.Start(start)!;
             Task<string> error = process.StandardError.ReadToEndAsync();
             Task<string> output = process.StandardOutput.ReadToEndAsync();

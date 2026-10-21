@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.11] - 2026-10-21
+
+### Changed
+
+- All backup types now save settings, custom languages and file position references without copying program files or user file contents. A shared limit keeps five archives in total; backups can be deleted directly beside the list, and abandoned staging copies from older versions are cleaned in the background.
+- Reference restores identify existing files and folders after renames, preserve occupied destinations, and report missing, inaccessible or ambiguous items while continuing with other items and settings. Each backup is independent of the other archives.
+
 ## [1.6.10] - 2026-10-03
 
 ### Fixed
