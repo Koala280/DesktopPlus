@@ -118,11 +118,105 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
+        PANEL_PALETTES.with(|palettes| palettes.borrow_mut().remove(&self.hwnd));
+        glass::release(self.hwnd as _);
         unsafe {
+            chrome::release(self.hwnd as _);
+            chrome::release(self.app.main);
             DestroyWindow(self.hwnd as _);
             DestroyWindow(self.app.main);
         }
         EVENTS.with(|events| events.borrow_mut().clear());
+    }
+}
+
+#[test]
+fn panel_theme_switch_replaces_colors_in_nested_controls_without_tinting_main() {
+    let mut fixture = Fixture::new(false, "both");
+    fixture.app.settings.appearance.glass_mode = crate::model::GlassMode::Solid;
+    let panel = fixture.hwnd as HWND;
+    let body = child(panel, "STATIC", "", 801, 0);
+    let label = child(body, "STATIC", "Theme", 2000, 0);
+    let owned = unsafe {
+        CreateWindowExW(
+            0,
+            wide("STATIC").as_ptr(),
+            null(),
+            WS_POPUP,
+            0,
+            0,
+            200,
+            100,
+            panel,
+            null_mut(),
+            GetModuleHandleW(null()),
+            null(),
+        )
+    };
+    assert!(!owned.is_null());
+    let owned_body = child(owned, "STATIC", "", 801, 0);
+    let global = with_palette(fixture.app.main, |p| (p.background, p.accent));
+    fixture.app.settings.presets = vec![
+        serde_json::json!({"Name": "Forest", "Settings": {
+            "BackgroundColor": "#103020", "HeaderColor": "#205030", "AccentColor": "#80EEA0"
+        }}),
+        serde_json::json!({"Name": "Paper", "Settings": {
+            "BackgroundColor": "#FAF0E0", "HeaderColor": "#E0D0C0", "AccentColor": "#904020"
+        }}),
+    ];
+    for (name, background, header, accent) in [
+        ("Forest", "#103020", "#205030", "#80EEA0"),
+        ("Paper", "#FAF0E0", "#E0D0C0", "#904020"),
+        ("Forest", "#103020", "#205030", "#80EEA0"),
+    ] {
+        for window in [panel, body, label] {
+            motion::color(window, 90, 0);
+        }
+        fixture.app.settings.windows[0].preset_name = name.into();
+        fixture.app.apply_panel_theme(fixture.hwnd);
+        for window in [panel, body, label, owned, owned_body] {
+            assert_eq!(
+                with_palette(window, |p| (p.background, p.surface, p.accent)),
+                (color(background, 0), color(header, 0), color(accent, 0)),
+                "{name}: {window:?} must use only the selected panel palette"
+            );
+        }
+        for window in [panel, body, label] {
+            assert_eq!(
+                motion::color(window, 90, color(accent, 0)),
+                color(accent, 0)
+            );
+        }
+        assert_eq!(
+            with_palette(fixture.app.main, |p| (p.background, p.accent)),
+            global
+        );
+    }
+    for name in ["", "Missing preset"] {
+        fixture.app.settings.windows[0].preset_name = name.into();
+        fixture.app.apply_panel_theme(fixture.hwnd);
+        for window in [panel, label, owned_body] {
+            assert_eq!(with_palette(window, |p| (p.background, p.accent)), global);
+        }
+    }
+    // A saved global appearance controls the main window; selecting a green
+    // panel preset must neither recolor it nor overwrite that saved setting.
+    fixture.app.settings.appearance.background_color = "#202327".into();
+    fixture.app.settings.windows[0].preset_name = "Forest".into();
+    fixture.app.apply_theme();
+    assert_eq!(
+        with_palette(fixture.app.main, |p| p.background),
+        color("#202327", 0)
+    );
+    assert_eq!(with_palette(label, |p| p.background), color("#103020", 0));
+    fixture.app.store.save(&fixture.app.settings).unwrap();
+    let saved = fixture.app.store.load(false).unwrap();
+    assert_eq!(saved.appearance.background_color, "#202327");
+    assert_eq!(saved.windows[0].preset_name, "Forest");
+    unsafe {
+        chrome::release(body);
+        chrome::release(owned);
+        DestroyWindow(owned);
     }
 }
 

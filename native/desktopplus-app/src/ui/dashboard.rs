@@ -13,6 +13,7 @@ pub const NAVIGATION: &[(u16, &str)] = &[
 ];
 pub const PREFERENCES: &[u16] = &[GENERAL, THEMES, SHORTCUTS];
 pub fn create(hwnd: HWND) {
+    titlebar::create(hwnd);
     child(hwnd, "STATIC", "Your workspace", TITLE, 0);
     child(hwnd, "STATIC", "Your desktop, organized.", SUBTITLE, 0);
     for (id, caption) in [(NEW_FOLDER, "+ Folder panel"), (NEW_LIST, "+ Pinned list")]
@@ -111,36 +112,52 @@ pub fn sidebar(width: i32) -> i32 {
     if width < 900 { 220 } else { 240 }
 }
 pub fn layout(hwnd: HWND, width: i32, height: i32) {
+    titlebar::layout(hwnd, width);
+    let top = titlebar::HEIGHT;
     let rail = sidebar(width);
     let left = rail + 28;
     let body = width - left - 28;
-    move_control(hwnd, TITLE, left, 30, body, 44);
-    move_control(hwnd, SUBTITLE, left + 2, 80, body - 4, 24);
+    move_control(hwnd, TITLE, left, top + 30, body, 44);
+    move_control(hwnd, SUBTITLE, left + 2, top + 80, body - 4, 24);
     let step = if height < 540 { 40 } else { 44 };
     for (i, (id, _)) in NAVIGATION.iter().enumerate() {
-        move_control(hwnd, *id as i32, 14, 124 + i as i32 * step, rail - 28, 40);
+        move_control(
+            hwnd,
+            *id as i32,
+            14,
+            top + 60 + i as i32 * step,
+            rail - 28,
+            40,
+        );
     }
     for command in PREFERENCES {
         move_control(
             hwnd,
             form_id(*command),
             rail + 4,
-            12,
+            top + 12,
             width - rail - 4,
-            height - 12,
+            height - top - 12,
         );
     }
     let card = (body - 14) / 2;
-    move_control(hwnd, NEW_FOLDER as i32, left, 128, card, 84);
+    move_control(hwnd, NEW_FOLDER as i32, left, top + 128, card, 84);
     move_control(
         hwnd,
         NEW_LIST as i32,
         left + card + 14,
-        128,
+        top + 128,
         body - card - 14,
         84,
     );
-    move_control(hwnd, LIST, left + 1, 278, body - 2, height - 338);
+    move_control(
+        hwnd,
+        LIST,
+        left + 1,
+        top + 278,
+        body - 2,
+        height - top - 338,
+    );
     move_control(hwnd, STATUS, left + 2, height - 40, body - 4, 24);
     for (index, w) in [(0, 180), (1, (body - 350).max(100)), (2, 54), (3, 108)] {
         unsafe {
@@ -165,37 +182,16 @@ pub fn paint(hwnd: HWND, dc: HDC, bounds: RECT) {
     let width = bounds.right * 96 / unsafe { GetDpiForWindow(hwnd) }.max(96) as i32;
     let height = bounds.bottom * 96 / unsafe { GetDpiForWindow(hwnd) }.max(96) as i32;
     let rail = sidebar(width);
+    let top = titlebar::HEIGHT;
     with_palette(hwnd, |p| {
         let rail_color = blend(p.background, p.surface, 55);
-        chrome::fill(dc, &area(hwnd, 0, 0, rail, height), rail_color);
-        chrome::fill(dc, &area(hwnd, rail, 0, 1, height), p.border);
-        chrome::rounded(
-            dc,
-            &area(hwnd, 20, 26, 34, 34),
-            chrome::scale(hwnd, 12),
-            p.accent,
-            p.accent,
-        );
-        chrome::label(
-            dc,
-            "\u{e8a9}",
-            area(hwnd, 20, 26, 34, 34),
-            chrome::font(hwnd, 3),
-            p.background,
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-        );
-        chrome::label(
-            dc,
-            "DesktopPlus",
-            area(hwnd, 64, 25, rail - 72, 36),
-            chrome::font(hwnd, 1),
-            p.text,
-            DT_VCENTER | DT_SINGLELINE,
-        );
+        chrome::fill(dc, &area(hwnd, 0, top, rail, height - top), rail_color);
+        chrome::fill(dc, &area(hwnd, rail, top, 1, height - top), p.border);
+        titlebar::paint(hwnd, dc, bounds);
         chrome::label(
             dc,
             &crate::locale::text("WORKSPACE"),
-            area(hwnd, 24, 92, rail - 40, 22),
+            area(hwnd, 24, top + 28, rail - 40, 22),
             chrome::font(hwnd, 0),
             p.muted,
             DT_VCENTER | DT_SINGLELINE,
@@ -207,7 +203,7 @@ pub fn paint(hwnd: HWND, dc: HDC, bounds: RECT) {
         chrome::label(
             dc,
             &crate::locale::text("Your panels"),
-            area(hwnd, rail + 28, 236, 180, 30),
+            area(hwnd, rail + 28, top + 236, 180, 30),
             chrome::font(hwnd, 1),
             p.text,
             DT_VCENTER | DT_SINGLELINE,
@@ -215,14 +211,20 @@ pub fn paint(hwnd: HWND, dc: HDC, bounds: RECT) {
         chrome::label(
             dc,
             &format!("{count} {}", crate::locale::text("panels")),
-            area(hwnd, width - 180, 236, 150, 30),
+            area(hwnd, width - 180, top + 236, 150, 30),
             chrome::font(hwnd, 0),
             p.muted,
             DT_RIGHT | DT_VCENTER | DT_SINGLELINE,
         );
         chrome::rounded(
             dc,
-            &area(hwnd, rail + 27, 277, width - rail - 54, height - 336),
+            &area(
+                hwnd,
+                rail + 27,
+                top + 277,
+                width - rail - 54,
+                height - top - 336,
+            ),
             chrome::scale(hwnd, 16),
             p.background,
             p.border,

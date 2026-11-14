@@ -8,6 +8,7 @@ struct Buffer {
     original: HGDIOBJ,
     width: i32,
     height: i32,
+    data: *mut u32,
 }
 impl Buffer {
     fn new(dc: HDC, width: i32, height: i32) -> Option<Self> {
@@ -44,6 +45,7 @@ impl Buffer {
                 original,
                 width,
                 height,
+                data: pixels.cast(),
             })
         }
     }
@@ -62,7 +64,7 @@ impl Drop for Buffer {
 }
 thread_local! { static POOL: RefCell<Vec<Buffer>> = const { RefCell::new(Vec::new()) }; }
 
-pub(super) fn paint(dc: HDC, bounds: RECT, draw: impl FnOnce(HDC)) {
+pub(super) fn paint(dc: HDC, bounds: RECT, glass: Option<glass::Paint>, draw: impl FnOnce(HDC)) {
     if dc.is_null() || bounds.right <= bounds.left || bounds.bottom <= bounds.top {
         return;
     }
@@ -106,6 +108,18 @@ pub(super) fn paint(dc: HDC, bounds: RECT, draw: impl FnOnce(HDC)) {
         SetWindowOrgEx(buffer.dc, area.left, area.top, null_mut());
         IntersectClipRect(buffer.dc, area.left, area.top, area.right, area.bottom);
         draw(buffer.dc);
+        if let Some(glass) = glass {
+            GdiFlush();
+            for y in 0..height as usize {
+                let row = std::slice::from_raw_parts_mut(
+                    buffer.data.add(y * buffer.width as usize),
+                    width as usize,
+                );
+                for pixel in row {
+                    *pixel = glass.pixel(*pixel);
+                }
+            }
+        }
         BitBlt(
             dc, area.left, area.top, width, height, buffer.dc, area.left, area.top, SRCCOPY,
         );

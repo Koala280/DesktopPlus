@@ -39,61 +39,114 @@ fn validate(command: u16, values: &[String]) -> Result<(), String> {
 }
 
 impl App {
-    pub(super) fn layout_builder(&mut self) -> Result<(), String> {
-        let panel_ids: Vec<_> = self
-            .settings
-            .windows
-            .iter()
-            .map(|panel| panel.panel_id.clone())
-            .collect();
-        let pages = vec![
-            form::Page {
-                name: "Theme",
-                fields: vec![
-                    Input::Choice(
-                        "Panel bar style (theme)".into(),
-                        HeaderStyle::captions(),
-                        self.settings.appearance.header_style.index(),
-                    ),
-                    Input::Check("Reset panel overrides to theme".into(), false),
-                ],
-            },
-            form::Page {
-                name: "Panels",
-                fields: self
-                    .settings
-                    .windows
-                    .iter()
-                    .map(|panel| {
-                        Input::Choice(
-                            panel.panel_title.clone(),
-                            HeaderStyle::panel_captions(),
-                            panel.header_style.map_or(0, |style| style.index() + 1),
-                        )
-                    })
-                    .collect(),
-            },
-        ];
+    pub(super) fn panel_layout_builder(&mut self, hwnd: usize) -> Result<(), String> {
+        let Some(index) = self.panel_index(hwnd) else {
+            return Ok(());
+        };
+        let mut editor =
+            layout_builder::Editor::new(&self.settings, Some(&self.settings.windows[index]));
+        let pages = std::mem::take(&mut editor.pages);
         if let Some(answer) = form::show(
-            self.main,
-            "Layout builder",
-            "Choose a theme style or a different style for each panel.",
+            hwnd as _,
+            "Panel appearance",
+            &crate::locale::text(
+                "Inherit from theme, or customize this panel. Blank fields follow the theme.",
+            ),
             pages,
-            &|_| Ok(()),
+            &|values| editor.validate(values),
         ) {
-            apply_header_styles(&mut self.settings, &panel_ids, &answer.values);
+            editor.apply_panel(&mut self.settings.windows[index], &answer.values);
             self.apply_theme();
-            // Keep any open appearance draft in sync without discarding its other fields.
-            form::choices(
-                control(self.main, dashboard::form_id(THEMES)),
-                6,
-                HeaderStyle::captions(),
-                self.settings.appearance.header_style.index(),
-            );
+            self.refresh(hwnd);
             self.changed();
         }
         Ok(())
     }
+    pub(super) fn layout_builder(&mut self) -> Result<(), String> {
+        let mut draft = self.settings.clone();
+        loop {
+            let mut editor = layout_builder::Editor::new(&draft, None);
+            editor.pages.push(form::Page {
+                name: "Panels",
+                fields: draft
+                    .windows
+                    .iter()
+                    .enumerate()
+                    .map(|(i, panel)| {
+                        Input::Action(
+                            format!(
+                                "{} — {}",
+                                panel.panel_title,
+                                crate::locale::text("Customize…")
+                            ),
+                            4000 + i as u16,
+                        )
+                    })
+                    .collect(),
+            });
+            let pages = std::mem::take(&mut editor.pages);
+            let Some(answer) = form::show(
+                self.main,
+                "Layout builder",
+                &crate::locale::text(
+                    "Theme defaults and individual panels. Changes apply when you save.",
+                ),
+                pages,
+                &|values| editor.validate(values),
+            ) else {
+                return Ok(());
+            };
+            editor.apply_theme(&mut draft, &answer.values);
+            if let Some(action) = answer.action {
+                let index = usize::from(action.saturating_sub(4000));
+                if let Some(panel) = draft.windows.get(index) {
+                    let title = format!(
+                        "{} — {}",
+                        crate::locale::text("Layout builder"),
+                        panel.panel_title
+                    );
+                    let mut panel_editor = layout_builder::Editor::new(&draft, Some(panel));
+                    let pages = std::mem::take(&mut panel_editor.pages);
+                    if let Some(answer) = form::show(
+                        self.main,
+                        &title,
+                        &crate::locale::text(
+                            "Inherit from theme, or customize this panel. Blank fields follow the theme.",
+                        ),
+                        pages,
+                        &|values| panel_editor.validate(values),
+                    ) {
+                        panel_editor.apply_panel(&mut draft.windows[index], &answer.values);
+                    }
+                }
+                continue;
+            }
+            self.settings.appearance = draft.appearance;
+            for panel in &mut self.settings.windows {
+                if let Some(updated) = draft.windows.iter().find(|p| p.panel_id == panel.panel_id) {
+                    panel.header_style = updated.header_style;
+                    panel.appearance_overrides = updated.appearance_overrides.clone();
+                    panel.preset_name = updated.preset_name.clone();
+                    layout_builder::copy_legacy(panel, updated);
+                }
+            }
+            self.apply_theme();
+            for hwnd in self.windows.keys().copied().collect::<Vec<_>>() {
+                self.refresh(hwnd);
+            }
+            // Refresh only the appearance editor; other preference drafts stay intact.
+            let form = control(self.main, dashboard::form_id(THEMES));
+            if !form.is_null() {
+                unsafe {
+                    DestroyWindow(form);
+                }
+                self.open_preference(THEMES)?;
+            }
+            self.changed();
+            return Ok(());
+        }
+    }
+
     pub(super) fn open_preference(&mut self, command: u16) -> Result<(), String> {
         if control(self.main, dashboard::form_id(command)).is_null() {
             let (title, fields) = match command {
@@ -161,6 +214,11 @@ impl App {
                                 "Panel bar style (theme)".into(),
                                 HeaderStyle::captions(),
                                 theme.header_style.index(),
+                            ),
+                            Input::Choice(
+                                "Title and tab alignment".into(),
+                                crate::model::HeaderAlignment::captions(),
+                                theme.header_alignment.index(),
                             ),
                             Input::Action("Layout builder…".into(), LAYOUT_BUILDER),
                         ],
@@ -246,6 +304,9 @@ impl App {
                         .and_then(|value| value.parse().ok())
                         .unwrap_or(0),
                 );
+                theme.header_alignment = crate::model::HeaderAlignment::from_index(
+                    values.get(7).and_then(|v| v.parse().ok()).unwrap_or(1),
+                );
                 self.apply_theme();
             }
             SHORTCUTS => {
@@ -300,32 +361,5 @@ impl App {
             command => self.command(self.main as usize, command)?,
         }
         Ok(())
-    }
-}
-
-fn apply_header_styles(settings: &mut Settings, panel_ids: &[String], values: &[String]) {
-    settings.appearance.header_style = HeaderStyle::from_index(
-        values
-            .first()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(0),
-    );
-    let reset = values.get(1).is_some_and(|value| value == "1");
-    for (index, id) in panel_ids.iter().enumerate() {
-        if let Some(panel) = settings
-            .windows
-            .iter_mut()
-            .find(|panel| &panel.panel_id == id)
-        {
-            panel.header_style = if reset {
-                None
-            } else {
-                values
-                    .get(index + 2)
-                    .and_then(|value| value.parse::<usize>().ok())
-                    .and_then(|choice| choice.checked_sub(1))
-                    .and_then(|index| HeaderStyle::ALL.get(index).copied())
-            };
-        }
     }
 }

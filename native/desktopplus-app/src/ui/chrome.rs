@@ -193,13 +193,23 @@ fn rect(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) -> RECT {
 /// Present the background and foreground together, including owner-drawn
 /// controls whose DC is not buffered by Windows. Keep item/window coordinates.
 pub(super) fn buffered(dc: HDC, bounds: RECT, draw: impl FnOnce(HDC)) {
-    back_buffer::paint(dc, bounds, draw);
+    back_buffer::paint(
+        dc,
+        bounds,
+        glass::for_window(unsafe { WindowFromDC(dc) }),
+        draw,
+    );
 }
 pub(super) fn draw_item(item: &DRAWITEMSTRUCT, draw: impl FnOnce(&DRAWITEMSTRUCT)) {
-    buffered(item.hDC, item.rcItem, |dc| {
-        let buffered_item = DRAWITEMSTRUCT { hDC: dc, ..*item };
-        draw(&buffered_item);
-    });
+    back_buffer::paint(
+        item.hDC,
+        item.rcItem,
+        glass::for_window(item.hwndItem),
+        |dc| {
+            let buffered_item = DRAWITEMSTRUCT { hDC: dc, ..*item };
+            draw(&buffered_item);
+        },
+    );
 }
 pub(super) fn paint(hwnd: HWND, print: Option<HDC>, draw: impl FnOnce(HDC, RECT)) {
     unsafe {
@@ -207,7 +217,9 @@ pub(super) fn paint(hwnd: HWND, print: Option<HDC>, draw: impl FnOnce(HDC, RECT)
         let dc = print.unwrap_or_else(|| BeginPaint(hwnd, &mut ps));
         let mut bounds = RECT::default();
         GetClientRect(hwnd, &mut bounds);
-        buffered(dc, bounds, |buffer| draw(buffer, bounds));
+        back_buffer::paint(dc, bounds, glass::for_window(hwnd), |buffer| {
+            draw(buffer, bounds)
+        });
         if print.is_none() {
             EndPaint(hwnd, &ps);
         }
@@ -1752,71 +1764,73 @@ pub(super) fn custom_list(hwnd: HWND, draw: &mut NMLVCUSTOMDRAW) -> LRESULT {
         if area.right - area.left < 1 {
             return;
         }
-        // A row owns one transition across all columns, so damage spans its
-        // complete visible width even when only one subitem is being painted.
-        let mut row_area = RECT::default();
-        unsafe {
-            GetClientRect(list, &mut row_area);
-        }
-        row_area.top = area.top;
-        row_area.bottom = area.bottom;
-        let background = motion::color_in(list, index as u32, background, row_area);
-        fill(draw.nmcd.hdc, &area, background);
-        if main {
-            fill(
-                draw.nmcd.hdc,
-                &RECT {
-                    top: area.bottom - scale(hwnd, 4),
-                    ..area
-                },
-                p.background,
-            );
-        }
-        if selected && draw.iSubItem == 0 {
-            rounded(
-                draw.nmcd.hdc,
-                &RECT {
-                    left: area.left + scale(hwnd, 1),
-                    right: area.left + scale(hwnd, 4),
-                    top: area.top + scale(hwnd, 9),
-                    bottom: area.bottom - scale(hwnd, 9),
-                },
-                scale(hwnd, 3),
-                p.accent,
-                p.accent,
-            );
-        }
-        let mut text_area = area;
-        text_area.left += content_scale(hwnd, 8);
-        text_area.right -= content_scale(hwnd, 8);
-        if draw.iSubItem == 0 {
-            if let Some(row) = &row {
-                let spec = images::spec(hwnd);
-                images::paint(
-                    hwnd,
-                    row,
-                    draw.nmcd.hdc,
-                    area.left + content_scale(hwnd, 4),
-                    area.top,
-                );
-                text_area.left = area.left + spec.edge + content_scale(hwnd, 10);
+        back_buffer::paint(draw.nmcd.hdc, area, glass::for_window(list), |cell_dc| {
+            // A row owns one transition across all columns, so damage spans its
+            // complete visible width even when only one subitem is being painted.
+            let mut row_area = RECT::default();
+            unsafe {
+                GetClientRect(list, &mut row_area);
             }
-        }
-        label(
-            draw.nmcd.hdc,
-            &cell_label(hwnd, index, draw.iSubItem as usize),
-            text_area,
-            font(
-                hwnd,
-                if main {
-                    usize::from(draw.iSubItem == 0)
-                } else {
-                    5
-                },
-            ),
-            if draw.iSubItem == 0 { p.text } else { p.muted },
-            DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
-        );
+            row_area.top = area.top;
+            row_area.bottom = area.bottom;
+            let background = motion::color_in(list, index as u32, background, row_area);
+            fill(cell_dc, &area, background);
+            if main {
+                fill(
+                    cell_dc,
+                    &RECT {
+                        top: area.bottom - scale(hwnd, 4),
+                        ..area
+                    },
+                    p.background,
+                );
+            }
+            if selected && draw.iSubItem == 0 {
+                rounded(
+                    cell_dc,
+                    &RECT {
+                        left: area.left + scale(hwnd, 1),
+                        right: area.left + scale(hwnd, 4),
+                        top: area.top + scale(hwnd, 9),
+                        bottom: area.bottom - scale(hwnd, 9),
+                    },
+                    scale(hwnd, 3),
+                    p.accent,
+                    p.accent,
+                );
+            }
+            let mut text_area = area;
+            text_area.left += content_scale(hwnd, 8);
+            text_area.right -= content_scale(hwnd, 8);
+            if draw.iSubItem == 0 {
+                if let Some(row) = &row {
+                    let spec = images::spec(hwnd);
+                    images::paint(
+                        hwnd,
+                        row,
+                        cell_dc,
+                        area.left + content_scale(hwnd, 4),
+                        area.top,
+                    );
+                    text_area.left = area.left + spec.edge + content_scale(hwnd, 10);
+                }
+            }
+            label(
+                cell_dc,
+                &cell_label(hwnd, index, draw.iSubItem as usize),
+                text_area,
+                font(
+                    hwnd,
+                    if main {
+                        usize::from(draw.iSubItem == 0)
+                    } else {
+                        5
+                    },
+                ),
+                if draw.iSubItem == 0 { p.text } else { p.muted },
+                DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+            );
+        });
     });
     CDRF_SKIPDEFAULT as isize
 }
@@ -1842,7 +1856,11 @@ fn empty(list: HWND, parent: HWND, dc: HDC) {
                 GetClientRect(list, &mut area);
                 area.top = last.bottom.max(scale(parent, 36));
                 if area.top < area.bottom {
-                    with_palette(parent, |palette| fill(dc, &area, palette.background));
+                    with_palette(parent, |palette| {
+                        back_buffer::paint(dc, area, glass::for_window(list), |dc| {
+                            fill(dc, &area, palette.background)
+                        })
+                    });
                 }
             }
         }

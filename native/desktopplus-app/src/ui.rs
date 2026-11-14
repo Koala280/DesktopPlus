@@ -6,9 +6,11 @@ mod dialog;
 mod drag_drop;
 mod empty_panel;
 mod form;
+mod glass;
 mod grip;
 mod icon_grid;
 mod images;
+mod layout_builder;
 mod marquee;
 mod menus;
 mod motion;
@@ -16,6 +18,7 @@ mod panel_options;
 mod scrollbars;
 mod styled;
 mod text_render;
+mod titlebar;
 
 use crate::{
     model::{HeaderStyle, Theme},
@@ -105,6 +108,7 @@ const HOVER_TIMER: usize = 5;
 const ZOOM_TIMER: usize = 6;
 const TRAY_RETRY_TIMER: usize = 7;
 const UPDATE_TIMER: usize = 8;
+const ZOOM_STATUS_TIMER: usize = 9;
 
 enum Event {
     PreferenceSaved(u16, form::Answer),
@@ -132,6 +136,7 @@ enum Event {
     Hover(usize),
     Zoom(usize, i32),
     ApplyZoom(usize),
+    HideZoom(usize),
     DisplayScale(usize),
 }
 struct ViewData {
@@ -165,11 +170,16 @@ thread_local! {
 fn with_palette<T>(hwnd: HWND, apply: impl FnOnce(&Palette) -> T) -> T {
     PANEL_PALETTES.with(|palettes| {
         let palettes = palettes.borrow();
-        if let Some(palette) = palettes.get(&(hwnd as usize)) {
-            apply(palette)
-        } else {
-            PALETTE.with(|palette| apply(&palette.borrow()))
+        // A form body, nested control or owned dialog belongs to its panel's
+        // theme too. GetParent follows both child parents and popup owners.
+        let mut owner = hwnd;
+        while !owner.is_null() {
+            if let Some(palette) = palettes.get(&(owner as usize)) {
+                return apply(palette);
+            }
+            owner = unsafe { GetParent(owner) };
         }
+        PALETTE.with(|palette| apply(&palette.borrow()))
     })
 }
 fn emit(event: Event) {
@@ -275,6 +285,34 @@ fn theme_frame(hwnd: HWND) {
             (&border as *const u32).cast(),
             4,
         );
+        // Otherwise Windows can tint the caption with the user's system accent,
+        // making the same application theme look different on another machine.
+        let (caption, text) = with_palette(hwnd, |palette| (palette.surface, palette.text));
+        for (attribute, color) in [(DWMWA_CAPTION_COLOR, caption), (DWMWA_TEXT_COLOR, text)] {
+            DwmSetWindowAttribute(hwnd, attribute as _, (&color as *const u32).cast(), 4);
+        }
+    }
+}
+
+fn refresh_theme(hwnd: HWND) {
+    // Theme changes are atomic. Hover/selection transitions may animate inside
+    // the new palette, but must not keep blending colors from the old theme.
+    unsafe extern "system" fn reset(hwnd: HWND, _: LPARAM) -> i32 {
+        motion::reset_colors(hwnd);
+        1
+    }
+    motion::reset_colors(hwnd);
+    unsafe { EnumChildWindows(hwnd, Some(reset), 0) };
+    chrome::restyle(hwnd);
+    theme_frame(hwnd);
+    theme_list(control(hwnd, LIST));
+    unsafe {
+        RedrawWindow(
+            hwnd,
+            null(),
+            null_mut(),
+            RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN,
+        );
     }
 }
 
@@ -299,11 +337,7 @@ struct Palette {
 impl Palette {
     fn new(theme: &Theme) -> Self {
         let background = color(&theme.background_color, 0x332824);
-        let surface = blend(
-            color(&theme.header_color, blend(background, 0xffffff, 5)),
-            background,
-            25,
-        );
+        let surface = color(&theme.header_color, blend(background, 0xffffff, 5));
         unsafe {
             Self {
                 background,
@@ -1039,6 +1073,9 @@ unsafe extern "system" fn window_proc(
     if let Some(result) = menus::message(hwnd, message, lparam) {
         return result;
     }
+    if let Some(result) = titlebar::message(hwnd, message, wparam, lparam) {
+        return result;
+    }
     content::dismiss_selection(hwnd, message, wparam, lparam);
     if chrome::panel(hwnd)
         && matches!(message, WM_MOUSEMOVE | WM_MOUSELEAVE | WM_LBUTTONDOWN)
@@ -1049,9 +1086,9 @@ unsafe extern "system" fn window_proc(
     match message {
         WM_NCCREATE => {
             let create = unsafe { &*(lparam as *const CREATESTRUCTW) };
-            if create.lpCreateParams as usize == 2 {
+            if matches!(create.lpCreateParams as usize, 1 | 2) {
                 unsafe {
-                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, 2);
+                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, create.lpCreateParams as isize);
                 }
             }
         }
@@ -1084,6 +1121,7 @@ unsafe extern "system" fn window_proc(
             return 0;
         }
         WM_NCDESTROY => {
+            glass::release(hwnd);
             icon_grid::forget(hwnd);
             chrome::release(hwnd);
         }
@@ -1230,6 +1268,10 @@ unsafe extern "system" fn window_proc(
         WM_TIMER => {
             if wparam == ZOOM_TIMER {
                 emit(Event::ApplyZoom(hwnd as usize));
+                return 0;
+            }
+            if wparam == ZOOM_STATUS_TIMER {
+                emit(Event::HideZoom(hwnd as usize));
                 return 0;
             }
             if wparam == HOVER_TIMER && chrome::panel(hwnd) {

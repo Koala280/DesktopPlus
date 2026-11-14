@@ -121,9 +121,9 @@ Interactive uninstall supports native JSON restore points and legacy ZIP backups
 Build and validate the native release with the code checks in preflight, then run the migration as the Windows user who owns the existing installation. If the visible interface changed, visually check only the affected area; a full GUI suite still requires an explicit request.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version 2.0.0
+powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version 2.1.0
 powershell -ExecutionPolicy Bypass -File .\scripts\install-native.ps1 `
-  -Installer .\artifacts\installer\DesktopPlus-Setup-2.0.0.exe `
+  -Installer .\artifacts\installer\DesktopPlus-Setup-2.1.0.exe `
   -Executable .\artifacts\publish\win-x64\DesktopPlus.exe
 ```
 

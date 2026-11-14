@@ -82,30 +82,12 @@ impl App {
             return;
         };
         let panel = &self.settings.windows[index];
-        let theme = self
-            .settings
-            .presets
-            .iter()
-            .find(|preset| {
-                preset.get("Name").and_then(serde_json::Value::as_str)
-                    == Some(panel.preset_name.as_str())
-            })
-            .and_then(|preset| preset.get("Settings"))
-            .and_then(|value| serde_json::from_value::<crate::model::Theme>(value.clone()).ok());
+        let theme = self.settings.panel_theme(panel);
         PANEL_PALETTES.with(|palettes| {
-            let mut palettes = palettes.borrow_mut();
-            if let Some(theme) = theme {
-                palettes.insert(hwnd, Palette::new(&theme));
-            } else {
-                palettes.remove(&hwnd);
-            }
+            palettes.borrow_mut().insert(hwnd, Palette::new(&theme));
         });
-        chrome::restyle(hwnd as _);
-        theme_frame(hwnd as _);
-        theme_list(control(hwnd as _, LIST));
-        unsafe {
-            InvalidateRect(hwnd as _, null(), 1);
-        }
+        refresh_theme(hwnd as _);
+        glass::apply(hwnd as _, &theme);
     }
     pub(super) fn restore_hover(&mut self, hwnd: usize) {
         motion::cancel_resize(hwnd as _);

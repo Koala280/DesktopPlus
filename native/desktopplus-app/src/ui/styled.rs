@@ -73,6 +73,15 @@ pub fn choice(parent: HWND, caption: &str, id: i32, values: &[String], selected:
     );
     unsafe {
         SetWindowSubclass(hwnd, Some(control_proc), 11, 2);
+        SetWindowSubclass(hwnd, Some(choice_wheel_proc), 14, 0);
+        // The popup list has its own window and can receive wheel input directly.
+        let mut info = COMBOBOXINFO {
+            cbSize: std::mem::size_of::<COMBOBOXINFO>() as u32,
+            ..std::mem::zeroed()
+        };
+        if GetComboBoxInfo(hwnd, &mut info) != 0 && !info.hwndList.is_null() {
+            SetWindowSubclass(info.hwndList, Some(choice_wheel_proc), 14, 0);
+        }
         for value in values {
             SendMessageW(
                 hwnd,
@@ -97,6 +106,25 @@ pub fn choice(parent: HWND, caption: &str, id: i32, values: &[String], selected:
         SetWindowTextW(hwnd, wide(crate::locale::text(caption)).as_ptr());
     }
     hwnd
+}
+unsafe extern "system" fn choice_wheel_proc(
+    hwnd: HWND,
+    message: u32,
+    w: WPARAM,
+    l: LPARAM,
+    id: usize,
+    _: usize,
+) -> LRESULT {
+    // Never let wheel input scroll the choices or change the selected value.
+    if matches!(message, WM_MOUSEWHEEL | WM_MOUSEHWHEEL) {
+        return 0;
+    }
+    if message == WM_NCDESTROY {
+        unsafe {
+            RemoveWindowSubclass(hwnd, Some(choice_wheel_proc), id);
+        }
+    }
+    unsafe { DefSubclassProc(hwnd, message, w, l) }
 }
 pub fn edit(parent: HWND, value: &str, id: i32) -> HWND {
     let hwnd = child(

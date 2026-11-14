@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::{HeaderStyle, Panel, Settings, Theme};
+use crate::model::{HeaderAlignment, HeaderStyle, Panel, Settings, Theme};
 use form::{Input, Page};
 use serde_json::Value;
 #[derive(Clone, Debug, PartialEq)]
@@ -35,10 +35,47 @@ impl Default for Options {
 }
 impl Options {
     pub fn resolved(panel: &Panel, theme: &Theme) -> Self {
-        Self {
-            header_style: panel.header_style.unwrap_or(theme.header_style),
-            ..Self::read(panel)
+        let mut result = Self::read(panel);
+        result.header_style = panel.header_style.unwrap_or(theme.header_style);
+        result.alignment = alignment_override(panel)
+            .unwrap_or(theme.header_alignment)
+            .key()
+            .into();
+        let custom = &panel.appearance_overrides;
+        let controls = &theme.header_controls;
+        let has = |keys: &[&str]| {
+            keys.iter()
+                .any(|k| layout_builder::legacy_value(panel, k).is_some())
+        };
+        macro_rules! resolve {
+            ($field:ident, $($key:literal),+) => {
+                if let Some(value) = &custom.$field { result.$field = value.clone(); }
+                else if !has(&[$($key),+]) { result.$field = controls.$field.clone(); }
+            };
         }
+        resolve!(search, "SearchVisibilityMode");
+        resolve!(
+            search_expanded,
+            "SearchVisibleOnlyExpanded",
+            "SearchVisibilityMode"
+        );
+        resolve!(
+            settings,
+            "SettingsButtonVisibilityMode",
+            "ShowSettingsButton"
+        );
+        resolve!(close, "ShowCloseButton");
+        resolve!(
+            empty_button,
+            "ShowEmptyPanelButton",
+            "ShowEmptyRecycleBinButton"
+        );
+        resolve!(
+            parent,
+            "IconViewParentNavigationMode",
+            "ShowParentNavigationItem"
+        );
+        result
     }
     pub fn read(panel: &Panel) -> Self {
         fn find<'a>(map: &'a serde_json::Map<String, Value>, key: &str) -> Option<&'a Value> {
@@ -85,7 +122,7 @@ impl Options {
                 None => "header",
             },
         );
-        Self {
+        let mut result = Self {
             header_style: panel.header_style.unwrap_or_default(),
             hover: boolean("ExpandOnHover", false),
             movement: select(
@@ -128,7 +165,21 @@ impl Options {
                     && boolean("ShowEmptyRecycleBinButton", false),
             ),
             parent: parent.trim_start_matches("details-").into(),
+        };
+        let custom = &panel.appearance_overrides;
+        macro_rules! apply { ($($key:ident),*) => { $(if let Some(value) = &custom.$key { result.$key = value.clone(); })* }; }
+        apply!(
+            search,
+            search_expanded,
+            settings,
+            close,
+            empty_button,
+            parent
+        );
+        if let Some(alignment) = custom.header_alignment {
+            result.alignment = alignment.key().into();
         }
+        result
     }
     pub fn write(&self, panel: &mut Panel) {
         let entries = [
@@ -176,6 +227,26 @@ impl Options {
         }
     }
 }
+pub fn alignment_override(panel: &Panel) -> Option<HeaderAlignment> {
+    panel.appearance_overrides.header_alignment.or_else(|| {
+        let value = layout_builder::legacy_value(panel, "HeaderContentAlignment")?.as_str()?;
+        HeaderAlignment::ALL
+            .into_iter()
+            .find(|alignment| alignment.key().eq_ignore_ascii_case(value))
+    })
+}
+pub fn set_alignment(panel: &mut Panel, alignment: Option<HeaderAlignment>) {
+    panel.appearance_overrides.header_alignment = alignment;
+    panel
+        .extra
+        .retain(|key, _| !key.eq_ignore_ascii_case("HeaderContentAlignment"));
+    if let Some(tabs) = &mut panel.tabs {
+        for tab in tabs {
+            tab.extra
+                .retain(|key, _| !key.eq_ignore_ascii_case("HeaderContentAlignment"));
+        }
+    }
+}
 pub const FIT_WIDTH: u16 = 250;
 pub const FIT_HEIGHT: u16 = 251;
 pub struct Editor {
@@ -183,16 +254,18 @@ pub struct Editor {
     keys: HashMap<&'static str, usize>,
     presets: Vec<String>,
     folder: bool,
+    original_options: Options,
 }
 impl Editor {
     pub fn new(panel: &Panel, settings: &Settings) -> Self {
         let tab = panel.active();
-        let options = Options::read(panel);
+        let options = Options::resolved(panel, &settings.appearance);
         let mut editor = Self {
             pages: Vec::new(),
             keys: HashMap::new(),
             presets: vec![String::new()],
             folder: tab.panel_type == "Folder",
+            original_options: options.clone(),
         };
         for preset in &settings.presets {
             if let Some(name) = preset.get("Name").and_then(Value::as_str) {
@@ -310,6 +383,10 @@ impl Editor {
                     "fit_height",
                     Input::Action("Fit height to contents".into(), FIT_HEIGHT),
                 ),
+                (
+                    "panel_appearance",
+                    Input::Action("Panel appearance…".into(), LAYOUT_BUILDER),
+                ),
                 ("new_tab", Input::Action("Add tab".into(), ADD_TAB)),
                 (
                     "new_panel",
@@ -326,6 +403,16 @@ impl Editor {
                         "Panel bar style".into(),
                         HeaderStyle::panel_captions(),
                         panel.header_style.map_or(0, |style| style.index() + 1),
+                    ),
+                ),
+                (
+                    "alignment",
+                    Input::Choice(
+                        "Title and tab alignment".into(),
+                        std::iter::once("Inherit from theme".into())
+                            .chain(HeaderAlignment::captions())
+                            .collect(),
+                        alignment_override(panel).map_or(0, |v| v.index() + 1),
                     ),
                 ),
                 (
@@ -354,14 +441,6 @@ impl Editor {
                             ("hidden", "Hidden"),
                         ],
                         &options.settings,
-                    ),
-                ),
-                (
-                    "alignment",
-                    choice(
-                        "Title and tab alignment",
-                        &[("left", "Left"), ("center", "Center"), ("right", "Right")],
-                        &options.alignment,
                     ),
                 ),
                 (
@@ -475,6 +554,7 @@ impl Editor {
         Ok(())
     }
     pub fn apply(&self, panel: &mut Panel, values: &[String]) {
+        let previous = panel.clone();
         let style = self
             .get(values, "header_style")
             .parse::<usize>()
@@ -507,7 +587,7 @@ impl Editor {
                 Value::Bool(self.get(values, key) == "1"),
             );
         }
-        Options {
+        let updated = Options {
             header_style: panel.header_style.unwrap_or_default(),
             hover: self.get(values, "hover") == "1",
             movement: self
@@ -524,15 +604,35 @@ impl Editor {
                 .selected(values, "settings", &["always", "expandedonly", "hidden"])
                 .into(),
             alignment: self
-                .selected(values, "alignment", &["left", "center", "right"])
+                .selected(values, "alignment", &["inherit", "left", "center", "right"])
                 .into(),
             close: self.get(values, "close") == "1",
             empty_button: self.get(values, "empty_button") == "1",
             parent: self
                 .selected(values, "parent", &["header", "item", "none"])
                 .into(),
-        }
-        .write(panel);
+        };
+        updated.write(panel);
+        layout_builder::copy_legacy(panel, &previous);
+        macro_rules! changed { ($($key:ident),*) => { $(if updated.$key != self.original_options.$key {
+            panel.appearance_overrides.$key = Some(updated.$key.clone());
+        })* }; }
+        changed!(
+            search,
+            search_expanded,
+            settings,
+            close,
+            empty_button,
+            parent
+        );
+        set_alignment(
+            panel,
+            self.get(values, "alignment")
+                .parse::<usize>()
+                .ok()
+                .and_then(|v| v.checked_sub(1))
+                .map(HeaderAlignment::from_index),
+        );
         panel.synchronize();
     }
 }
@@ -540,6 +640,24 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn editing_a_title_keeps_theme_controls_inherited() {
+        let mut settings = Settings::default();
+        settings.appearance.header_alignment = HeaderAlignment::Right;
+        settings.appearance.header_controls.search = "button".into();
+        let mut panel = Panel::folder(&std::env::temp_dir());
+        let editor = Editor::new(&panel, &settings);
+        let mut values = draft(&editor);
+        values[editor.keys["panel_title"]] = "New title".into();
+        editor.apply(&mut panel, &values);
+        settings.appearance.header_alignment = HeaderAlignment::Left;
+        settings.appearance.header_controls.search = "always".into();
+        let options = Options::resolved(&panel, &settings.appearance);
+        assert_eq!(options.alignment, "left");
+        assert_eq!(options.search, "always");
+        assert!(panel.appearance_overrides.search.is_none());
+        assert!(alignment_override(&panel).is_none());
+    }
     #[test]
     fn panel_style_inherits_and_stays_with_panel_when_tabs_change() {
         let mut panel = Panel::folder(&std::env::temp_dir());

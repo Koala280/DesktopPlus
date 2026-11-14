@@ -25,6 +25,7 @@ struct State<'a> {
     pages: Vec<(&'static str, Range<usize>)>,
     page: usize,
     offset: i32,
+    wheel_remainder: i32,
     extent: i32,
     result: Option<Answer>,
     done: bool,
@@ -50,6 +51,7 @@ pub fn embed(
         pages: vec![(title, 0..count)],
         page: 0,
         offset: 0,
+        wheel_remainder: 0,
         extent: 0,
         result: None,
         done: false,
@@ -183,6 +185,7 @@ pub fn show(
             pages: groups,
             page: 0,
             offset: 0,
+            wheel_remainder: 0,
             extent: 0,
             result: None,
             done: false,
@@ -298,7 +301,9 @@ fn create_controls(hwnd: HWND, data: &State<'_>) {
             ..std::mem::zeroed()
         });
         let body = CreateWindowExW(
-            WS_EX_CONTROLPARENT,
+            // Buffer the viewport and its native child controls together so
+            // scrolling cannot present fields over the previous background.
+            WS_EX_CONTROLPARENT | WS_EX_COMPOSITED,
             body_class.as_ptr(),
             null(),
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_CLIPCHILDREN,
@@ -514,11 +519,13 @@ fn layout_fields(hwnd: HWND) {
     unsafe {
         // WS_CLIPCHILDREN excludes the inputs from the body's paint region;
         // invalidate them explicitly, including fields returning from clipping.
+        // Finish the entire frame now; WM_PAINT would otherwise wait behind
+        // continuous wheel/scrollbar input and leave the previous pixels visible.
         RedrawWindow(
             body,
             null(),
             null_mut(),
-            RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN,
+            RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
         );
     }
 }
@@ -643,7 +650,15 @@ unsafe extern "system" fn body_proc(hwnd: HWND, message: u32, w: WPARAM, l: LPAR
         return 0;
     }
     if message == WM_MOUSEWHEEL {
-        scroll(parent, -((w >> 16) as i16 as i32) / 120 * 96, false);
+        let pointer = state(parent);
+        if !pointer.is_null() {
+            let data = unsafe { &mut *pointer };
+            // Keep subpixel remainders and scale before dividing: precision
+            // wheels/touchpads routinely send deltas smaller than one notch.
+            let movement = data.wheel_remainder - ((w >> 16) as i16 as i32) * 96;
+            data.wheel_remainder = movement % WHEEL_DELTA as i32;
+            scroll(parent, movement / WHEEL_DELTA as i32, false);
+        }
         return 0;
     }
     if message == WM_NCDESTROY {
@@ -807,6 +822,7 @@ unsafe extern "system" fn proc(hwnd: HWND, message: u32, w: WPARAM, l: LPARAM) -
         if (700..700 + data.pages.len() as i32).contains(&id) {
             data.page = (id - 700) as usize;
             data.offset = 0;
+            data.wheel_remainder = 0;
             let page_count = data.pages.len();
             layout_form(hwnd);
             // The form clips child windows. Repainting its background cannot

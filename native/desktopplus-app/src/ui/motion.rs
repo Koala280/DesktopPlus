@@ -7,6 +7,8 @@ use std::{
 
 mod frame_clock;
 #[cfg(test)]
+mod reveal_tests;
+#[cfg(test)]
 mod tests;
 
 const COLOR_MS: u64 = 160;
@@ -131,6 +133,7 @@ struct State {
     scalars: HashMap<u32, Scalar>,
     layout_scalars: HashMap<u32, Scalar>,
     geometry: Option<Geometry>,
+    buffered_resize: bool,
 }
 impl State {
     fn active(&self) -> bool {
@@ -283,6 +286,58 @@ pub fn collapse_target(hwnd: HWND) -> Option<bool> {
 pub fn active_count() -> usize {
     STATES.with(|s| s.borrow().values().filter(|s| s.active()).count())
 }
+fn begin_resize_buffer(hwnd: HWND) {
+    // A redirected opaque surface keeps the client pixels and window bounds in
+    // the same compositor update. Otherwise DWM can expose the next size while
+    // the GDI client still has the previous height. Glass owns its own alpha.
+    if glass::for_window(hwnd).is_some() {
+        return;
+    }
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        if style & WS_EX_LAYERED as isize != 0 {
+            return;
+        }
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED as isize);
+        if SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA) == 0 {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
+            return;
+        }
+    }
+    STATES.with(|states| {
+        if let Some(state) = states.borrow_mut().get_mut(&(hwnd as usize)) {
+            state.buffered_resize = true;
+        }
+    });
+}
+fn end_resize_buffer(hwnd: HWND) {
+    let owned = STATES.with(|states| {
+        states
+            .borrow_mut()
+            .get_mut(&(hwnd as usize))
+            .is_some_and(|state| std::mem::take(&mut state.buffered_resize))
+    });
+    if owned {
+        unsafe {
+            let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style & !(WS_EX_LAYERED as isize));
+        }
+        paint_resize(hwnd);
+    }
+}
+fn paint_resize(hwnd: HWND) {
+    unsafe {
+        // Children keep their final layout throughout the reveal. Explicitly
+        // invalidate them too, including portions clipped on the last frame.
+        RedrawWindow(
+            hwnd,
+            null(),
+            null_mut(),
+            RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE | RDW_ALLCHILDREN,
+        );
+        GdiFlush();
+    }
+}
 fn set_bounds(hwnd: HWND, rect: RECT) {
     unsafe {
         let mut current = RECT::default();
@@ -323,6 +378,8 @@ pub fn cancel_resize(hwnd: HWND) {
     if let Some(g) = geometry {
         finish(hwnd, g.collapsed);
         set_bounds(hwnd, g.to);
+        paint_resize(hwnd);
+        end_resize_buffer(hwnd);
     }
 }
 pub fn resize(hwnd: HWND, to: RECT, collapsed: bool) {
@@ -340,6 +397,8 @@ pub fn resize(hwnd: HWND, to: RECT, collapsed: bool) {
         });
         finish(hwnd, collapsed);
         set_bounds(hwnd, to);
+        paint_resize(hwnd);
+        end_resize_buffer(hwnd);
         return;
     }
     let now = now();
@@ -364,15 +423,14 @@ pub fn resize(hwnd: HWND, to: RECT, collapsed: bool) {
                 .max(to.bottom - to.top),
         });
     });
+    begin_resize_buffer(hwnd);
     VIEWS.with(|views| {
         if let Some(view) = views.borrow_mut().get_mut(&(hwnd as usize)) {
             view.collapsed = false;
         }
     });
     layout(hwnd);
-    unsafe {
-        RedrawWindow(hwnd, null(), null_mut(), RDW_INVALIDATE | RDW_ALLCHILDREN);
-    }
+    paint_resize(hwnd);
     schedule(hwnd);
 }
 /// Clear row-indexed transitions when a virtual list changes data or view mode.
@@ -436,6 +494,9 @@ fn tick(animate: bool) {
             set_bounds(hwnd, rect);
         }
         if unsafe { IsWindowVisible(hwnd) } == 0 {
+            if geometry.is_some_and(|(_, done)| done.is_some()) {
+                end_resize_buffer(hwnd);
+            }
             continue;
         }
         if relayout {
@@ -467,13 +528,14 @@ fn tick(animate: bool) {
                 );
             }
             if geometry.is_some() {
-                // WM_SIZE invalidates changed children. Present the whole group
-                // before the next compositor frame, without erasing it first.
-                RedrawWindow(hwnd, null(), null_mut(), RDW_UPDATENOW | RDW_ALLCHILDREN);
+                paint_resize(hwnd);
             }
         }
         if dirty.scrollbars {
             scrollbars::paint(hwnd);
+        }
+        if geometry.is_some_and(|(_, done)| done.is_some()) {
+            end_resize_buffer(hwnd);
         }
     }
     unsafe {

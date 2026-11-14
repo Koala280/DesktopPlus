@@ -88,7 +88,7 @@ cargo build --locked --release
 Package a release when needed:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version 2.0.0
+powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version 2.1.0
 ```
 
 Visual checks are only needed when the visible interface changes and must stay limited to the affected area. Full GUI suites are not routine verification or packaging steps; run them only when explicitly requested.

@@ -1,42 +1,5 @@
 use super::*;
 
-#[test]
-fn builder_applies_theme_and_panel_overrides_by_stable_id() {
-    let mut settings = Settings {
-        windows: vec![Panel::default(), Panel::default()],
-        ..Settings::default()
-    };
-    let ids: Vec<_> = settings
-        .windows
-        .iter()
-        .map(|panel| panel.panel_id.clone())
-        .collect();
-    settings.windows.swap(0, 1);
-    apply_header_styles(
-        &mut settings,
-        &ids,
-        &["2".into(), "0".into(), "5".into(), "0".into()],
-    );
-    assert_eq!(settings.appearance.header_style, HeaderStyle::Segmented);
-    assert_eq!(settings.windows[0].header_style, None);
-    assert_eq!(
-        settings.windows[1].header_style,
-        Some(HeaderStyle::Floating)
-    );
-    apply_header_styles(
-        &mut settings,
-        &ids,
-        &["0".into(), "1".into(), "5".into(), "4".into()],
-    );
-    assert_eq!(settings.appearance.header_style, HeaderStyle::Line);
-    assert!(
-        settings
-            .windows
-            .iter()
-            .all(|panel| panel.header_style.is_none())
-    );
-}
-
 struct Workspace(App);
 impl Workspace {
     fn new() -> Self {
@@ -231,6 +194,107 @@ fn general_update_toggle_saves_and_cancel_restores_the_draft() {
     );
 }
 
+fn scroll_info(body: HWND) -> SCROLLINFO {
+    let mut info = SCROLLINFO {
+        cbSize: std::mem::size_of::<SCROLLINFO>() as u32,
+        fMask: SIF_ALL,
+        ..unsafe { std::mem::zeroed() }
+    };
+    assert_ne!(unsafe { GetScrollInfo(body, SB_VERT, &mut info) }, 0);
+    info
+}
+
+#[test]
+fn workspace_scroll_preserves_small_wheel_movements_and_drafts() {
+    let mut workspace = Workspace::new();
+    workspace.0.open_preference(THEMES).unwrap();
+    let body = control(workspace.page(THEMES), 801);
+    set_text(workspace.field(THEMES, 0), "#abcdef");
+    let wheel = |delta: i16| unsafe {
+        SendMessageW(body, WM_MOUSEWHEEL, (delta as u16 as usize) << 16, 0);
+    };
+    // Five tiny touchpad deltas must add up to four logical pixels.
+    for _ in 0..5 {
+        wheel(-1);
+    }
+    assert_eq!(scroll_info(body).nPos, 4);
+    wheel(5);
+    assert_eq!(scroll_info(body).nPos, 0);
+    wheel(-30);
+    assert_eq!(scroll_info(body).nPos, 24);
+    wheel(-90);
+    assert_eq!(scroll_info(body).nPos, 96);
+    unsafe {
+        SendMessageW(body, form::SCROLL_TO, 10_000, 0);
+    }
+    let info = scroll_info(body);
+    assert_eq!(info.nPos, info.nMax + 1 - info.nPage as i32);
+    wheel(-120);
+    assert_eq!(scroll_info(body).nPos, info.nPos);
+    wheel(120);
+    assert_eq!(scroll_info(body).nPos, (info.nPos - 96).max(0));
+    unsafe {
+        SendMessageW(body, form::SCROLL_TO, 0, 0);
+    }
+    assert_eq!(scroll_info(body).nPos, 0);
+    assert_eq!(text(workspace.field(THEMES, 0)), "#abcdef");
+    workspace.0.open_preference(GENERAL).unwrap();
+    workspace.0.open_preference(THEMES).unwrap();
+    assert_eq!(text(workspace.field(THEMES, 0)), "#abcdef");
+}
+
+/// Uses only the affected settings viewport. Input is deliberately not pumped
+/// between scroll steps: a busy wheel queue must not defer painting the fields.
+#[test]
+#[ignore = "Focused visual check of synchronous workspace scrolling"]
+fn workspace_scroll_paints_before_returning_to_input_queue() {
+    let mut workspace = Workspace::new();
+    unsafe {
+        ShowWindow(workspace.0.main, SW_SHOWNOACTIVATE);
+    }
+    for command in [GENERAL, THEMES] {
+        workspace.0.open_preference(command).unwrap();
+        let body = control(workspace.page(command), 801);
+        unsafe {
+            RedrawWindow(
+                workspace.0.main,
+                null(),
+                null_mut(),
+                RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW,
+            );
+        }
+        for offset in [32, 64, 96, 24, 0, 10_000, 48, 0] {
+            unsafe {
+                SendMessageW(body, form::SCROLL_TO, offset, 0);
+                assert_eq!(
+                    GetUpdateRect(body, null_mut(), 0),
+                    0,
+                    "page {command}, offset {offset}: background paint is still queued"
+                );
+                let mut child = GetWindow(body, GW_CHILD);
+                while !child.is_null() {
+                    let mut area = RECT::default();
+                    let mut viewport = RECT::default();
+                    let mut visible = RECT::default();
+                    GetWindowRect(child, &mut area);
+                    GetWindowRect(body, &mut viewport);
+                    if IsWindowVisible(child) != 0
+                        && IntersectRect(&mut visible, &area, &viewport) != 0
+                    {
+                        assert_eq!(
+                            GetUpdateRect(child, null_mut(), 0),
+                            0,
+                            "page {command}, offset {offset}: field {} paint is still queued",
+                            GetDlgCtrlID(child)
+                        );
+                    }
+                    child = GetWindow(child, GW_HWNDNEXT);
+                }
+            }
+        }
+    }
+}
+
 /// Opt-in preview of only the changed workspace; no panels or system integrations.
 #[test]
 #[ignore = "Focused visual check of the workspace tabs"]
@@ -253,5 +317,276 @@ fn preview_workspace_tabs() {
         }
         workspace.events();
         std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// Only the changed panel materials and the layout editor; isolated settings.
+#[test]
+#[ignore = "Focused visual review of the layout builder and glass materials"]
+fn preview_layout_builder_and_glass() {
+    use crate::model::GlassMode;
+    let destination = std::env::var_os("DESKTOPPLUS_LAYOUT_PREVIEW")
+        .map(PathBuf::from)
+        .unwrap();
+    std::fs::create_dir_all(&destination).unwrap();
+    let mut workspace = Workspace::new();
+    unsafe {
+        OleInitialize(null());
+        let instance = GetModuleHandleW(null());
+        RegisterClassW(&WNDCLASSW {
+            lpfnWndProc: Some(window_proc),
+            hInstance: instance,
+            hCursor: LoadCursorW(null_mut(), IDC_ARROW),
+            lpszClassName: wide(CLASS).as_ptr(),
+            ..std::mem::zeroed()
+        });
+        unsafe extern "system" fn backdrop(
+            hwnd: HWND,
+            message: u32,
+            w: WPARAM,
+            l: LPARAM,
+        ) -> LRESULT {
+            if message == WM_PAINT {
+                chrome::paint(hwnd, None, |dc, bounds| {
+                    chrome::fill(dc, &bounds, color("#D6A477", 0));
+                    for i in 0..8 {
+                        chrome::fill(
+                            dc,
+                            &RECT {
+                                left: i * 150,
+                                top: 0,
+                                right: i * 150 + 90,
+                                bottom: bounds.bottom,
+                            },
+                            if i % 2 == 0 {
+                                color("#6D789E", 0)
+                            } else {
+                                color("#759F88", 0)
+                            },
+                        );
+                    }
+                });
+                return 0;
+            }
+            unsafe { DefWindowProcW(hwnd, message, w, l) }
+        }
+        RegisterClassW(&WNDCLASSW {
+            lpfnWndProc: Some(backdrop),
+            hInstance: instance,
+            lpszClassName: wide("DesktopPlus.GlassPreviewBackdrop").as_ptr(),
+            ..std::mem::zeroed()
+        });
+        let background = CreateWindowExW(
+            WS_EX_TOOLWINDOW,
+            wide("DesktopPlus.GlassPreviewBackdrop").as_ptr(),
+            null(),
+            WS_POPUP,
+            40,
+            40,
+            1120,
+            380,
+            null_mut(),
+            null_mut(),
+            instance,
+            null(),
+        );
+        ShowWindow(background, SW_SHOW);
+        SetForegroundWindow(background);
+        SetWindowPos(background, HWND_BOTTOM, 40, 40, 1120, 380, SWP_NOACTIVATE);
+        for (index, mode) in [GlassMode::Frosted, GlassMode::Clear, GlassMode::Solid]
+            .into_iter()
+            .enumerate()
+        {
+            let mut panel = Panel::folder(&std::env::current_dir().unwrap());
+            panel.panel_title = GlassMode::captions()[mode.index()].to_string();
+            panel.active_mut().view_mode = if mode == GlassMode::Clear {
+                "details"
+            } else {
+                "icons"
+            }
+            .into();
+            panel.view_mode = panel.active().view_mode.clone();
+            panel.width = 340.0;
+            panel.height = 300.0;
+            panel.left = 60.0 + index as f64 * 365.0;
+            panel.top = 70.0;
+            panel.appearance_overrides.glass_mode = Some(mode);
+            panel.appearance_overrides.glass_opacity = Some(42);
+            workspace.0.settings.windows.push(panel.clone());
+            workspace.0.open_panel(&panel).unwrap();
+        }
+        for hwnd in workspace.0.windows.keys() {
+            SetWindowLongPtrW(*hwnd as _, GWLP_HWNDPARENT, background as isize);
+            SetWindowPos(
+                *hwnd as _,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+        let until = Instant::now() + std::time::Duration::from_secs(3);
+        while Instant::now() < until {
+            let mut msg = MSG::default();
+            while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+            workspace.events();
+            workspace.0.outputs();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let frosted = workspace
+            .0
+            .windows
+            .iter()
+            .find(|(_, w)| w.id == workspace.0.settings.windows[0].panel_id)
+            .map(|(h, _)| *h)
+            .unwrap();
+        SetForegroundWindow(frosted as _);
+        for hwnd in workspace.0.windows.keys() {
+            assert_ne!(IsWindowVisible(*hwnd as _), 0);
+            SetWindowPos(
+                *hwnd as _,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+            RedrawWindow(
+                *hwnd as _,
+                null(),
+                null_mut(),
+                RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW,
+            );
+        }
+        let frosted = workspace
+            .0
+            .windows
+            .iter()
+            .find(|(_, w)| w.id == workspace.0.settings.windows[0].panel_id)
+            .map(|(h, _)| *h)
+            .unwrap();
+        SetForegroundWindow(frosted as _);
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        for (index, hwnd) in workspace.0.windows.keys().enumerate() {
+            let mut area = RECT::default();
+            GetWindowRect(*hwnd as _, &mut area);
+            let mut cloaked = 0u32;
+            windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute(
+                *hwnd as _,
+                windows_sys::Win32::Graphics::Dwm::DWMWA_CLOAKED as _,
+                (&mut cloaked as *mut u32).cast(),
+                4,
+            );
+            println!(
+                "panel {index}: {},{} {}x{}, cloak={cloaked}, style={:x}, ex={:x}, front={:?}",
+                area.left,
+                area.top,
+                area.right - area.left,
+                area.bottom - area.top,
+                GetWindowLongPtrW(*hwnd as _, GWL_STYLE),
+                GetWindowLongPtrW(*hwnd as _, GWL_EXSTYLE),
+                GetWindow(*hwnd as _, GW_HWNDPREV)
+            );
+            capture_preview(
+                *hwnd as _,
+                &destination.join(format!("glass-panel-{index}.bmp")),
+            );
+        }
+        capture_preview(background, &destination.join("glass.bmp"));
+        for hwnd in workspace.0.windows.keys() {
+            ShowWindow(*hwnd as _, SW_HIDE);
+            SetWindowLongPtrW(*hwnd as _, GWLP_HWNDPARENT, 0);
+        }
+        DestroyWindow(background);
+        unsafe extern "system" fn close_preview(_: HWND, _: u32, _: usize, _: u32) {
+            unsafe {
+                let dialog = FindWindowW(
+                    wide("DesktopPlus.Rust.PanelSettings").as_ptr(),
+                    wide("Layout-Builder").as_ptr(),
+                );
+                if !dialog.is_null() {
+                    let destination =
+                        PathBuf::from(std::env::var_os("DESKTOPPLUS_LAYOUT_PREVIEW").unwrap());
+                    capture_preview(dialog, &destination.join("builder.bmp"));
+                    SendMessageW(dialog, WM_COMMAND, 701, 0);
+                    RedrawWindow(
+                        dialog,
+                        null(),
+                        null_mut(),
+                        RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW,
+                    );
+                    capture_preview(dialog, &destination.join("builder-glass.bmp"));
+                    PostMessageW(dialog, WM_CLOSE, 0, 0);
+                }
+            }
+        }
+        let timer = SetTimer(null_mut(), 0, 1200, Some(close_preview));
+        workspace.0.layout_builder().unwrap();
+        KillTimer(null_mut(), timer);
+        let handles: Vec<_> = workspace.0.windows.keys().copied().collect();
+        for hwnd in handles {
+            DestroyWindow(hwnd as _);
+        }
+    }
+}
+
+unsafe fn capture_preview(hwnd: HWND, path: &std::path::Path) {
+    unsafe {
+        windows_sys::Win32::Graphics::Dwm::DwmFlush();
+        let mut area = RECT::default();
+        GetWindowRect(hwnd, &mut area);
+        let width = area.right - area.left;
+        let height = area.bottom - area.top;
+        let dc = GetDC(null_mut());
+        let memory = CreateCompatibleDC(dc);
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: 40,
+                biWidth: width,
+                biHeight: -height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut pixels = null_mut();
+        let bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut pixels, null_mut(), 0);
+        let old = SelectObject(memory, bitmap);
+        BitBlt(
+            memory,
+            0,
+            0,
+            width,
+            height,
+            dc,
+            area.left,
+            area.top,
+            SRCCOPY | CAPTUREBLT,
+        );
+        GdiFlush();
+        let count = (width * height * 4) as usize;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"BM");
+        bytes.extend_from_slice(&((54 + count) as u32).to_le_bytes());
+        bytes.extend_from_slice(&[0; 4]);
+        bytes.extend_from_slice(&54u32.to_le_bytes());
+        bytes.extend_from_slice(std::slice::from_raw_parts(
+            (&info.bmiHeader as *const BITMAPINFOHEADER).cast::<u8>(),
+            40,
+        ));
+        bytes.extend_from_slice(std::slice::from_raw_parts(pixels.cast::<u8>(), count));
+        std::fs::write(path, bytes).unwrap();
+        SelectObject(memory, old);
+        DeleteObject(bitmap);
+        DeleteDC(memory);
+        ReleaseDC(null_mut(), dc);
     }
 }

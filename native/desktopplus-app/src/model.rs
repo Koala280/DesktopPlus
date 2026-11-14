@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
+mod appearance;
+pub use appearance::*;
 
 pub fn new_id() -> String {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -98,6 +100,7 @@ pub struct Panel {
     pub active_tab_index: usize,
     pub preset_name: String,
     pub header_style: Option<HeaderStyle>,
+    pub appearance_overrides: AppearanceOverrides,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -127,6 +130,7 @@ impl Default for Panel {
             active_tab_index: 0,
             preset_name: String::new(),
             header_style: None,
+            appearance_overrides: AppearanceOverrides::default(),
             extra: Map::new(),
         }
     }
@@ -283,6 +287,11 @@ impl HeaderStyle {
 #[serde(default, rename_all = "PascalCase")]
 pub struct Theme {
     pub header_style: HeaderStyle,
+    pub header_alignment: HeaderAlignment,
+    pub glass_mode: GlassMode,
+    pub glass_opacity: u8,
+    pub rounded_corners: bool,
+    pub header_controls: HeaderControls,
     pub background_color: String,
     pub header_color: String,
     pub accent_color: String,
@@ -299,6 +308,11 @@ impl Default for Theme {
     fn default() -> Self {
         Self {
             header_style: HeaderStyle::default(),
+            header_alignment: HeaderAlignment::default(),
+            glass_mode: GlassMode::default(),
+            glass_opacity: 72,
+            rounded_corners: true,
+            header_controls: HeaderControls::default(),
             background_color: "#11151F".into(),
             header_color: "#1B2231".into(),
             accent_color: "#A5B4FC".into(),

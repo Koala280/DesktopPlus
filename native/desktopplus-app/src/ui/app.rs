@@ -258,7 +258,7 @@ pub fn run(
             null_mut(),
             null_mut(),
             instance,
-            null(),
+            1usize as _,
         );
         if main.is_null() {
             CloseHandle(mutex);
@@ -824,7 +824,11 @@ impl App {
         tab.extra.insert(
             "IconViewParentNavigationMode".into(),
             serde_json::Value::String(
-                panel_options::Options::read(&self.settings.windows[index]).parent,
+                panel_options::Options::resolved(
+                    &self.settings.windows[index],
+                    &self.settings.appearance,
+                )
+                .parent,
             ),
         );
         let window = self.windows.get_mut(&hwnd).unwrap();
@@ -961,25 +965,22 @@ impl App {
             })
             .collect()
     }
-    fn toggle(&mut self) {
-        self.set_foreground(false);
-        self.hidden = !self.hidden;
-        for (hwnd, window) in &self.windows {
-            let hidden = self
+    fn panel_hidden(&self, window: &PanelWindow) -> bool {
+        self.hidden
+            || self
                 .settings
                 .windows
                 .iter()
                 .find(|panel| panel.panel_id == window.id)
-                .is_some_and(|panel| panel.is_hidden);
+                .is_some_and(|panel| panel.is_hidden)
+    }
+    fn toggle(&mut self) {
+        self.set_foreground(false);
+        self.hidden = !self.hidden;
+        for (hwnd, window) in &self.windows {
+            let hidden = self.panel_hidden(window);
             unsafe {
-                ShowWindow(
-                    *hwnd as _,
-                    if self.hidden || hidden {
-                        SW_HIDE
-                    } else {
-                        SW_SHOWNOACTIVATE
-                    },
-                );
+                ShowWindow(*hwnd as _, if hidden { SW_HIDE } else { SW_SHOWNOACTIVATE });
             }
         }
     }
@@ -1004,19 +1005,13 @@ impl App {
             self.take_foreground_restore(unsafe { GetForegroundWindow() } as usize)
         };
         for (hwnd, window) in &self.windows {
-            let hidden = self.hidden
-                || self
-                    .settings
-                    .windows
-                    .iter()
-                    .find(|panel| panel.panel_id == window.id)
-                    .is_some_and(|panel| panel.is_hidden);
+            let hidden = self.panel_hidden(window);
             unsafe {
                 SetWindowPos(
                     *hwnd as _,
                     // NOTOPMOST still leaves panels above ordinary windows.
                     // Return them to the desktop layer when the chord is released.
-                    if foreground {
+                    if foreground && !hidden {
                         HWND_TOPMOST
                     } else {
                         HWND_BOTTOM
@@ -1028,7 +1023,7 @@ impl App {
                     SWP_NOMOVE
                         | SWP_NOSIZE
                         | SWP_NOACTIVATE
-                        | if !foreground && hidden {
+                        | if hidden {
                             SWP_HIDEWINDOW
                         } else {
                             SWP_SHOWWINDOW
@@ -1049,24 +1044,22 @@ impl App {
             .take()
             .filter(|previous| *previous != current && self.windows.contains_key(&current))
     }
+    fn foreground_panel(&self, current: usize) -> Option<usize> {
+        self.windows
+            .iter()
+            .filter(|(hwnd, window)| {
+                !self.panel_hidden(window) && unsafe { IsWindowVisible(**hwnd as HWND) } != 0
+            })
+            .map(|(hwnd, _)| *hwnd)
+            // Prefer the active panel, but never activate a hidden panel.
+            .min_by_key(|hwnd| *hwnd != current)
+    }
     fn activate_foreground_panel(&mut self) {
         if self.foreground {
             return;
         }
         let current = unsafe { GetForegroundWindow() } as usize;
-        let anchor = self
-            .windows
-            .keys()
-            .copied()
-            .find(|hwnd| *hwnd == current)
-            .or_else(|| {
-                self.windows
-                    .keys()
-                    .copied()
-                    .find(|hwnd| unsafe { IsWindowVisible(*hwnd as HWND) } != 0)
-            })
-            .or_else(|| self.windows.keys().copied().next());
-        if let Some(anchor) = anchor {
+        if let Some(anchor) = self.foreground_panel(current) {
             self.foreground_restore = Some(current);
             unsafe {
                 ShowWindow(anchor as HWND, SW_SHOWNOACTIVATE);
@@ -1409,6 +1402,7 @@ impl App {
                             / 1000.0,
                     );
                     unsafe {
+                        KillTimer(hwnd as _, ZOOM_STATUS_TIMER);
                         if start {
                             SetTimer(hwnd as _, ZOOM_TIMER, 22, None);
                         }
@@ -1437,7 +1431,26 @@ impl App {
                         chrome::restyle(hwnd as _);
                         self.tabs(hwnd);
                         set_text(control(hwnd as _, STATUS), &format!("{:.0}%", zoom * 100.0));
+                        unsafe {
+                            SetTimer(hwnd as _, ZOOM_STATUS_TIMER, 1000, None);
+                        }
                         self.changed();
+                    }
+                }
+            }
+            Event::HideZoom(hwnd) => {
+                unsafe {
+                    KillTimer(hwnd as _, ZOOM_STATUS_TIMER);
+                }
+                if let Some(index) = self.panel_index(hwnd) {
+                    let status = control(hwnd as _, STATUS);
+                    // A refresh may have replaced the percentage with a loading
+                    // message or error while this one-shot timer was pending.
+                    if self.windows[&hwnd].pending_zoom.is_none()
+                        && text(status)
+                            == format!("{:.0}%", self.settings.windows[index].zoom * 100.0)
+                    {
+                        set_text(status, "");
                     }
                 }
             }
@@ -1908,7 +1921,13 @@ impl App {
             EXIT => self.exiting = true,
             OVERVIEW => dashboard::select(self.main, OVERVIEW),
             GENERAL | THEMES | SHORTCUTS => self.open_preference(command)?,
-            LAYOUT_BUILDER => self.layout_builder()?,
+            LAYOUT_BUILDER => {
+                if self.panel_index(hwnd).is_some() {
+                    self.panel_layout_builder(hwnd)?;
+                } else {
+                    self.layout_builder()?;
+                }
+            }
             1 | 2 if hwnd == self.main as usize && dashboard::active(self.main) != OVERVIEW => unsafe {
                 SendMessageW(
                     control(self.main, dashboard::form_id(dashboard::active(self.main))),
@@ -2451,12 +2470,7 @@ impl App {
         }
         PALETTE.with(|palette| *palette.borrow_mut() = new);
         for hwnd in std::iter::once(self.main as usize).chain(self.windows.keys().copied()) {
-            theme_frame(hwnd as _);
-            chrome::restyle(hwnd as _);
-            theme_list(control(hwnd as _, LIST));
-            unsafe {
-                InvalidateRect(hwnd as _, null(), 1);
-            }
+            refresh_theme(hwnd as _);
         }
         for command in dashboard::PREFERENCES {
             form::restyle(control(self.main, dashboard::form_id(*command)));

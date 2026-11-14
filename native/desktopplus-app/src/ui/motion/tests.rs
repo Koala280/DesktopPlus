@@ -198,6 +198,11 @@ fn hidden_control_transitions_settle_and_destruction_releases_state() {
 #[test]
 #[ignore = "Focused visual check of animation rendering"]
 fn preview_panel_motion() {
+    let upward = std::env::var_os("DESKTOPPLUS_PREVIEW_UPWARD").is_some();
+    let left = std::env::var("DESKTOPPLUS_PREVIEW_LEFT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(120);
     unsafe {
         SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         InitCommonControlsEx(&INITCOMMONCONTROLSEX {
@@ -214,11 +219,11 @@ fn preview_panel_motion() {
             ..Default::default()
         });
         let hwnd = CreateWindowExW(
-            WS_EX_TOOLWINDOW,
+            WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             class.as_ptr(),
             wide("Animation preview").as_ptr(),
             WS_POPUP | WS_SYSMENU | WS_THICKFRAME | WS_CLIPCHILDREN,
-            120,
+            left,
             120,
             744,
             460,
@@ -328,11 +333,13 @@ fn preview_panel_motion() {
                         InvalidateRect(tabs, null(), 0);
                     } else {
                         let collapsed = action == 2;
+                        let height = if collapsed { 48 } else { 460 };
+                        let top = if upward { 580 - height } else { 120 };
                         let rect = RECT {
-                            left: 120,
-                            top: 120,
-                            right: 864,
-                            bottom: 120 + if collapsed { 48 } else { 460 },
+                            left,
+                            top,
+                            right: left + 744,
+                            bottom: top + height,
                         };
                         resize(hwnd, rect, collapsed);
                         SendMessageW(switch, BM_SETCHECK, usize::from(!collapsed), 0);

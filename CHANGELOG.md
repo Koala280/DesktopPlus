@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-14
+
+### Added
+
+- Expand the layout builder with shared theme defaults and individual panel overrides for header style/alignment, colors, fonts, rounded corners, header controls and glass. Use centered clear-line headers and frosted glass by default, with adjustable tint opacity, clear transparency and an opaque mode. Preserve theme inheritance across tab changes and unrelated panel edits.
+
+### Changed
+
+- Replace the workspace's standard Windows caption and duplicate sidebar branding with one themed title bar, accessible window buttons, native dragging, double-click maximize and edge resizing.
+
+### Fixed
+
+- Keep opaque panels fully painted during expand/collapse animations, including upward expansion and interrupted transitions. Release the temporary compositor buffer when motion completes or is cancelled, and preserve intentional glass transparency.
+- Keep hidden panels hidden when temporarily bringing panels to the foreground, including when all panels are hidden.
+- Hide the panel zoom percentage one second after the last zoom change.
+- Apply panel colors consistently to nested controls and owned dialogs. Theme changes clear old color transitions and repaint child controls; header surfaces use the selected header color directly.
+- Prevent torn or delayed settings content while scrolling the workspace by repainting the viewport and its fields together before handling further input. Preserve small mouse-wheel and touchpad movements.
+
 ## [2.0.0] - 2026-11-14
 
 ### Added

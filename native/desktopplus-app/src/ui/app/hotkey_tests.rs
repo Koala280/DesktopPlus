@@ -154,18 +154,18 @@ impl Drop for Windows {
 }
 
 #[test]
-fn foreground_release_restores_hidden_panels_and_desktop_stacking() {
+fn foreground_only_raises_unhidden_panels_and_release_restores_desktop_stacking() {
     let mut windows = Windows::new();
     let original = serde_json::to_value(&windows.app.settings).unwrap();
     for _ in 0..3 {
         windows.app.set_foreground(true);
         windows.app.set_foreground(true);
-        for hwnd in [windows.visible, windows.hidden] {
+        for (hwnd, raised) in [(windows.visible, true), (windows.hidden, false)] {
             unsafe {
-                assert_ne!(IsWindowVisible(hwnd), 0);
-                assert_ne!(
-                    GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST as isize,
-                    0
+                assert_eq!(IsWindowVisible(hwnd) != 0, raised);
+                assert_eq!(
+                    GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST as isize != 0,
+                    raised
                 );
             }
         }
@@ -179,14 +179,70 @@ fn foreground_release_restores_hidden_panels_and_desktop_stacking() {
 }
 
 #[test]
-fn foreground_release_restores_globally_hidden_panels() {
+fn foreground_keeps_globally_hidden_panels_hidden() {
     let mut windows = Windows::new();
     windows.app.toggle();
     assert!(windows.app.hidden);
     windows.app.set_foreground(true);
+    unsafe {
+        for hwnd in [windows.visible, windows.hidden] {
+            assert_eq!(IsWindowVisible(hwnd), 0);
+            assert_eq!(
+                GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST as isize,
+                0
+            );
+        }
+    }
     windows.app.set_foreground(false);
     windows.assert_released(true);
     assert!(windows.app.hidden);
+}
+
+#[test]
+fn foreground_anchor_only_selects_visible_unhidden_panels() {
+    let windows = Windows::new();
+    let visible = windows.visible as usize;
+    let hidden = windows.hidden as usize;
+    assert_eq!(windows.app.foreground_panel(visible), Some(visible));
+    assert_eq!(windows.app.foreground_panel(hidden), Some(visible));
+    assert_eq!(windows.app.foreground_panel(0), Some(visible));
+
+    // Saved visibility still applies if the native visibility is out of sync.
+    unsafe {
+        ShowWindow(windows.hidden, SW_SHOWNOACTIVATE);
+    }
+    assert_eq!(windows.app.foreground_panel(hidden), Some(visible));
+    unsafe {
+        ShowWindow(windows.visible, SW_HIDE);
+    }
+    assert_eq!(windows.app.foreground_panel(visible), None);
+    assert_eq!(windows.app.foreground_panel(hidden), None);
+}
+
+#[test]
+fn foreground_does_not_activate_any_panel_when_all_are_hidden() {
+    for globally_hidden in [false, true] {
+        let mut windows = Windows::new();
+        if globally_hidden {
+            windows.app.toggle();
+        } else {
+            for panel in &mut windows.app.settings.windows {
+                panel.is_hidden = true;
+            }
+            unsafe {
+                ShowWindow(windows.visible, SW_HIDE);
+            }
+        }
+        windows.app.activate_foreground_panel();
+        assert_eq!(windows.app.foreground_restore, None);
+        unsafe {
+            assert_eq!(IsWindowVisible(windows.visible), 0);
+            assert_eq!(IsWindowVisible(windows.hidden), 0);
+        }
+        windows.app.set_foreground(true);
+        windows.app.set_foreground(false);
+        windows.assert_released(true);
+    }
 }
 
 #[test]

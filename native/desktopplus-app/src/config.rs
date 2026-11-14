@@ -123,7 +123,21 @@ fn normalize_json(value: &mut Value) {
             for key in map.keys().cloned().collect::<Vec<_>>() {
                 if let Some(canonical) = FIELDS
                     .split_whitespace()
-                    .chain(["HeaderStyle", "AutoCheckUpdates"])
+                    .chain([
+                        "HeaderStyle",
+                        "AutoCheckUpdates",
+                        "HeaderAlignment",
+                        "GlassMode",
+                        "GlassOpacity",
+                        "RoundedCorners",
+                        "HeaderControls",
+                        "AppearanceOverrides",
+                        "Search",
+                        "SearchExpanded",
+                        "Close",
+                        "EmptyButton",
+                        "Parent",
+                    ])
                     .find(|field| field.eq_ignore_ascii_case(&key))
                 {
                     if key != canonical {
