@@ -16,7 +16,7 @@ desktopplus-core = { path = "../desktopplus-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 semver = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 notify = "8"
 windows-core = "0.62"
 zip = { version = "4", default-features = false, features = ["deflate"] }
