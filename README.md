@@ -1,297 +1,102 @@
-<p align="center">
-  <img src="Resources/icon.png" alt="DesktopPlus icon" width="96" height="96" />
-</p>
+# DesktopPlus
 
-<h1 align="center">DesktopPlus</h1>
+DesktopPlus is a Windows desktop organizer with a **Rust UI and Rust core**. The primary application uses native Win32 windows, virtual list controls and the Windows shell. It does not require WPF, .NET, a browser engine or WebView.
 
-<p align="center">
-  A desktop-first Windows organizer with floating panels, tabs, auto-sort, and full theme control.
-</p>
+## Build and run
 
-<p align="center">
-  <a href="#quick-start">Quick Start</a> &middot;
-  <a href="#why-this-project">Why</a> &middot;
-  <a href="#features">Features</a> &middot;
-  <a href="#code-signing-policy">Code signing policy</a> &middot;
-  <a href="#hotkeys-and-shortcuts">Shortcuts</a> &middot;
-  <a href="#troubleshooting">Troubleshooting</a>
-</p>
-
-<p align="center">
-  <img alt="CI" src="https://github.com/Koala280/DesktopPlus/actions/workflows/ci.yml/badge.svg" />
-  <img alt="Release" src="https://github.com/Koala280/DesktopPlus/actions/workflows/release.yml/badge.svg" />
-  <img alt="License" src="https://img.shields.io/github/license/Koala280/DesktopPlus" />
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6" />
-  <img alt=".NET" src="https://img.shields.io/badge/.NET-8.0-512BD4" />
-</p>
-
-## Why This Project
-
-DesktopPlus is built for people who want a fast desktop workflow without replacing Windows Explorer.
-
-- Keep important folders and file groups always visible in lightweight desktop panels.
-- Use tabs and multiple view modes to adapt each panel to its purpose.
-- Sort new desktop clutter automatically by rule.
-- Keep everything local on your machine.
-
-## Features
-
-| Area | What you get |
-| --- | --- |
-| Desktop panels | Create multiple floating panels for folders or pinned lists. |
-| Tabs | Add, rename, reorder, detach, merge, and close tabs per panel. |
-| Views | Tile view, details/list view, and photo album view. |
-| Metadata | Show/hide metadata fields and reorder them via drag and drop. |
-| Sorting | Click metadata headers in list view to toggle ascending/descending sort. |
-| Search | Asynchronous in-panel search; index updates change only affected results and preserve selection. |
-| Auto-sort | Rule-based desktop sorting with built-in and custom extension rules. |
-| Backups | Manual backups plus automatic restore points before auto-sort, updates, and critical configuration changes. |
-| Target suggestions | Auto-sort target input suggests existing panel and tab names. |
-| Layouts | Save and restore panel positions, visibility, and appearance presets. |
-| Themes | Header/body/tabs theming with presets, typography, colors, shadows, and preview. |
-| Global shortcuts | System-wide shortcuts for panel toggle and temporary foreground mode. |
-| Tray integration | Run from system tray, reopen main window, and control app behavior. |
-| Localization | German, English, Latvian, plus custom language import via JSON. |
-
-All configured folder panels and tabs, including inactive tabs, prepare their search indexes in the background after the interface loads. Saved indexes become searchable immediately; recursive checks start after five seconds, with current panel folders first. One background worker loads, scans and writes indexes, pausing for 40 ms after at most 64 operations or eight milliseconds of work. Only configured folders and their subfolders are scanned; protected system folders and directory links/junctions are skipped. Clearing a search does not cancel preparation. Searches of at least two characters reuse the available index without a debounce delay or another directory scan, and show already indexed results during initial preparation. Name changes update the index, new subfolders receive targeted scans, and only lost filesystem events require a full check after 1.5 seconds without further events. Updates are saved atomically at most once every 30 seconds per folder. Large complete indexes remain searchable from disk within the existing RAM limits. During the first build, files become searchable as they are indexed; the throttle cannot guarantee a fixed percentage of total Windows disk utilization.
-
-To measure preparation and cached lookup with many files and empty subfolders, run `powershell -ExecutionPolicy Bypass -File .\scripts\measure-search-index.ps1 -Files 16384`. Results and physical disk samples are saved under `artifacts/search-index-benchmark`; disk samples include activity from other Windows processes.
-
-Auto-sort runs in the background and saves settings and file position references before sorting. Its restore point moves existing items back to their recorded locations without copying desktop contents or overwriting new files. No DesktopPlus backup recovers deleted file contents; use a separate file backup for that.
-
-Within each target panel, shortcuts with the same launch target and settings appear once. Auto-sort saves extra `.lnk` and `.url` files under `%LOCALAPPDATA%\DesktopPlus\AutoSortStorage\.DuplicateShortcuts\` and records their original paths for Restore. Running Sort now also repairs duplicates already present in the active target folders.
-
-## Custom Language JSON Import
-
-Import path in app: `General` tab -> `Import language JSON`.
-
-Supported JSON shapes:
-
-1. Flat keys
-```json
-{
-  "code": "fr",
-  "name": "Francais",
-  "Loc.TabGeneral": "General",
-  "Loc.PanelsTitle": "Panneaux"
-}
-```
-2. Nested translations
-```json
-{
-  "code": "fr",
-  "name": "Francais",
-  "translations": {
-    "Loc.TabGeneral": "General",
-    "Loc.PanelsTitle": "Panneaux"
-  }
-}
-```
-3. i18next-style resources
-```json
-{
-  "resources": {
-    "fr": {
-      "translation": {
-        "Loc.TabGeneral": "General",
-        "Loc.PanelsTitle": "Panneaux"
-      }
-    }
-  }
-}
-```
-
-Notes:
-- Only `Loc.*` keys are imported.
-- Keys without `Loc.` are also accepted when they map to known keys (for example `TabGeneral` -> `Loc.TabGeneral`).
-- Missing keys automatically fall back to English.
-
-## Code signing policy
-
-Free code signing provided by SignPath.io, certificate by SignPath Foundation.
-
-Policy details (roles, approval flow, privacy statement):
-[CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md)
-
-## Quick Start
-
-### 1) Download and run
-
-1. Open [Releases](https://github.com/Koala280/DesktopPlus/releases).
-2. Download the latest `DesktopPlus-<version>-win-x64-portable.zip`.
-3. Extract the zip.
-4. Run `DesktopPlus.exe`.
-
-### 2) First 5 minutes
-
-1. Open the main window from the tray icon if needed.
-2. Create a panel in the `Panels` tab.
-3. Drag a folder or files onto the panel.
-4. Open panel settings and choose view mode plus metadata fields.
-5. Save your setup as a layout.
-6. Optional: enable auto-sort in the `Auto-Sort` tab.
-
-## Daily Workflow
-
-1. Use one panel per context (for example: Work, Downloads, Screenshots).
-2. Use tabs when one panel needs multiple sources.
-3. Use list view when metadata and sorting matter.
-4. Use photo album view for image-heavy folders.
-5. Keep auto-sort enabled to keep the desktop clean continuously.
-
-## Auto-Sort
-
-DesktopPlus can move new desktop items into category targets automatically.
-
-- Built-in categories include folders, images, videos, audio, documents, archives, installers/scripts, shortcuts, code files, and catch-all.
-- You can add custom extension rules.
-- Target fields support suggestions from existing panel and tab names.
-- If a target already exists, DesktopPlus adds items there instead of creating duplicates.
-- If no matching target exists, DesktopPlus creates one and places it at a free screen position.
-
-### Auto-sort storage path
-
-Sorted files are moved from your desktop into:
-
-`%LOCALAPPDATA%\DesktopPlus\AutoSortStorage\`
-
-## Backups and Recovery
-
-The `Backups` tab provides one place to create, inspect, restore, and delete backups.
-
-- DesktopPlus automatically creates restore points before auto-sort, updates, layout application, destructive panel/layout changes, rule resets, and restores.
-- All new backups preserve settings, custom languages, and file/folder positions. They do not copy installed applications, desktop contents, or auto-sort storage contents.
-- At most five backups are retained **in total**, across manual, auto-sort, update, and safety backups. The oldest archives are removed automatically, including existing legacy backups. The selected restore archive remains protected while creating its safety backup.
-- Each backup is independent: deleting one archive does not break another or delete your files. Use **Delete backup** beside the backup list to remove the selected archive manually.
-- Restore identifies existing items by their volume/file ID and creation time, including renamed items within the desktop and managed sort folders. It never overwrites an occupied destination. Deleted, inaccessible, ambiguous, or externally moved items are skipped; other items and settings still restore. Skipped items are listed in `DesktopPlus-last-restore.txt` in the backup folder.
-- Abandoned `staging-<guid>` and `restore-<guid>` directories from older versions are cleaned in the background after they are at least 24 hours old, including read-only copies. Cleanup never follows junctions into original user folders. New backups stream directly into an archive and create no staging copies.
-- Loading and pruning backup history, creating safety backups, and deleting archives run in the background so large legacy archives cannot block the window. Failed history reads show an error in the Backups tab; outdated refresh results are discarded.
-- Restoring a backup first creates a safety backup of the current state.
-- When uninstalling interactively, DesktopPlus offers to restore an available backup first. You can choose the backup or continue without restoring. Recovery restores user data without replacing application files or restarting DesktopPlus, then uninstall continues. Cancelling recovery keeps the application installed. Backup archives are retained; silent uninstalls skip the offer.
-
-Backup archives are stored in:
-
-`%LOCALAPPDATA%\DesktopPlus\Backups\`
-
-## Hotkeys and Shortcuts
-
-### Global hotkeys (default)
-
-| Shortcut | Action |
-| --- | --- |
-| `Ctrl + Alt + H` | Toggle all panels (show/hide). |
-| `Ctrl + Alt + F` | Bring panels to front temporarily while shortcut is active. |
-
-### Panel shortcuts
-
-| Shortcut | Action |
-| --- | --- |
-| `Delete` | Delete selection (recycle files or remove from list). |
-| `Ctrl + C` | Copy selection. |
-| `Ctrl + X` | Cut selection. |
-| `Ctrl + V` | Paste selection. |
-| `Ctrl + Mouse Wheel` | Zoom panel content. |
-| `Ctrl/Alt + Click` | Additive multi-selection. |
-| `Shift + Click` | Range selection. |
-| `Shift + Right Click` | Classic Windows context menu. |
-| `Ctrl + Drag` | Force copy on drag and drop. |
-| `Shift + Drag` | Force move on drag and drop. |
-| `Ctrl + Shift + Drag` | Create link on drag and drop. |
-
-All global hotkeys are configurable in `Shortcuts`.
-
-## Privacy and Local Data
-
-DesktopPlus is local-first. It does not require an online account or cloud backend.
-
-- Settings, layouts, presets, auto-sort rules, and panel state are saved in `%APPDATA%\DesktopPlus_Settings.json`.
-- Auto-sort moved items are stored in `%LOCALAPPDATA%\DesktopPlus\AutoSortStorage\`.
-- `Start with Windows` prefers a per-user logon scheduled task (`DesktopPlus Startup`) and falls back to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\DesktopPlus` if Task Scheduler registration is unavailable.
-
-## Unsigned Binary Note
-
-Open-source releases can be unsigned. Windows SmartScreen may show a warning on first launch.
-
-If this happens:
-
-1. Click `More info`.
-2. Click `Run anyway`.
-
-## Build and Run From Source
-
-### Requirements
-
-- Windows 10/11
-- .NET SDK 8.x
-
-### Run
+Use Windows 10/11, a current stable Rust MSVC toolchain, and Visual Studio Build Tools with **Desktop development with C++** and a Windows SDK.
 
 ```powershell
-dotnet restore
-dotnet build -c Release
-dotnet run -c Debug
+cargo run --release
 ```
 
-## Release Build
+The standalone executable is `target/release/DesktopPlus.exe`. Release builds use static CRT linking, full LTO and one code generation unit.
 
-Run preflight first:
+For an isolated configuration:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\release-preflight.ps1
+cargo run --release -- --settings .\artifacts\sandbox\settings.json --open C:\YourFolder
 ```
 
-Build artifacts:
+An existing settings file is optional. `--settings` also isolates the native cache and backup directory beside that file.
+
+## Native interface
+
+- Workspace overview with a persistent navigation sidebar, folder and pinned-list action cards, and a roomier panel list. All actions remain reachable at the minimum window width.
+- General, Appearance and Keyboard shortcuts are available directly from the workspace sidebar. Each tab saves or cancels its own changes and retains drafts when switching tabs. Language import, the settings folder, help and exit are under General. Forms share consistent typography, rounded controls, animated switches, themed menus and scrollbars; keyboard focus scrolls fields into view.
+- Floating folder, pinned-list and Recycle Bin panels.
+- Compact dark panel headers with integrated tabs, fine separators and a curved active-tab outline. Hovering over the search button morphs it into a focused input; the field stays open for clicking and selecting text, and collapses when the pointer leaves, focus moves elsewhere, or Escape is pressed. Ctrl+F also opens search. Panels drag by their header, resize at their edges and collapse to a 48px strip while keeping their tabs visible. Settings, navigation, views and tab actions are available from the header's gear menu.
+- A quiet trash icon beside search empties the active folder after an anchored confirmation showing the source and item count. It includes hidden items and subfolders even during a search, moves folder contents to the Windows Recycle Bin, and only removes references from pinned lists. Recycle Bin panels use the same header position and retain the Windows empty-bin confirmation.
+- The trash icon is hidden by default. Show or hide it under Panel settings → Header → Show clear button. The choice is saved with the panel/tab settings; previously saved choices are retained.
+- Tabs with rename, reorder, detach, merge and close.
+- Panel settings with General, View, Header, Behavior and Columns pages, styled controls, keyboard focus and hover feedback. Configure the home folder, opening behavior, header actions, alignment, column visibility and panel movement; fit the panel to its contents or create a tab/panel.
+- Optional expansion while the pointer is over a collapsed panel, returning to its saved collapsed position after leaving. Per-panel presets apply imported colors and fonts; choose the global appearance to reset them.
+- Display-paced expand/collapse animations with precise per-monitor frame timing, finite 300 ms panel transitions and 220 ms control transitions. Centered tab groups stay on the panel center; the complete antialiased active-tab shape and accent slide together. Subpixel switches, button presses and soft color transitions share the same clock. Motion preserves its speed when interrupted or reversed and finishes at an exact endpoint. Panels reveal a stable content layout; row and scrollbar fades repaint only the affected areas, using reusable drawing buffers. Hover panels start closing on the first leave check. Windows' animation preference is respected, and the shared animation clock sleeps when transitions finish.
+- Details, icon and photo views, including asynchronous Windows thumbnails and original shortcut icons requested at the current display resolution.
+- Ctrl+mouse wheel zoom from 70 to 200% per panel. Text uses DirectWrite; fonts, icons, spacing and columns scale with zoom and monitor DPI. Dark scrollbars support dragging and page scrolling.
+- A bottom-right grip resizes the panel. Double-click fits its width to the current columns; double-click again fits its height to the contents, within the monitor work area.
+- Configurable metadata columns, header sorting, resizing and drag reordering. Image dimensions, authors, categories, tags and titles load on demand.
+- Recursive ranked search, reusable disk caches and filesystem change notifications.
+- Windows open/reveal/properties/context menus, clipboard copy/cut/paste, rename, folder creation and Recycle Bin operations.
+- File drag out to Explorer; incoming file drops copy by default, Shift moves, Ctrl+Shift creates shortcuts. Pinned-list drops add references.
+- Manual and automatic desktop sorting, custom extension rules and duplicate shortcut recovery.
+- Saved layouts, appearance colors and font, tray controls, configurable global shortcuts and startup registration.
+- English, German and Latvian resources, plus custom language JSON import.
+- Restore points and import of legacy ZIP backups, including recovery before uninstall.
+
+The native controls change the visual design. Decorative WPF preset effects and custom Explorer column definitions are not implemented in this version. Their imported configuration is retained where possible.
+
+### Updates
+
+General includes **Automatically install updates** and **Check for updates now**. The automatic setting is imported from WPF; new configurations default to off. When enabled, release builds check GitHub one minute after startup and every six hours, retrying failed checks after 15 minutes. Downloads run in the background. A prepared automatic update is installed at the next application start; a manual check offers immediate installation and restart. Disabling automatic updates cancels the prepared automatic installation. Debug and smoke-test builds do not run the updater.
+
+Updates require a newer stable release with a matching Rust/Win32 release manifest, architecture-specific portable ZIP and `SHA256SUMS.txt`. Downloads use Windows HTTPS/proxy support and checksum verification. The updater replaces only `DesktopPlus.exe`, for both installed and portable copies, after saving settings and waiting for the running application to exit. It keeps the previous executable beside the app and a settings snapshot under the native data directory's `Updates` folder, restores the previous executable if relaunch cannot be started, and records the outcome in `Updates/last-result.txt`. The installation directory must be writable. Installer registration metadata changes only when running the installer; releases that need additional installation changes should use the installer.
+
+## Efficiency
+
+The UI blocks on the Windows message queue when idle; it has no continuous render loop. File listings and search work run on a background worker, and obsolete requests are cancelled. Virtual lists request visible cells instead of creating a widget for every file. Thumbnail and metadata caches are bounded.
+
+Search starts using a saved index immediately. Initial scans start after five seconds and perform up to 64 enumeration steps or eight milliseconds of work, followed by a 40 ms pause. Directory links, junctions and protected system folders are skipped. Ranking retains at most 80 matches. Index storage targets 24 MiB per root and 64 MiB total before falling back to disk, excluding visible row data and transient buffers. Direct file events update in-memory indexes; subtree changes and lost events schedule a cooperative reconciliation. Index changes are saved atomically.
+
+These design choices reduce overhead. They are not a guarantee of a particular speedup over WPF; compare equivalent folders, views and workloads when benchmarking.
+
+## Settings and recovery
+
+On first normal launch, the application imports `%APPDATA%\DesktopPlus_Settings.json` if no native settings exist. The legacy file is left untouched and its original contents are copied into the native data directory.
+
+| Data | Location |
+| --- | --- |
+| Native settings | `%APPDATA%\DesktopPlus\Native\settings.json` |
+| Caches, languages and restore points | `%LOCALAPPDATA%\DesktopPlus\Native\` |
+| Sorted desktop files | `%LOCALAPPDATA%\DesktopPlus\AutoSortStorage\` |
+
+Restore points store configuration, custom languages and file identities/locations; **they do not copy file contents or recover deleted files**. Recovery never overwrites an occupied destination. Failed or ambiguous moves are reported. Five native restore points are retained; legacy backups remain available.
+
+The repository contains only the Rust application and core. The former C#/WPF application is available in Git history and the v1.x tags; importing its settings and restore archives remains supported.
+
+## Verification and packaging
+
+Use code checks for routine verification:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version 1.0.0
+cargo fmt --all --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
+cargo build --locked --release
 ```
 
-Outputs:
+Package a release when needed:
 
-- `artifacts\DesktopPlus-<version>-win-x64-portable.zip`
-- `artifacts\installer\DesktopPlus-Setup-<version>.exe` (if Inno Setup is installed)
-- `artifacts\SHA256SUMS.txt`
-- `artifacts\release-manifest.json`
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version 2.0.0
+```
 
-Full release documentation: [DEPLOYMENT.md](DEPLOYMENT.md)
+Visual checks are only needed when the visible interface changes and must stay limited to the affected area. Full GUI suites are not routine verification or packaging steps; run them only when explicitly requested.
 
-## Troubleshooting
+The optional `scripts/test-native-ui.ps1` suite creates isolated fixture folders and checks listing, pinned items, photos, recursive search, filesystem notifications, collapse/expand and settings persistence. Reports and optional window screenshots are written under `artifacts/native-ui-tests/`. Its memory/CPU figures describe only that small fixture.
 
-### Global shortcut does not work
+The optional `scripts/test-native-display.ps1` suite checks DirectWrite, original multi-resolution shortcut icons, zoom limits and persistence, text selection, scrollbar dragging and grip resizing/auto-fit. It writes screenshots and a report under `artifacts/display-tests/`.
 
-- Another app may already use that hotkey.
-- Change the shortcut in `Shortcuts` and click `Apply`.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for installer and signing options, [CONTRIBUTING.md](CONTRIBUTING.md) for development, and [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md) for signing policy. Local builds are unsigned unless signing is explicitly configured.
 
-### Main window opens minimized from tray
-
-- Use `Open` in tray menu.
-- If behavior persists, update to the latest release and reopen the app.
-
-### Panels disappeared
-
-- Use global toggle hotkey or `Panels -> Show all`.
-- Verify hidden state in the `Panels` tab.
-
-### Auto-sort did not move an item
-
-- Confirm the rule is enabled.
-- Confirm the extension matches exactly (for example `.psd`).
-- Check write permissions for `%LOCALAPPDATA%\DesktopPlus\AutoSortStorage\`.
-
-### UI state looks broken after major changes
-
-- Close DesktopPlus.
-- Backup then remove `%APPDATA%\DesktopPlus_Settings.json`.
-- Start DesktopPlus again to regenerate defaults.
-
-## Contributing
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening pull requests.
-
-## Security
-
-Report vulnerabilities via [SECURITY.md](SECURITY.md).
-
-## License
-
-Licensed under the MIT License. See [LICENSE](LICENSE).
+To replace an installed WPF version, use the tested-release migration procedure in [DEPLOYMENT.md](DEPLOYMENT.md#replace-an-existing-wpf-installation-with-the-native-app). It uninstalls the old application, removes its scheduled startup task, preserves native settings and user files, and installs and starts the standalone Rust release with Windows startup enabled.

@@ -23,10 +23,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          dotnet-version: "8.0.x"
+          components: rustfmt, clippy
 
       - name: Install Inno Setup
         shell: pwsh
@@ -35,9 +35,11 @@ jobs:
       - name: Resolve version
         id: meta
         shell: pwsh
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $version = "${{ inputs.version }}".Trim()
+            $version = "$env:REQUESTED_VERSION".Trim()
             if ([string]::IsNullOrWhiteSpace($version)) {
               $changelog = Get-Content -Path ".\CHANGELOG.md" -Raw
               $match = [regex]::Match(
@@ -62,6 +64,11 @@ jobs:
             throw "Resolved version '$version' is not valid SemVer."
           }
 
+          $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Cannot read Cargo metadata." }
+          $packageVersion = ($metadata.packages | Where-Object name -eq desktopplus).version
+          if ($version -ne $packageVersion) { throw "Release version must match the desktopplus Cargo package ($packageVersion)." }
+
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Preflight checks
@@ -85,19 +92,38 @@ jobs:
             artifacts/release-manifest.json
           if-no-files-found: error
 
-      - name: Publish GitHub release
+      - name: Prepare release notes
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          $changelog = Get-Content -LiteralPath CHANGELOG.md -Raw
+          $section = [regex]::Match($changelog, '(?ms)^## \[' + [regex]::Escape($env:RELEASE_VERSION) + '\][^\r\n]*\r?\n(?<notes>.*?)(?=^## \[|\z)')
+          if (-not $section.Success) { throw "Release changelog section is missing." }
+          $notes = "DesktopPlus $env:RELEASE_VERSION — Rust / Win32 for Windows 10/11 (x64).`n`n" + $section.Groups['notes'].Value.Trim()
+          $notes += "`n`n### Downloads and upgrading`n`nUse the Setup executable for an installed copy, or extract the portable ZIP. Settings from v1.x are imported automatically. Native auto-updates require the matching release manifest and SHA-256 checksums attached below. These build artifacts are unsigned.`n`n### Code signing policy`n`n[Code signing policy](https://github.com/Koala280/DesktopPlus/blob/master/CODE_SIGNING_POLICY.md)`n"
+          Set-Content -LiteralPath artifacts/release-notes.md -Value $notes -Encoding utf8
+
+      - name: Upload complete draft release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.meta.outputs.version }}
-          generate_release_notes: true
-          body: |
-            ## Code signing policy
-            [Code signing policy](https://github.com/Koala280/DesktopPlus/blob/master/CODE_SIGNING_POLICY.md)
-
-            Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+          name: v${{ steps.meta.outputs.version }} — Rust / Win32
+          draft: true
+          body_path: artifacts/release-notes.md
           files: |
             artifacts/DesktopPlus-${{ steps.meta.outputs.version }}-*-portable.zip
             artifacts/installer/DesktopPlus-Setup-${{ steps.meta.outputs.version }}.exe
             artifacts/SHA256SUMS.txt
             artifacts/release-manifest.json
           fail_on_unmatched_files: true
+
+      - name: Publish completed release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          gh release edit "v$env:RELEASE_VERSION" --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw "Could not publish the completed release." }

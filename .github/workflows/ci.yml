@@ -4,6 +4,13 @@ on:
   push:
     branches: [ "main", "master" ]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      run_gui_tests:
+        description: "Explicitly run the full native GUI suites"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build:
@@ -13,13 +20,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          dotnet-version: "8.0.x"
+          components: rustfmt, clippy
 
-      - name: Restore
-        run: dotnet restore DesktopPlus.sln
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --workspace
 
       - name: Build (Release)
-        run: dotnet build DesktopPlus.sln -c Release --no-restore
+        run: cargo build --locked --release -p desktopplus
+
+      - name: Native UI smoke test
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_gui_tests }}
+        shell: pwsh
+        run: ./scripts/test-native-ui.ps1
+
+      - name: Native display and input test
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_gui_tests }}
+        shell: pwsh
+        run: ./scripts/test-native-display.ps1 -Executable target/release/DesktopPlus.exe

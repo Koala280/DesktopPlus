@@ -61,16 +61,41 @@ const
   StartupRunRegistryKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
   StartupApprovedRunRegistryKey = 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run';
   StartupRunRegistryValue = 'DesktopPlus';
-  StartupLaunchArgument = '--startup';
+  StartupTaskName = 'DesktopPlus Startup';
   SettingsFileName = 'DesktopPlus_Settings.json';
 
 var
   StartupEntryExistsBeforeInstall: Boolean;
   StartupShouldBeEnabledAfterInstall: Boolean;
 
-function BuildStartupCommand(): string;
+function HasStartupTask(): Boolean;
+var
+  Scheduler, Folder, Task: Variant;
 begin
-  Result := '"' + ExpandConstant('{app}\{#MyAppExeName}') + '" ' + StartupLaunchArgument;
+  Result := False;
+  try
+    Scheduler := CreateOleObject('Schedule.Service');
+    Scheduler.Connect();
+    Folder := Scheduler.GetFolder('\');
+    Task := Folder.GetTask(StartupTaskName);
+    Result := Task.Enabled;
+  except
+    Log('No accessible DesktopPlus startup task.');
+  end;
+end;
+
+procedure ConfigureStartup(Enabled: Boolean);
+var
+  Arguments: string;
+  ResultCode: Integer;
+begin
+  Arguments := '--configure-startup disable';
+  if Enabled then Arguments := '--configure-startup enable';
+  if not Exec(ExpandConstant('{app}\{#MyAppExeName}'), Arguments,
+    ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    RaiseException('Could not run DesktopPlus startup configuration.');
+  if ResultCode <> 0 then
+    RaiseException('Could not update the DesktopPlus startup task.');
 end;
 
 function NormalizeSettingsJson(Input: string): string;
@@ -91,6 +116,10 @@ begin
   Result := False;
   StartWithWindowsEnabled := False;
   SettingsPath := ExpandConstant('{userappdata}') + '\' + SettingsFileName;
+  if FileExists(ExpandConstant('{userappdata}\DesktopPlus\Native\settings.json')) then
+  begin
+    SettingsPath := ExpandConstant('{userappdata}\DesktopPlus\Native\settings.json');
+  end;
 
   if not FileExists(SettingsPath) then
   begin
@@ -138,7 +167,7 @@ begin
   end
   else
   begin
-    StartupShouldBeEnabledAfterInstall := StartupEntryExistsBeforeInstall;
+    StartupShouldBeEnabledAfterInstall := StartupEntryExistsBeforeInstall or HasStartupTask();
   end;
 
   Result := True;
@@ -146,15 +175,9 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if (CurStep = ssPostInstall) and StartupShouldBeEnabledAfterInstall then
+  if CurStep = ssPostInstall then
   begin
-    RegWriteStringValue(
-      HKEY_CURRENT_USER,
-      StartupRunRegistryKey,
-      StartupRunRegistryValue,
-      BuildStartupCommand()
-    );
-    RegDeleteValue(HKEY_CURRENT_USER, StartupApprovedRunRegistryKey, StartupRunRegistryValue);
+    ConfigureStartup(StartupShouldBeEnabledAfterInstall);
   end;
 end;
 
@@ -163,6 +186,20 @@ var
   FindRec: TFindRec;
 begin
   Result := False;
+  if FindFirst(ExpandConstant('{localappdata}\DesktopPlus\Native\Backups\*.json'), FindRec) then
+  begin
+    try
+      repeat
+        if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0 then
+        begin
+          Result := True;
+          Exit;
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
   if FindFirst(ExpandConstant('{localappdata}\DesktopPlus\Backups\DesktopPlus-backup-*.zip'), FindRec) then
   begin
     try
@@ -226,6 +263,7 @@ begin
   if CurUninstallStep = usUninstall then
   begin
     OfferUninstallBackupRestore();
+    ConfigureStartup(False);
   end;
   if CurUninstallStep = usPostUninstall then
   begin

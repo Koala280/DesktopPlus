@@ -1,0 +1,9 @@
+[workspace]
+members = ["native/desktopplus-core", "native/desktopplus-app"]
+default-members = ["native/desktopplus-app"]
+resolver = "3"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "debuginfo"

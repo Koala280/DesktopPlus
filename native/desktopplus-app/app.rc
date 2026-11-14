@@ -1,0 +1,27 @@
+#include <windows.h>
+1 ICON "../../Resources/desktopplus_icon.ico"
+1 24 "app.manifest"
+
+1 VERSIONINFO
+FILEVERSION DP_VERSION_NUM
+PRODUCTVERSION DP_VERSION_NUM
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", "DesktopPlus - native desktop organizer\0"
+            VALUE "FileVersion", DP_VERSION
+            VALUE "ProductName", "DesktopPlus\0"
+            VALUE "ProductVersion", DP_VERSION
+            VALUE "OriginalFilename", "DesktopPlus.exe\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

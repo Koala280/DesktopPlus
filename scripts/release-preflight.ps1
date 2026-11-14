@@ -1,6 +1,6 @@
 param(
-    [string]$Configuration = "Release",
-    [string]$RuntimeIdentifier = "win-x64",
+    [ValidateSet("Release", "Debug")][string]$Configuration = "Release",
+    [ValidateSet("win-x64", "win-arm64", "win-x86")][string]$RuntimeIdentifier = "win-x64",
     [switch]$AllowDirty
 )
 
@@ -26,24 +26,24 @@ function Assert-FileExists {
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptRoot
-$solutionPath = Join-Path $repoRoot "DesktopPlus.sln"
-$projectPath = Join-Path $repoRoot "DesktopPlus.csproj"
+$projectPath = Join-Path $repoRoot "Cargo.toml"
 $releaseScript = Join-Path $repoRoot "scripts\build-release.ps1"
 $installerScript = Join-Path $repoRoot "installer\DesktopPlus.iss"
 $releaseWorkflow = Join-Path $repoRoot ".github\workflows\release.yml"
 $ciWorkflow = Join-Path $repoRoot ".github\workflows\ci.yml"
 $changelogPath = Join-Path $repoRoot "CHANGELOG.md"
 
-Require-Command -Name "dotnet"
+Require-Command -Name "cargo"
 Require-Command -Name "git"
 
-Assert-FileExists -Path $solutionPath
 Assert-FileExists -Path $projectPath
 Assert-FileExists -Path $releaseScript
 Assert-FileExists -Path $installerScript
 Assert-FileExists -Path $releaseWorkflow
 Assert-FileExists -Path $ciWorkflow
 Assert-FileExists -Path $changelogPath
+Assert-FileExists -Path (Join-Path $repoRoot "scripts\test-native-ui.ps1")
+Assert-FileExists -Path (Join-Path $repoRoot "scripts\verify-native-binary.ps1")
 
 Push-Location $repoRoot
 try
@@ -68,19 +68,17 @@ try
         throw "CHANGELOG.md must contain an [Unreleased] section."
     }
 
-    Write-Host "Running restore ($RuntimeIdentifier)..."
-    dotnet restore $solutionPath -r $RuntimeIdentifier
-    if ($LASTEXITCODE -ne 0)
-    {
-        throw "dotnet restore failed."
-    }
-
-    Write-Host "Running build ($Configuration)..."
-    dotnet build $solutionPath -c $Configuration --no-restore
-    if ($LASTEXITCODE -ne 0)
-    {
-        throw "dotnet build failed."
-    }
+    cargo fmt --all --check
+    if ($LASTEXITCODE -ne 0) { throw "Rust formatting failed." }
+    cargo clippy --locked --workspace --all-targets -- -D warnings
+    if ($LASTEXITCODE -ne 0) { throw "Rust lint checks failed." }
+    cargo test --locked --workspace
+    if ($LASTEXITCODE -ne 0) { throw "Rust tests failed." }
+    $targetTriple = @{ "win-x64" = "x86_64-pc-windows-msvc"; "win-arm64" = "aarch64-pc-windows-msvc"; "win-x86" = "i686-pc-windows-msvc" }[$RuntimeIdentifier]
+    $buildArgs = @("build", "--locked", "-p", "desktopplus", "--target", $targetTriple)
+    if ($Configuration -eq "Release") { $buildArgs += "--release" }
+    cargo @buildArgs
+    if ($LASTEXITCODE -ne 0) { throw "Rust build failed." }
 
     $isccPath = $null
     $candidates = @()
@@ -106,7 +104,7 @@ try
 
     Write-Host ""
     Write-Host "Preflight successful."
-    Write-Host "- Solution build: OK"
+    Write-Host "- Rust formatting, lint, tests and build: OK"
     Write-Host "- Release scripts/workflows: OK"
     Write-Host "- Changelog structure: OK"
 }

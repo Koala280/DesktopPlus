@@ -1,7 +1,7 @@
 param(
-    [string]$Version = "1.0.0",
-    [string]$RuntimeIdentifier = "win-x64",
-    [string]$Configuration = "Release",
+    [string]$Version = "",
+    [ValidateSet("win-x64", "win-arm64", "win-x86")][string]$RuntimeIdentifier = "win-x64",
+    [ValidateSet("Release", "Debug")][string]$Configuration = "Release",
     [switch]$SkipInstaller,
     [switch]$SignArtifacts,
     [string]$SignToolPath = "",
@@ -30,32 +30,6 @@ function Assert-SemVer {
     if ($InputVersion -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z\.-]+)?(?:\+[0-9A-Za-z\.-]+)?$')
     {
         throw "Version '$InputVersion' is invalid. Expected format: MAJOR.MINOR.PATCH (optional -prerelease/+build)."
-    }
-}
-
-function Get-NumericVersionParts {
-    param([Parameter(Mandatory = $true)][string]$InputVersion)
-
-    $core = ($InputVersion -split '\+')[0]
-    $core = ($core -split '\-')[0]
-    $parts = $core.Split('.')
-    if ($parts.Count -ne 3)
-    {
-        throw "Version core '$core' must have exactly 3 numeric parts."
-    }
-
-    foreach ($part in $parts)
-    {
-        if ($part -notmatch '^\d+$')
-        {
-            throw "Version core '$core' must only contain numeric parts."
-        }
-    }
-
-    return @{
-        Core = $core
-        AssemblyVersion = "$($parts[0]).$($parts[1]).$($parts[2]).0"
-        FileVersion = "$($parts[0]).$($parts[1]).$($parts[2]).0"
     }
 }
 
@@ -139,13 +113,21 @@ function Write-ChecksumFile {
     $lines | Set-Content -Path $OutputPath -Encoding UTF8
 }
 
-Require-Command -Name "dotnet"
-Assert-SemVer -InputVersion $Version
-$versionParts = Get-NumericVersionParts -InputVersion $Version
+Require-Command -Name "cargo"
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptRoot
-$projectPath = Join-Path $repoRoot "DesktopPlus.csproj"
+$manifestFile = Join-Path $repoRoot "Cargo.toml"
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $metadata = & cargo metadata --locked --no-deps --format-version 1 --manifest-path $manifestFile | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0) { throw "Cannot read the Cargo package version." }
+    $Version = ($metadata.packages | Where-Object name -eq desktopplus).version
+}
+Assert-SemVer -InputVersion $Version
+$targetTriple = @{ "win-x64" = "x86_64-pc-windows-msvc"; "win-arm64" = "aarch64-pc-windows-msvc"; "win-x86" = "i686-pc-windows-msvc" }[$RuntimeIdentifier]
+if (-not $SkipInstaller -and $RuntimeIdentifier -ne "win-x64") {
+    throw "The installer targets x64. Use -SkipInstaller for other architectures."
+}
 $issPath = Join-Path $repoRoot "installer\DesktopPlus.iss"
 
 $artifactsRoot = Join-Path $repoRoot "artifacts"
@@ -174,41 +156,43 @@ if ($SignArtifacts)
 New-Item -ItemType Directory -Force -Path $artifactsRoot, $publishRoot, $installerDir | Out-Null
 if (Test-Path $publishDir)
 {
-    Remove-Item -Path $publishDir -Recurse -Force
+    $resolvedPublishDir = (Resolve-Path -LiteralPath $publishDir).Path
+    $expectedPublishDir = [IO.Path]::GetFullPath((Join-Path $repoRoot "artifacts\publish\$RuntimeIdentifier"))
+    if ($resolvedPublishDir -ne $expectedPublishDir -or
+        ((Get-Item -LiteralPath $publishDir).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        ((Get-Item -LiteralPath $publishRoot).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        ((Get-Item -LiteralPath $artifactsRoot).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Refusing to clean an unexpected publish directory: $resolvedPublishDir"
+    }
+    Remove-Item -LiteralPath $resolvedPublishDir -Recurse -Force
 }
 
-Write-Host "Publishing DesktopPlus ($Configuration / $RuntimeIdentifier / version $Version)..."
-& dotnet restore $projectPath -r $RuntimeIdentifier
-if ($LASTEXITCODE -ne 0)
-{
-    throw "dotnet restore failed."
-}
-
-& dotnet publish $projectPath `
-    -c $Configuration `
-    -r $RuntimeIdentifier `
-    --no-restore `
-    --self-contained true `
-    -p:Version=$Version `
-    -p:AssemblyVersion=$($versionParts.AssemblyVersion) `
-    -p:FileVersion=$($versionParts.FileVersion) `
-    -p:InformationalVersion=$Version `
-    -p:ContinuousIntegrationBuild=true `
-    -p:PublishSingleFile=true `
-    -p:IncludeNativeLibrariesForSelfExtract=true `
-    -p:PublishTrimmed=false `
-    -p:DebugType=None `
-    -p:DebugSymbols=false `
-    -o $publishDir
-if ($LASTEXITCODE -ne 0)
-{
-    throw "dotnet publish failed."
+Write-Host "Building native Rust DesktopPlus ($Configuration / $targetTriple / version $Version)..."
+$previousVersion = $env:DESKTOPPLUS_VERSION
+$previousTargetDir = $env:CARGO_TARGET_DIR
+Push-Location $repoRoot
+try {
+    $env:DESKTOPPLUS_VERSION = $Version
+    $env:CARGO_TARGET_DIR = Join-Path $repoRoot "target"
+    $cargoArgs = @("build", "--locked", "--manifest-path", $manifestFile, "-p", "desktopplus", "--target", $targetTriple)
+    if ($Configuration -eq "Release") { $cargoArgs += "--release" }
+    & cargo @cargoArgs
+    if ($LASTEXITCODE -ne 0) { throw "Cargo build failed. Install the $targetTriple Rust target and matching MSVC build tools." }
+    New-Item -ItemType Directory -Force -Path $publishDir | Out-Null
+    $binary = Join-Path $repoRoot "target\$targetTriple\$($Configuration.ToLowerInvariant())\DesktopPlus.exe"
+    Copy-Item -LiteralPath $binary -Destination $publishedExe
+    Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE") -Destination $publishDir
+} finally {
+    $env:DESKTOPPLUS_VERSION = $previousVersion
+    $env:CARGO_TARGET_DIR = $previousTargetDir
+    Pop-Location
 }
 
 if (-not (Test-Path $publishedExe))
 {
     throw "Expected published executable not found: $publishedExe"
 }
+& (Join-Path $scriptRoot "verify-native-binary.ps1") -Executable $publishedExe
 
 $resolvedSignTool = $null
 if ($SignArtifacts)
@@ -231,6 +215,7 @@ if (Test-Path $portableZip)
 Compress-Archive -Path (Join-Path $publishDir "*") -DestinationPath $portableZip -Force
 Write-Host "Portable package created: $portableZip"
 
+$builtInstaller = $false
 if (-not $SkipInstaller)
 {
     $isccCandidates = @()
@@ -248,7 +233,7 @@ if (-not $SkipInstaller)
     $isccPath = $isccCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
     if (-not $isccPath)
     {
-        Write-Warning "Inno Setup 6 not found. Install Inno Setup and rerun this script to generate Setup.exe."
+        throw "Inno Setup 6 not found. Install it or explicitly use -SkipInstaller for a portable-only build."
     }
     else
     {
@@ -274,6 +259,7 @@ if (-not $SkipInstaller)
                 -Timestamp $TimestampUrl `
                 -Digest $DigestAlgorithm
         }
+        $builtInstaller = $true
     }
 }
 else
@@ -283,7 +269,7 @@ else
 
 $artifactList = New-Object System.Collections.Generic.List[string]
 $artifactList.Add($portableZip)
-if (Test-Path $installerExe)
+if ($builtInstaller)
 {
     $artifactList.Add($installerExe)
 }
@@ -311,11 +297,13 @@ $manifest = [ordered]@{
     version = $Version
     runtimeIdentifier = $RuntimeIdentifier
     configuration = $Configuration
+    implementation = "Rust / Win32"
+    targetTriple = $targetTriple
     buildTimeUtc = (Get-Date).ToUniversalTime().ToString("o")
     commit = $commitSha
     artifacts = @(
         @{ path = $portableZip; exists = (Test-Path $portableZip) },
-        @{ path = $installerExe; exists = (Test-Path $installerExe) },
+        @{ path = $installerExe; exists = $builtInstaller },
         @{ path = $checksumsFile; exists = (Test-Path $checksumsFile) }
     )
 }

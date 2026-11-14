@@ -4,6 +4,44 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-14
+
+### Added
+
+- Native automatic updates and manual update checks under General. Preserve the imported update preference, check stable GitHub releases in the background, verify native release metadata, architecture and SHA-256 checksums, and install on the next start or after manual confirmation. Save settings and the previous executable before replacement, restart automatically, and roll back if relaunch fails.
+
+### Fixed
+
+- Restore the pre-Rust immediate Windows logon task, including installer and uninstall support, instead of Explorer's delayed Run-key startup. Retry tray registration when the app starts before Explorer without overwriting the user's close preference.
+- Keep hover-expanded panels open after a header double-click. A second double-click collapses the panel and restores hover expansion after the pointer leaves.
+- Prevent hover flicker in panel icons, dashboard buttons, settings navigation and scrollbar thumbs by presenting complete buffered frames. List empty-state icons now share the native list's paint buffer instead of being erased and redrawn afterward.
+- Clear the previous category's selection when switching panel-settings pages. Navigation focus outlines now follow Windows keyboard focus cues instead of remaining visible after mouse clicks.
+- Replaced GDI text drawing in tabs, file lists, labels and styled controls with cached DirectWrite layouts and grayscale antialiasing. Text is rendered at its current zoom and monitor DPI; enlarged file names retain two complete lines.
+- Load original application and game shortcut icons through the Windows shell at the requested physical resolution, using the target program when an installer's icon file is missing. Bounded image caches distinguish zoom sizes and discard obsolete requests.
+- Made checkbox captions readable on dark backgrounds. Checkboxes, selection fields and settings navigation now show consistent hover and keyboard-focus feedback.
+- Prevented a white Windows resize border from appearing over a floating panel after closing a context menu or switching to Explorer. Panel activation now preserves the custom frame; the UI smoke test checks the actual on-screen edges after opening and closing a popup.
+
+### Changed
+
+- Center title/tab groups on the actual panel center and cap tab widths instead of stretching them across asymmetric toolbars. Slide the complete antialiased active-tab shape, synchronize collapse fades, and retain native tab items on selection changes. Replace the compositor-flush timing heuristic with high-resolution, monitor-rate deadlines and finite eased motion; avoid rebuilding child layouts during panel animation.
+- Replaced per-control animation timers with a shared compositor-paced clock that coalesces frames and sleeps at rest. Panels, tabs and switches use frame-rate-independent damped motion that preserves velocity on reversal; switch thumbs render at subpixel positions. Reused bounded drawing buffers, limited row/scrollbar repaint regions and stable panel content layouts reduce allocation, flicker and relayout during motion.
+- Reworked the workspace overview with a sidebar, prominent creation cards, compact-width support and clearer typography. Added a softer dark default palette while preserving saved appearance choices.
+- Unified global settings and short prompts with the panel-settings form: consistent surfaces, animated switches, native themed menus, matching scrollbars, inline validation and automatic scrolling to keyboard focus.
+- Added 150 ms color transitions to buttons, tabs, settings navigation, file rows, icon tiles, switches, dropdowns, scrollbar thumbs and resize grips, plus reversible 180 ms panel expand/collapse animations, sliding selection indicators and button press feedback. Removed the additional 280 ms hover-leave delay; movement honors the Windows animation preference and stops its timers when settled. Settings persist destination bounds instead of intermediate animation frames.
+- Added persistent Ctrl+mouse wheel zoom from 70 to 200%, matching dark scrollbars, and a bottom-right resize grip. Double-click fits the width to the current columns, then the height on the next double-click, matching the legacy interaction.
+- Replaced the minimal panel dialog with five settings pages covering names and home folder, opening behavior, views and appearance presets, header controls, movement/collapse/hover behavior and metadata columns. Save validates the draft; Cancel preserves the existing configuration. Added fit-to-content actions and temporary hover expansion that preserves the collapsed geometry.
+- Restored the compact panel layout: tabs sit in the 48px header with fine separators and a curved active-tab outline, search opens in the header, and the settings menu holds secondary actions. Narrow panels and collapsed bottom-edge panels retain their saved bounds; expanding and collapsing at the bottom keeps them on screen.
+- Redesigned the Rust interface with compact draggable panel headers, dark tabs and column headers, rounded actions, DPI-aware text, roomier rows, localized empty states and real application icons. Collapsed panels now hide their content and restore at their compact height.
+- The primary application and release pipeline now use Rust with a native Win32 UI. Folder/pinned/Recycle Bin panels, tabs, virtual lists, lazy thumbnails/metadata, search, sorting, layouts, recovery, tray controls and language resources run without WPF or .NET.
+- Native settings are imported into a separate configuration file; legacy settings and backups remain available. See README for the native interface's current scope and differences from WPF.
+- Empty folder and file-list panels now show a subtle background, a folder or photo icon, and a localized hint in the style of the Recycle Bin. The empty view appears after folder loading and ignores parent navigation.
+
+### Removed
+
+- Removed the former C#/WPF application, .NET projects and tests, MSBuild bridge, legacy benchmark and archived WPF guide. The repository and release pipeline now contain only the Rust implementation; existing settings and restore archives can still be imported. Full GUI suites are available only through an explicit manual CI request.
+- Removed the item counter from floating panel footers, including after zoom changes.
+- Removed the Mobile Companion feature, including its settings tab, phone web app, local HTTPS server, pairing, and related dependencies. Panel operations continue to use the Windows Recycle Bin independently.
+
 ## [1.6.13] - 2026-10-22
 
 ### Fixed
