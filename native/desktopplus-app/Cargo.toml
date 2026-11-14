@@ -19,7 +19,7 @@ semver = "1"
 sha2 = "0.10"
 notify = "8"
 windows-core = "0.62"
-zip = { version = "4", default-features = false, features = ["deflate"] }
+zip = { version = "7", default-features = false, features = ["deflate"] }
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_TaskScheduler", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Controls", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Graphics_DirectWrite", "Win32_Graphics_Imaging", "Win32_System_Ole", "Win32_System_SystemServices"] }
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_GdiPlus", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem", "Win32_Security",
