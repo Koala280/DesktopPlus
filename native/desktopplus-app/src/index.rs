@@ -822,7 +822,16 @@ mod tests {
             fs::write(root.join(format!("report-{i}.txt")), "test").unwrap();
         }
         let mut index = fixture.index();
-        assert!(!index.step().unwrap());
+        // A time-bounded batch can spend its budget opening the directory or
+        // skipping dot entries on a busy disk. Wait for the state under test.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(!index.step().unwrap());
+            if index.build.as_ref().unwrap().count > 0 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "Traversal made no progress");
+        }
         index.trim_memory();
         let build = index.build.as_ref().unwrap();
         let path = build.path.clone();
