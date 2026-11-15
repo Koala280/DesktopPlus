@@ -149,6 +149,50 @@ impl Drop for Panel {
 }
 
 #[test]
+fn empty_panel_status_stays_hidden_after_layout_and_messages_respect_collapse() {
+    let panel = Panel::new();
+    let status = child(panel.hwnd, "STATIC", "Loading…", STATUS, 0);
+    let visible = || unsafe { GetWindowLongPtrW(status, GWL_STYLE) as u32 & WS_VISIBLE != 0 };
+    let collapse = |collapsed| {
+        VIEWS.with(|views| {
+            views
+                .borrow_mut()
+                .get_mut(&(panel.hwnd as usize))
+                .unwrap()
+                .collapsed = collapsed;
+        });
+        layout(panel.hwnd);
+    };
+    layout(panel.hwnd);
+    assert!(visible());
+
+    set_text(status, "");
+    assert!(!visible());
+    layout(panel.hwnd);
+    assert!(
+        !visible(),
+        "resizing must not restore the empty status strip"
+    );
+    collapse(true);
+    collapse(false);
+    assert!(!visible());
+
+    for message in ["Loading…", "Folder unavailable", "125%"] {
+        set_text(status, message);
+        assert!(visible());
+        assert_eq!(text(status), message);
+        collapse(true);
+        assert!(!visible());
+        set_text(status, "Updating search…");
+        assert!(!visible(), "updates must not reveal a collapsed footer");
+        collapse(false);
+        assert!(visible());
+        set_text(status, "");
+        assert!(!visible());
+    }
+}
+
+#[test]
 fn clicking_panel_background_or_header_controls_clears_selection() {
     let panel = Panel::new();
     let tab = Tab::default();

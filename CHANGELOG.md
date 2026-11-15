@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-11-15
+
+### Fixed
+
+- Remove the empty status strip at the bottom of floating panels. Keep it hidden after resizing and expanding panels, while preserving loading messages, errors and the temporary zoom indicator. Status updates no longer reveal the footer of a collapsed panel.
+
 ## [2.1.0] - 2026-11-14
 
 ### Added

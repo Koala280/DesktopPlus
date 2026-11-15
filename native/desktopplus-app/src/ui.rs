@@ -423,8 +423,33 @@ fn text(hwnd: HWND) -> String {
 }
 fn set_text(hwnd: HWND, value: &str) {
     unsafe {
+        let parent = GetParent(hwnd);
+        let panel_status = GetDlgCtrlID(hwnd) == STATUS && chrome::panel(parent);
+        // Native STATIC controls can paint synchronously during WM_SETTEXT.
+        // Hide an empty status first so clearing it cannot leave an opaque
+        // rectangle over the panel's glass background.
+        if panel_status && value.is_empty() {
+            show_control(parent, STATUS, false);
+        }
         SetWindowTextW(hwnd, wide(value).as_ptr());
+        if panel_status {
+            show_panel_status(parent);
+            InvalidateRect(hwnd, null(), 0);
+        }
     }
+}
+fn show_panel_status(hwnd: HWND) {
+    let collapsed = VIEWS.with(|views| {
+        views
+            .borrow()
+            .get(&(hwnd as usize))
+            .is_some_and(|view| view.collapsed)
+    });
+    show_control(
+        hwnd,
+        STATUS,
+        !collapsed && !text(control(hwnd, STATUS)).is_empty(),
+    );
 }
 fn child(parent: HWND, class: &str, caption: &str, id: i32, style: u32) -> HWND {
     unsafe {
@@ -547,7 +572,8 @@ fn layout(hwnd: HWND) {
                 .is_some_and(|v| v.collapsed)
         });
         layout_panel_header(hwnd);
-        for id in [LIST, STATUS, RESIZE_GRIP as i32] {
+        show_panel_status(hwnd);
+        for id in [LIST, RESIZE_GRIP as i32] {
             let visible = !collapsed
                 && (id != RESIZE_GRIP as i32
                     || VIEWS.with(|v| {
