@@ -189,8 +189,13 @@ pub fn read(path: &Path) -> Result<Backup, String> {
     if fs::metadata(path).map_err(|e| e.to_string())?.len() > 64 * 1024 * 1024 {
         return Err("Backup exceeds the size limit.".into());
     }
-    let archive: Backup = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    if let Some(settings) = value.get_mut("settings") {
+        config::repair_settings_text(settings);
+    }
+    let archive: Backup = serde_json::from_value(value).map_err(|e| e.to_string())?;
     if archive.version != 1 {
         return Err("Unsupported backup version.".into());
     }
@@ -452,6 +457,31 @@ fn restore_recorded_moves(moves: &[Move]) -> (Vec<String>, std::collections::Has
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reading_native_backup_repairs_labels_without_rewriting_archive_paths() {
+        let directory = std::env::temp_dir().join(crate::model::new_id());
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("backup.json");
+        let source = serde_json::json!({
+            "version": 1,
+            "created": 1,
+            "reason": "encoding regression",
+            "settings": {
+                "Windows": [{"PanelTitle": "VerknÃƒÂ¼pfungen"}],
+                "Presets": [{"Name": "RosÃƒÂ©"}]
+            },
+            "moves": [{"from": "C:\\Ã¼.txt", "to": "C:\\target.txt", "identity": null}]
+        })
+        .to_string();
+        fs::write(&path, &source).unwrap();
+        let archive = read(&path).unwrap();
+        assert_eq!(archive.settings.windows[0].panel_title, "Verknüpfungen");
+        assert_eq!(archive.settings.presets[0]["Name"], "Rosé");
+        assert_eq!(archive.moves[0].from, Path::new("C:\\Ã¼.txt"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), source);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn reads_legacy_archive_identities_and_languages_without_extracting_files() {
         use std::io::Write;

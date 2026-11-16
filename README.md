@@ -23,13 +23,13 @@ An existing settings file is optional. `--settings` also isolates the native cac
 ## Native interface
 
 - Design Studio under Appearance combines colors, typography, glass, header layouts and button visibility. Use color swatches to open the native color picker, enter HEX values directly, choose installed fonts, or adjust opacity and text-size sliders. Five palette templates provide starting points. The scope selector switches between the global design and individual panels; empty panel fields inherit, and the return arrow restores inheritance. Changes remain drafts until **Save design**. The live sample uses the actual panel renderer in list, icon, tabbed and collapsed views; **Preview on desktop** opens a movable sample with the real Windows glass effect.
-- Workspace overview with a persistent navigation sidebar, folder and pinned-list action cards, and a roomier panel list. All actions remain reachable at the minimum window width.
+- Workspace overview with a persistent navigation sidebar, folder and pinned-list action cards, and a roomier panel list. Toggle a panel directly in its Visible column, or select several panels and use Show/Hide or Space. Panel settings are available above the list; right-click offers further actions. Visibility is saved, and the overview also reflects the global panel toggle. All actions remain reachable at the minimum window width.
 - General, Appearance and Keyboard shortcuts are available directly from the workspace sidebar. Each tab saves or cancels its own changes and retains drafts when switching tabs. Language import, the settings folder, help and exit are under General. Forms share consistent typography, rounded controls, animated switches, themed menus and scrollbars; keyboard focus scrolls fields into view.
 - Floating folder, pinned-list and Recycle Bin panels.
 - Compact dark panel headers with integrated tabs, fine separators and a curved active-tab outline. Hovering over the search button morphs it into a focused input; the field stays open for clicking and selecting text, and collapses when the pointer leaves, focus moves elsewhere, or Escape is pressed. Ctrl+F also opens search. Panels drag by their header, resize at their edges and collapse to a 48px strip while keeping their tabs visible. Settings, navigation, views and tab actions are available from the header's gear menu.
 - A quiet trash icon beside search empties the active folder after an anchored confirmation showing the source and item count. It includes hidden items and subfolders even during a search, moves folder contents to the Windows Recycle Bin, and only removes references from pinned lists. Recycle Bin panels use the same header position and retain the Windows empty-bin confirmation.
 - The trash icon is hidden by default. Show or hide it under Panel settings → Header → Show clear button. The choice is saved with the panel/tab settings; previously saved choices are retained.
-- Tabs with rename, reorder, detach, merge and close.
+- Tabs with rename, reorder, detach, merge and close. Select a panel in the overview and choose **Tabs** to show or hide individual tabs; the panel menu also offers **Hide tab** and **Manage tabs**. Hidden tabs keep their contents and settings. Hiding the active tab selects a visible one; hiding all tabs hides the panel until a tab is restored. Showing a panel with no visible tabs restores its last active tab. The overview shows visible/total tab counts when tabs are hidden.
 - Panel settings with General, View, Header, Behavior and Columns pages, styled controls, keyboard focus and hover feedback. Configure the home folder, opening behavior, header actions, alignment, column visibility and panel movement; fit the panel to its contents or create a tab/panel.
 - Optional expansion while the pointer is over a collapsed panel, returning to its saved collapsed position after leaving. Per-panel presets apply imported colors and fonts; choose the global appearance to reset them.
 - Display-paced expand/collapse animations with precise per-monitor frame timing, finite 300 ms panel transitions and 220 ms control transitions. Centered tab groups stay on the panel center; the complete antialiased active-tab shape and accent slide together. Subpixel switches, button presses and soft color transitions share the same clock. Motion preserves its speed when interrupted or reversed and finishes at an exact endpoint. Panels reveal a stable content layout; row and scrollbar fades repaint only the affected areas, using reusable drawing buffers. Hover panels start closing on the first leave check. Windows' animation preference is respected, and the shared animation clock sleeps when transitions finish.
@@ -40,7 +40,7 @@ An existing settings file is optional. `--settings` also isolates the native cac
 - Recursive ranked search, reusable disk caches and filesystem change notifications.
 - Windows open/reveal/properties/context menus, clipboard copy/cut/paste, rename, folder creation and Recycle Bin operations.
 - File drag out to Explorer; incoming file drops copy by default, Shift moves, Ctrl+Shift creates shortcuts. Pinned-list drops add references.
-- Manual and automatic desktop sorting, custom extension rules and duplicate shortcut recovery.
+- Manual and automatic desktop sorting, custom extension rules and duplicate shortcut recovery. The **Sort rules** workspace tab lets you add, edit, enable/disable and delete rules. Its visual editor offers file-type categories, selectable extension chips, existing folder-panel targets and a live rule preview. A **How it works** guide and a filename test explain the result without moving files.
 - Saved layouts, appearance colors and font, tray controls, configurable global shortcuts and startup registration.
 - English, German and Latvian resources, plus custom language JSON import.
 - Restore points and import of legacy ZIP backups, including recovery before uninstall.
@@ -89,7 +89,7 @@ cargo build --locked --release
 Package a release when needed:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version 2.2.0
+powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version 2.3.0
 ```
 
 Visual checks are only needed when the visible interface changes and must stay limited to the affected area. Full GUI suites are not routine verification or packaging steps; run them only when explicitly requested.

@@ -59,6 +59,20 @@ impl App {
     }
 
     pub(super) fn open_preference(&mut self, command: u16) -> Result<(), String> {
+        if command == AUTO_SORT {
+            let page = control(self.main, dashboard::form_id(AUTO_SORT));
+            if page.is_null() {
+                sort_rules::embed(self.main, &self.settings.desktop_auto_sort)?;
+            } else {
+                sort_rules::refresh(page, &self.settings.desktop_auto_sort);
+            }
+            dashboard::select(self.main, AUTO_SORT);
+            sort_rules::busy(
+                control(self.main, dashboard::form_id(AUTO_SORT)),
+                self.sorting,
+            );
+            return Ok(());
+        }
         if command == THEMES {
             if control(self.main, dashboard::form_id(THEMES)).is_null() {
                 design::embed(self.main, &self.settings)?;

@@ -318,6 +318,192 @@ fn workspace_scroll_paints_before_returning_to_input_queue() {
 
 /// Opt-in preview of only the changed workspace; no panels or system integrations.
 #[test]
+fn overview_switch_and_actions_follow_visibility_and_selection() {
+    let mut workspace = Workspace::new();
+    workspace.0.settings.windows = vec![
+        Panel::folder(Path::new("C:\\Downloads")),
+        Panel::folder(Path::new("C:\\Projects")),
+    ];
+    workspace.0.update_main();
+    let main = workspace.0.main;
+    let list = control(main, LIST);
+    unsafe {
+        assert_eq!(IsWindowEnabled(control(main, SHOW_PANEL as i32)), 0);
+        assert_eq!(IsWindowEnabled(control(main, PANEL_SETTINGS as i32)), 0);
+        let state = LVITEMW {
+            state: LVIS_SELECTED | LVIS_FOCUSED,
+            stateMask: LVIS_SELECTED | LVIS_FOCUSED,
+            ..std::mem::zeroed()
+        };
+        SendMessageW(list, LVM_SETITEMSTATE, 0, &state as *const _ as isize);
+        assert_ne!(IsWindowEnabled(control(main, HIDE_PANEL as i32)), 0);
+        assert_ne!(IsWindowEnabled(control(main, PANEL_SETTINGS as i32)), 0);
+        let mut cell = RECT {
+            left: LVIR_BOUNDS as i32,
+            top: 3,
+            ..Default::default()
+        };
+        assert_ne!(
+            SendMessageW(list, LVM_GETSUBITEMRECT, 0, &mut cell as *mut _ as isize),
+            0
+        );
+        let mut hit = LVHITTESTINFO {
+            pt: POINT {
+                x: cell.left + 20,
+                y: cell.top + 16,
+            },
+            ..std::mem::zeroed()
+        };
+        assert_eq!(
+            SendMessageW(list, LVM_SUBITEMHITTEST, 0, &mut hit as *mut _ as isize),
+            0
+        );
+        assert_eq!(hit.iSubItem, 3);
+        let mut notification = NMITEMACTIVATE {
+            hdr: NMHDR {
+                hwndFrom: list,
+                idFrom: LIST as usize,
+                code: NM_CLICK,
+            },
+            iItem: hit.iItem,
+            iSubItem: hit.iSubItem,
+            ..std::mem::zeroed()
+        };
+        SendMessageW(
+            main,
+            WM_NOTIFY,
+            LIST as usize,
+            &notification as *const _ as isize,
+        );
+        // The second notification of a double-click must not toggle back.
+        notification.hdr.code = NM_DBLCLK;
+        SendMessageW(
+            main,
+            WM_NOTIFY,
+            LIST as usize,
+            &notification as *const _ as isize,
+        );
+    }
+    workspace.events();
+    assert!(workspace.0.settings.windows[0].is_hidden);
+    assert!(!workspace.0.settings.windows[1].is_hidden);
+    unsafe {
+        assert_ne!(IsWindowEnabled(control(main, SHOW_PANEL as i32)), 0);
+        assert_eq!(IsWindowEnabled(control(main, HIDE_PANEL as i32)), 0);
+        SendMessageW(list, WM_KEYDOWN, VK_SPACE as usize, 0);
+    }
+    workspace.events();
+    assert!(!workspace.0.settings.windows[0].is_hidden);
+    workspace.0.toggle();
+    VIEWS.with(|views| {
+        assert!(
+            views.borrow()[&(main as usize)]
+                .main
+                .iter()
+                .all(|row| !row.visible)
+        )
+    });
+    workspace.0.toggle();
+    VIEWS.with(|views| {
+        assert!(
+            views.borrow()[&(main as usize)]
+                .main
+                .iter()
+                .all(|row| row.visible)
+        )
+    });
+}
+
+#[test]
+#[ignore = "Focused visual review of the overview visibility controls only"]
+fn preview_overview_visibility() {
+    let destination = PathBuf::from(std::env::var_os("DESKTOPPLUS_OVERVIEW_PREVIEW").unwrap());
+    std::fs::create_dir_all(&destination).unwrap();
+    let mut workspace = Workspace::new();
+    for (name, hidden) in [
+        ("development", false),
+        ("Downloads", true),
+        ("FL Projects", false),
+        ("Gaming", false),
+    ] {
+        let mut panel = Panel::folder(&PathBuf::from("C:\\Users\\Demo").join(name));
+        panel.is_hidden = hidden;
+        if name == "development" {
+            panel.tabs.as_mut().unwrap().extend([
+                Tab {
+                    tab_name: "DesktopPlus".into(),
+                    is_hidden: true,
+                    ..Tab::default()
+                },
+                Tab {
+                    tab_name: "Notizen".into(),
+                    ..Tab::default()
+                },
+            ]);
+        }
+        workspace.0.settings.windows.push(panel);
+    }
+    workspace.0.update_main();
+    unsafe {
+        let state = LVITEMW {
+            state: LVIS_SELECTED,
+            stateMask: LVIS_SELECTED,
+            ..std::mem::zeroed()
+        };
+        SendMessageW(
+            control(workspace.0.main, LIST),
+            LVM_SETITEMSTATE,
+            1,
+            &state as *const _ as isize,
+        );
+        for (name, width, height) in [("overview", 1080, 740), ("overview-minimum", 820, 500)] {
+            SetWindowPos(
+                workspace.0.main,
+                HWND_TOPMOST,
+                40,
+                40,
+                width,
+                height,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+            let deadline = Instant::now() + std::time::Duration::from_millis(350);
+            while Instant::now() < deadline {
+                let mut message = MSG::default();
+                while PeekMessageW(&mut message, null_mut(), 0, 0, PM_REMOVE) != 0 {
+                    TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            capture_preview(workspace.0.main, &destination.join(format!("{name}.bmp")));
+        }
+        unsafe extern "system" fn capture_tab_dialog(owner: HWND, _: u32, timer: usize, _: u32) {
+            unsafe {
+                let dialog = GetActiveWindow();
+                if text(dialog) != crate::locale::text("Manage tabs") {
+                    return;
+                }
+                let path = PathBuf::from(std::env::var_os("DESKTOPPLUS_OVERVIEW_PREVIEW").unwrap())
+                    .join("tab-visibility.bmp");
+                capture_preview(dialog, &path);
+                KillTimer(owner, timer);
+                PostMessageW(dialog, WM_COMMAND, IDCANCEL as usize, 0);
+            }
+        }
+        SetTimer(workspace.0.main, 77, 600, Some(capture_tab_dialog));
+        let panel = &workspace.0.settings.windows[0];
+        let answer = form::show(
+            workspace.0.main,
+            "Manage tabs",
+            "development · Ausgeblendete Tabs bleiben erhalten.",
+            tabs::visibility_pages(panel),
+            &|_| Ok(()),
+        );
+        assert!(answer.is_none());
+    }
+}
+
+#[test]
 #[ignore = "Focused visual check of the workspace tabs"]
 fn preview_workspace_tabs() {
     let mut workspace = Workspace::new();

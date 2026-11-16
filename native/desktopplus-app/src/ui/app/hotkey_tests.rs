@@ -78,10 +78,11 @@ impl Windows {
             smoke_errors: Vec::new(),
         };
         for (hwnd, is_hidden) in [(visible, false), (hidden, true)] {
-            let panel = Panel {
+            let mut panel = Panel {
                 is_hidden,
                 ..Panel::default()
             };
+            panel.normalize();
             app.windows.insert(
                 hwnd as usize,
                 PanelWindow {
@@ -151,6 +152,191 @@ impl Drop for Windows {
             }
         }
     }
+}
+
+#[test]
+fn overview_visibility_changes_only_the_requested_panels_and_survives_serialization() {
+    let mut windows = Windows::new();
+    let original_tabs = serde_json::to_value(&windows.app.settings.windows[0].tabs).unwrap();
+    windows.app.event(Event::PanelVisibility(0)).unwrap();
+    unsafe {
+        assert_eq!(IsWindowVisible(windows.visible), 0);
+        assert_eq!(IsWindowVisible(windows.hidden), 0);
+    }
+    assert!(windows.app.settings.windows[0].is_hidden);
+    windows.app.event(Event::PanelVisibility(0)).unwrap();
+    unsafe {
+        assert_ne!(IsWindowVisible(windows.visible), 0);
+        assert_eq!(IsWindowVisible(windows.hidden), 0);
+    }
+    let saved: Settings =
+        serde_json::from_slice(&serde_json::to_vec(&windows.app.settings).unwrap()).unwrap();
+    assert!(!saved.windows[0].is_hidden);
+    assert!(saved.windows[1].is_hidden);
+    assert_eq!(
+        serde_json::to_value(&saved.windows[0].tabs).unwrap(),
+        original_tabs
+    );
+}
+
+#[test]
+fn hidden_tabs_map_native_selection_to_the_correct_source_and_reorder_visible_neighbors() {
+    let mut windows = Windows::new();
+    let hwnd = windows.visible as usize;
+    unsafe {
+        InitCommonControlsEx(&INITCOMMONCONTROLSEX {
+            dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
+            dwICC: ICC_TAB_CLASSES,
+        });
+    }
+    let control = child(windows.visible, "SysTabControl32", "", TABS, 0);
+    windows.app.settings.windows[0].tabs = Some(
+        (0..4)
+            .map(|i| Tab {
+                tab_name: format!("Tab {i}"),
+                panel_type: "List".into(),
+                pinned_items: vec![format!("C:\\item-{i}.txt")],
+                ..Tab::default()
+            })
+            .collect(),
+    );
+    windows
+        .app
+        .apply_tab_visibility(0, &[false, true, false, true]);
+    assert_eq!(windows.app.settings.windows[0].active_tab_index, 1);
+    unsafe {
+        assert_eq!(SendMessageW(control, TCM_GETITEMCOUNT, 0, 0), 2);
+        assert_eq!(SendMessageW(control, TCM_GETCURSEL, 0, 0), 0);
+    }
+    windows.app.event(Event::Tab(hwnd, 1)).unwrap();
+    assert_eq!(windows.app.settings.windows[0].active_tab_index, 3);
+    assert_eq!(
+        windows.app.settings.windows[0].active().pinned_items,
+        ["C:\\item-3.txt"]
+    );
+    windows.app.tab_command(hwnd, TAB_LEFT).unwrap();
+    assert_eq!(windows.app.settings.windows[0].active_tab_index, 1);
+    assert_eq!(windows.app.settings.windows[0].active().tab_name, "Tab 3");
+    windows.app.command(hwnd, HIDE_TAB).unwrap();
+    assert_eq!(windows.app.settings.windows[0].active_tab_index, 3);
+    assert_eq!(windows.app.settings.windows[0].active().tab_name, "Tab 1");
+    assert_eq!(unsafe { SendMessageW(control, TCM_GETITEMCOUNT, 0, 0) }, 1);
+    let original = serde_json::to_value(&windows.app.settings.windows[0].tabs).unwrap();
+    windows.app.apply_tab_visibility(0, &[true]);
+    assert_eq!(
+        serde_json::to_value(&windows.app.settings.windows[0].tabs).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn all_hidden_tabs_hide_the_panel_and_can_be_restored_without_losing_tabs() {
+    let mut windows = Windows::new();
+    windows.app.settings.windows[0]
+        .tabs
+        .as_mut()
+        .unwrap()
+        .push(Tab::default());
+    windows.app.apply_tab_visibility(0, &[false, false]);
+    assert_eq!(unsafe { IsWindowVisible(windows.visible) }, 0);
+    assert!(windows.app.settings.windows[0].hidden());
+    assert!(!windows.app.settings.windows[0].is_hidden);
+    windows.app.toggle();
+    windows.app.toggle();
+    assert_eq!(unsafe { IsWindowVisible(windows.visible) }, 0);
+    windows.app.apply_tab_visibility(0, &[false, true]);
+    assert_ne!(unsafe { IsWindowVisible(windows.visible) }, 0);
+    assert_eq!(windows.app.settings.windows[0].active_tab_index, 1);
+    windows.app.apply_tab_visibility(0, &[false, false]);
+    windows.app.event(Event::PanelVisibility(0)).unwrap();
+    assert_ne!(unsafe { IsWindowVisible(windows.visible) }, 0);
+    assert_eq!(
+        windows.app.settings.windows[0]
+            .visible_tab_indices()
+            .collect::<Vec<_>>(),
+        vec![1]
+    );
+    assert_eq!(
+        windows.app.settings.windows[0].tabs.as_ref().unwrap().len(),
+        2
+    );
+    windows.app.set_panel_visibility(&[0], false);
+    windows.app.apply_tab_visibility(0, &[true, true]);
+    assert_eq!(unsafe { IsWindowVisible(windows.visible) }, 0);
+}
+
+#[test]
+fn showing_one_globally_hidden_panel_keeps_the_others_hidden() {
+    let mut windows = Windows::new();
+    windows.app.set_panel_visibility(&[0, 1], true);
+    windows.app.toggle();
+    assert!(windows.app.hidden);
+    windows.app.event(Event::PanelVisibility(1)).unwrap();
+    assert!(!windows.app.hidden);
+    assert!(windows.app.settings.windows[0].is_hidden);
+    assert!(!windows.app.settings.windows[1].is_hidden);
+    unsafe {
+        assert_eq!(IsWindowVisible(windows.visible), 0);
+        assert_ne!(IsWindowVisible(windows.hidden), 0);
+    }
+    windows.app.toggle();
+    windows.app.toggle();
+    unsafe {
+        assert_eq!(IsWindowVisible(windows.visible), 0);
+        assert_ne!(IsWindowVisible(windows.hidden), 0);
+    }
+}
+
+#[test]
+fn overview_commands_apply_to_the_whole_selection_and_ignore_empty_selection() {
+    let mut windows = Windows::new();
+    let main = windows.app.main;
+    unsafe {
+        InitCommonControlsEx(&INITCOMMONCONTROLSEX {
+            dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
+            dwICC: ICC_LISTVIEW_CLASSES,
+        });
+    }
+    let list = child(main, "SysListView32", "", LIST, LVS_REPORT | LVS_OWNERDATA);
+    unsafe {
+        SendMessageW(list, LVM_SETITEMCOUNT, 2, 0);
+    }
+    let select = |value| unsafe {
+        let item = LVITEMW {
+            stateMask: LVIS_SELECTED,
+            state: if value { LVIS_SELECTED } else { 0 },
+            ..std::mem::zeroed()
+        };
+        SendMessageW(
+            list,
+            LVM_SETITEMSTATE,
+            usize::MAX,
+            &item as *const _ as isize,
+        );
+    };
+    select(true);
+    for (command, visible) in [
+        (SHOW_PANEL, true),
+        (HIDE_PANEL, false),
+        (TOGGLE_SELECTED, true),
+        (TOGGLE_SELECTED, false),
+    ] {
+        windows.app.command(main as usize, command).unwrap();
+        for (index, hwnd) in [windows.visible, windows.hidden].into_iter().enumerate() {
+            assert_eq!(windows.app.settings.windows[index].is_hidden, !visible);
+            assert_eq!(unsafe { IsWindowVisible(hwnd) } != 0, visible);
+        }
+    }
+    select(false);
+    windows.app.command(main as usize, SHOW_PANEL).unwrap();
+    assert!(
+        windows
+            .app
+            .settings
+            .windows
+            .iter()
+            .all(|panel| panel.is_hidden)
+    );
 }
 
 #[test]

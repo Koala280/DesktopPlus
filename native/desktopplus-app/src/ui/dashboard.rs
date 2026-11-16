@@ -1,17 +1,28 @@
 //! Workspace overview, using ordinary accessible Win32 controls for every action.
 use super::*;
 
+pub(super) struct Row {
+    pub cells: [Vec<u16>; 4],
+    pub visible: bool,
+}
+pub const ACTIONS: &[(u16, &str)] = &[
+    (SHOW_PANEL, "Show selected"),
+    (HIDE_PANEL, "Hide selected"),
+    (MANAGE_TABS, "Tabs"),
+    (PANEL_SETTINGS, "Settings"),
+];
+
 pub const NAVIGATION: &[(u16, &str)] = &[
     (OVERVIEW, "Overview"),
     (TOGGLE, "Toggle panels"),
     (LAYOUTS, "Layouts"),
-    (AUTO_SORT, "Auto-sort"),
+    (AUTO_SORT, "Sort rules"),
     (BACKUPS, "Backups"),
     (GENERAL, "General"),
     (THEMES, "Appearance"),
     (SHORTCUTS, "Keyboard shortcuts"),
 ];
-pub const PREFERENCES: &[u16] = &[GENERAL, THEMES, SHORTCUTS];
+pub const PREFERENCES: &[u16] = &[AUTO_SORT, GENERAL, THEMES, SHORTCUTS];
 pub fn create(hwnd: HWND) {
     titlebar::create(hwnd);
     child(hwnd, "STATIC", "Your workspace", TITLE, 0);
@@ -19,6 +30,7 @@ pub fn create(hwnd: HWND) {
     for (id, caption) in [(NEW_FOLDER, "+ Folder panel"), (NEW_LIST, "+ Pinned list")]
         .into_iter()
         .chain(NAVIGATION.iter().copied())
+        .chain(ACTIONS.iter().copied())
     {
         button(hwnd, caption, id);
     }
@@ -57,7 +69,39 @@ pub fn create(hwnd: HWND) {
             },
         );
     });
+    update_actions(hwnd);
     super::layout(hwnd);
+}
+pub fn update_actions(hwnd: HWND) {
+    if control(hwnd, LIST).is_null() {
+        return;
+    }
+    let selection = selected(hwnd);
+    let (show, hide) = VIEWS.with(|views| {
+        let views = views.borrow();
+        let Some(view) = views.get(&(hwnd as usize)) else {
+            return (false, false);
+        };
+        (
+            selection
+                .iter()
+                .any(|i| view.main.get(*i).is_some_and(|row| !row.visible)),
+            selection
+                .iter()
+                .any(|i| view.main.get(*i).is_some_and(|row| row.visible)),
+        )
+    });
+    for (id, enabled) in [
+        (SHOW_PANEL, show),
+        (HIDE_PANEL, hide),
+        (MANAGE_TABS, selection.len() == 1),
+        (PANEL_SETTINGS, selection.len() == 1),
+    ] {
+        unsafe {
+            EnableWindow(control(hwnd, id as i32), i32::from(enabled));
+            InvalidateRect(control(hwnd, id as i32), null(), 0);
+        }
+    }
 }
 pub fn form_id(command: u16) -> i32 {
     900 + command as i32
@@ -83,6 +127,10 @@ pub fn select(hwnd: HWND, command: u16) {
         STATUS,
         NEW_FOLDER as i32,
         NEW_LIST as i32,
+        SHOW_PANEL as i32,
+        HIDE_PANEL as i32,
+        MANAGE_TABS as i32,
+        PANEL_SETTINGS as i32,
     ] {
         unsafe {
             ShowWindow(
@@ -111,14 +159,33 @@ pub fn select(hwnd: HWND, command: u16) {
 pub fn sidebar(width: i32) -> i32 {
     if width < 900 { 220 } else { 240 }
 }
+fn section_top(height: i32) -> i32 {
+    if height < 600 { 184 } else { 236 }
+}
 pub fn layout(hwnd: HWND, width: i32, height: i32) {
     titlebar::layout(hwnd, width);
     let top = titlebar::HEIGHT;
     let rail = sidebar(width);
     let left = rail + 28;
     let body = width - left - 28;
-    move_control(hwnd, TITLE, left, top + 30, body, 44);
-    move_control(hwnd, SUBTITLE, left + 2, top + 80, body - 4, 24);
+    let compact = height < 600;
+    let section = top + section_top(height);
+    move_control(
+        hwnd,
+        TITLE,
+        left,
+        top + if compact { 20 } else { 30 },
+        body,
+        44,
+    );
+    move_control(
+        hwnd,
+        SUBTITLE,
+        left + 2,
+        top + if compact { 68 } else { 80 },
+        body - 4,
+        24,
+    );
     let step = if height < 540 { 40 } else { 44 };
     for (i, (id, _)) in NAVIGATION.iter().enumerate() {
         move_control(
@@ -141,25 +208,38 @@ pub fn layout(hwnd: HWND, width: i32, height: i32) {
         );
     }
     let card = (body - 14) / 2;
-    move_control(hwnd, NEW_FOLDER as i32, left, top + 128, card, 84);
+    let card_top = top + if compact { 100 } else { 128 };
+    let card_height = if compact { 68 } else { 84 };
+    move_control(hwnd, NEW_FOLDER as i32, left, card_top, card, card_height);
     move_control(
         hwnd,
         NEW_LIST as i32,
         left + card + 14,
-        top + 128,
+        card_top,
         body - card - 14,
-        84,
+        card_height,
     );
+    let action_width = ((body - 24) / 4).min(190);
+    for (index, (id, _)) in ACTIONS.iter().enumerate() {
+        move_control(
+            hwnd,
+            *id as i32,
+            left + index as i32 * (action_width + 8),
+            section + 40,
+            action_width,
+            40,
+        );
+    }
     move_control(
         hwnd,
         LIST,
         left + 1,
-        top + 278,
+        section + 94,
         body - 2,
-        height - top - 338,
+        height - section - 154,
     );
     move_control(hwnd, STATUS, left + 2, height - 40, body - 4, 24);
-    for (index, w) in [(0, 180), (1, (body - 350).max(100)), (2, 54), (3, 108)] {
+    for (index, w) in [(0, 160), (1, (body - 414).max(100)), (2, 64), (3, 166)] {
         unsafe {
             SendMessageW(
                 control(hwnd, LIST),
@@ -178,11 +258,62 @@ fn area(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) -> RECT {
         bottom: chrome::scale(hwnd, y + h),
     }
 }
+pub fn draw_visibility(hwnd: HWND, dc: HDC, index: usize, bounds: RECT) {
+    let visible = VIEWS.with(|views| {
+        views
+            .borrow()
+            .get(&(hwnd as usize))
+            .and_then(|view| view.main.get(index))
+            .is_some_and(|row| row.visible)
+    });
+    let s = |value| chrome::scale(hwnd, value);
+    let track = RECT {
+        left: bounds.left + s(8),
+        right: bounds.left + s(42),
+        top: (bounds.top + bounds.bottom - s(18)) / 2,
+        bottom: (bounds.top + bounds.bottom + s(18)) / 2,
+    };
+    with_palette(hwnd, |p| {
+        chrome::rounded(
+            dc,
+            &track,
+            s(18),
+            if visible { p.accent } else { p.surface },
+            if visible { p.accent } else { p.muted },
+        );
+        let left = track.left + s(if visible { 19 } else { 3 });
+        chrome::rounded(
+            dc,
+            &RECT {
+                left,
+                right: left + s(12),
+                top: track.top + s(3),
+                bottom: track.top + s(15),
+            },
+            s(12),
+            if visible { p.background } else { p.muted },
+            if visible { p.background } else { p.muted },
+        );
+        chrome::label(
+            dc,
+            &crate::locale::text(if visible { "Visible" } else { "Hidden" }),
+            RECT {
+                left: track.right + s(8),
+                right: bounds.right - s(8),
+                ..bounds
+            },
+            chrome::font(hwnd, 0),
+            if visible { p.text } else { p.muted },
+            DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+        );
+    });
+}
 pub fn paint(hwnd: HWND, dc: HDC, bounds: RECT) {
     let width = bounds.right * 96 / unsafe { GetDpiForWindow(hwnd) }.max(96) as i32;
     let height = bounds.bottom * 96 / unsafe { GetDpiForWindow(hwnd) }.max(96) as i32;
     let rail = sidebar(width);
     let top = titlebar::HEIGHT;
+    let section = top + section_top(height);
     with_palette(hwnd, |p| {
         let rail_color = blend(p.background, p.surface, 55);
         chrome::fill(dc, &area(hwnd, 0, top, rail, height - top), rail_color);
@@ -203,7 +334,7 @@ pub fn paint(hwnd: HWND, dc: HDC, bounds: RECT) {
         chrome::label(
             dc,
             &crate::locale::text("Your panels"),
-            area(hwnd, rail + 28, top + 236, 180, 30),
+            area(hwnd, rail + 28, section, 180, 30),
             chrome::font(hwnd, 1),
             p.text,
             DT_VCENTER | DT_SINGLELINE,
@@ -211,7 +342,7 @@ pub fn paint(hwnd: HWND, dc: HDC, bounds: RECT) {
         chrome::label(
             dc,
             &format!("{count} {}", crate::locale::text("panels")),
-            area(hwnd, width - 180, top + 236, 150, 30),
+            area(hwnd, width - 180, section, 150, 30),
             chrome::font(hwnd, 0),
             p.muted,
             DT_RIGHT | DT_VCENTER | DT_SINGLELINE,
@@ -221,9 +352,9 @@ pub fn paint(hwnd: HWND, dc: HDC, bounds: RECT) {
             &area(
                 hwnd,
                 rail + 27,
-                top + 277,
+                section + 93,
                 width - rail - 54,
-                height - top - 336,
+                height - section - 152,
             ),
             chrome::scale(hwnd, 16),
             p.background,
@@ -238,6 +369,9 @@ pub fn draw_button(draw: &DRAWITEMSTRUCT) {
     let pressed = draw.itemState & ODS_SELECTED != 0;
     let focused = chrome::keyboard_focus(draw.hwndItem);
     let card = matches!(id, NEW_FOLDER | NEW_LIST);
+    let action = ACTIONS.iter().any(|(command, _)| *command == id);
+    let compact_action = action && draw.rcItem.right - draw.rcItem.left < chrome::scale(hwnd, 152);
+    let disabled = draw.itemState & ODS_DISABLED != 0;
     let active = active(hwnd) == id;
     let icon = match id {
         OVERVIEW => "\u{e80f}",
@@ -247,6 +381,9 @@ pub fn draw_button(draw: &DRAWITEMSTRUCT) {
         NEW_FOLDER => "\u{e8b7}",
         NEW_LIST => "\u{e718}",
         TOGGLE => "\u{e890}",
+        SHOW_PANEL => "\u{e890}",
+        HIDE_PANEL => "\u{ed1a}",
+        MANAGE_TABS => "\u{e8a9}",
         LAYOUTS => "\u{e8a9}",
         BACKUPS => "\u{e81c}",
         AUTO_SORT => "\u{e8cb}",
@@ -257,13 +394,13 @@ pub fn draw_button(draw: &DRAWITEMSTRUCT) {
         chrome::fill(
             draw.hDC,
             &draw.rcItem,
-            if card { p.background } else { rail },
+            if card || action { p.background } else { rail },
         );
         let target = if pressed || active {
             p.selected
         } else if hot {
             p.hover
-        } else if card {
+        } else if card || action {
             p.surface
         } else {
             rail
@@ -284,7 +421,7 @@ pub fn draw_button(draw: &DRAWITEMSTRUCT) {
                 1,
                 if focused || (hot && card) {
                     p.accent
-                } else if card {
+                } else if card || action {
                     p.border
                 } else {
                     target
@@ -315,18 +452,20 @@ pub fn draw_button(draw: &DRAWITEMSTRUCT) {
         if card {
             chrome::rounded(draw.hDC, &icon_rect, s(12), p.selected, p.selected);
         }
-        chrome::label(
-            draw.hDC,
-            icon,
-            icon_rect,
-            chrome::font(hwnd, 3),
-            if hot || card || active {
-                p.accent
-            } else {
-                p.muted
-            },
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-        );
+        if !compact_action {
+            chrome::label(
+                draw.hDC,
+                icon,
+                icon_rect,
+                chrome::font(hwnd, 3),
+                if !disabled && (hot || card || active) {
+                    p.accent
+                } else {
+                    p.muted
+                },
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+            );
+        }
         let caption = match id {
             NEW_FOLDER => crate::locale::text("Folder panel"),
             NEW_LIST => crate::locale::text("Pinned list"),
@@ -334,7 +473,14 @@ pub fn draw_button(draw: &DRAWITEMSTRUCT) {
             _ => text(draw.hwndItem),
         };
         let label = RECT {
-            left: r.left + s(if card { 68 } else { 50 }),
+            left: r.left
+                + s(if compact_action {
+                    8
+                } else if card {
+                    68
+                } else {
+                    50
+                }),
             top: if card { r.top + s(17) } else { r.top },
             right: r.right - s(12),
             bottom: if card { r.top + s(42) } else { r.bottom },
@@ -344,8 +490,17 @@ pub fn draw_button(draw: &DRAWITEMSTRUCT) {
             &caption,
             label,
             chrome::font(hwnd, usize::from(card || active)),
-            if active { p.accent } else { p.text },
-            DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+            if disabled {
+                p.muted
+            } else if active {
+                p.accent
+            } else {
+                p.text
+            },
+            DT_VCENTER
+                | DT_SINGLELINE
+                | DT_END_ELLIPSIS
+                | if compact_action { DT_CENTER } else { DT_LEFT },
         );
         if card {
             chrome::label(

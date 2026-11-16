@@ -16,8 +16,10 @@ mod marquee;
 mod menus;
 mod motion;
 mod panel_options;
+mod rule_editor;
 mod scrollbars;
 mod scrolling;
+mod sort_rules;
 mod styled;
 mod text_render;
 mod titlebar;
@@ -106,6 +108,10 @@ const OVERVIEW: u16 = 244;
 const SHORTCUTS: u16 = 245;
 const EMPTY_PANEL: u16 = 246;
 const LAYOUT_BUILDER: u16 = 247;
+const SHOW_PANEL: u16 = 248;
+const TOGGLE_SELECTED: u16 = 249;
+const MANAGE_TABS: u16 = 250;
+const HIDE_TAB: u16 = 251;
 const HOVER_TIMER: usize = 5;
 const ZOOM_TIMER: usize = 6;
 const TRAY_RETRY_TIMER: usize = 7;
@@ -113,9 +119,11 @@ const UPDATE_TIMER: usize = 8;
 const ZOOM_STATUS_TIMER: usize = 9;
 
 enum Event {
+    SortRules(sort_rules::Action),
     PreferenceSaved(u16, form::Answer),
     PreferenceCancelled(u16),
     Command(usize, u16),
+    PanelVisibility(usize),
     HeaderDoubleClick(usize),
     Close(usize),
     Geometry(usize),
@@ -144,7 +152,7 @@ enum Event {
 struct ViewData {
     source: Option<content::Source>,
     rows: Arc<Vec<Row>>,
-    main: Vec<Vec<Vec<u16>>>,
+    main: Vec<dashboard::Row>,
     is_main: bool,
     workspace_page: u16,
     photos: bool,
@@ -852,7 +860,7 @@ fn display_info(hwnd: HWND, notification: *mut NMLVDISPINFOW) {
         if view.is_main {
             if let Some(row) = view.main.get(item.iItem as usize) {
                 if item.mask & LVIF_TEXT != 0 {
-                    if let Some(text) = row.get(item.iSubItem as usize) {
+                    if let Some(text) = row.cells.get(item.iSubItem as usize) {
                         copy_text(item.pszText, item.cchTextMax, text);
                     }
                 }
@@ -954,6 +962,19 @@ unsafe extern "system" fn list_proc(
         scrolling::list(hwnd, message, wparam);
         return 0;
     }
+    if message == WM_SETCURSOR && !chrome::panel(parent as _) {
+        let mut hit: LVHITTESTINFO = unsafe { std::mem::zeroed() };
+        unsafe {
+            GetCursorPos(&mut hit.pt);
+            ScreenToClient(hwnd, &mut hit.pt);
+            if SendMessageW(hwnd, LVM_SUBITEMHITTEST, 0, &mut hit as *mut _ as isize) >= 0
+                && hit.iSubItem == 3
+            {
+                SetCursor(LoadCursorW(null_mut(), IDC_HAND));
+                return 1;
+            }
+        }
+    }
     if matches!(
         message,
         WM_NCDESTROY | LVM_SETVIEW | LVM_SETITEMCOUNT | WM_VSCROLL | WM_HSCROLL | WM_KEYDOWN
@@ -1046,6 +1067,7 @@ unsafe extern "system" fn list_proc(
     if message == WM_KEYDOWN {
         let ctrl = unsafe { GetKeyState(VK_CONTROL as i32) } < 0;
         let command = match wparam as u16 {
+            VK_SPACE if !chrome::panel(parent as _) => Some(TOGGLE_SELECTED),
             VK_RETURN => Some(OPEN),
             VK_DELETE => Some(DELETE),
             VK_F2 => Some(RENAME),
@@ -1222,11 +1244,23 @@ unsafe extern "system" fn window_proc(
                 return chrome::custom_list(hwnd, unsafe { &mut *(lparam as *mut NMLVCUSTOMDRAW) });
             }
             match header.code {
+                LVN_ITEMCHANGED | LVN_ODSTATECHANGED
+                    if header.idFrom == LIST as usize && !chrome::panel(hwnd) =>
+                {
+                    dashboard::update_actions(hwnd);
+                }
                 LVN_GETDISPINFOW => {
                     display_info(hwnd, lparam as *mut _);
                     return 0;
                 }
                 NM_CLICK | NM_DBLCLK if header.idFrom == LIST as usize => {
+                    let item = unsafe { &*(lparam as *const NMITEMACTIVATE) };
+                    if !chrome::panel(hwnd) && item.iSubItem == 3 {
+                        if header.code == NM_CLICK && item.iItem >= 0 {
+                            emit(Event::PanelVisibility(item.iItem as usize));
+                        }
+                        return 0;
+                    }
                     let single = VIEWS.with(|views| {
                         views
                             .borrow()

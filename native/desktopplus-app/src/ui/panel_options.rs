@@ -389,6 +389,10 @@ impl Editor {
                 ),
                 ("new_tab", Input::Action("Add tab".into(), ADD_TAB)),
                 (
+                    "manage_tabs",
+                    Input::Action("Manage tabs".into(), MANAGE_TABS),
+                ),
+                (
                     "new_panel",
                     Input::Action("New folder panel".into(), NEW_FOLDER),
                 ),

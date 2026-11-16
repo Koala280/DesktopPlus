@@ -201,7 +201,27 @@ impl Panel {
                 }
             }
         }
+        self.ensure_visible_active_tab();
+    }
+    pub fn visible_tab_indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.tabs
+            .as_ref()
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .filter_map(|(index, tab)| (!tab.is_hidden).then_some(index))
+    }
+    pub fn ensure_visible_active_tab(&mut self) {
+        let tabs = self.tabs.as_ref().unwrap();
         self.active_tab_index = self.active_tab_index.min(tabs.len() - 1);
+        if tabs[self.active_tab_index].is_hidden {
+            if let Some(index) = tabs.iter().position(|tab| !tab.is_hidden) {
+                self.active_tab_index = index;
+            }
+        }
+    }
+    pub fn hidden(&self) -> bool {
+        self.is_hidden || self.visible_tab_indices().next().is_none()
     }
     pub fn active(&self) -> &Tab {
         &self.tabs.as_ref().unwrap()[self.active_tab_index]
@@ -366,11 +386,19 @@ impl Default for SortRule {
         }
     }
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct AutoSort {
     pub auto_sort_enabled: bool,
     pub rules: Vec<SortRule>,
+}
+impl Default for AutoSort {
+    fn default() -> Self {
+        Self {
+            auto_sort_enabled: false,
+            rules: default_rules(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -439,9 +467,6 @@ impl Settings {
                 panel.normalize();
             }
         }
-        if self.desktop_auto_sort.rules.is_empty() {
-            self.desktop_auto_sort.rules = default_rules();
-        }
     }
 }
 
@@ -485,6 +510,60 @@ pub fn default_rules() -> Vec<SortRule> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hidden_tabs_survive_reload_and_active_selection_uses_visible_tabs() {
+        let mut panel = Panel {
+            tabs: Some(vec![
+                Tab {
+                    tab_name: "Hidden first".into(),
+                    is_hidden: true,
+                    ..Tab::default()
+                },
+                Tab {
+                    tab_name: "Visible".into(),
+                    ..Tab::default()
+                },
+                Tab {
+                    tab_name: "Hidden last".into(),
+                    is_hidden: true,
+                    ..Tab::default()
+                },
+            ]),
+            active_tab_index: 2,
+            ..Panel::default()
+        };
+        panel.normalize();
+        assert_eq!(panel.active_tab_index, 1);
+        assert_eq!(panel.visible_tab_indices().collect::<Vec<_>>(), vec![1]);
+        assert!(!panel.hidden());
+        panel.active_mut().is_hidden = true;
+        let mut saved: Panel =
+            serde_json::from_str(&serde_json::to_string(&panel).unwrap()).unwrap();
+        saved.normalize();
+        assert!(saved.hidden());
+        assert_eq!(saved.visible_tab_indices().count(), 0);
+        assert_eq!(saved.active_tab_index, 1);
+        assert_eq!(saved.tabs.as_ref().unwrap().len(), 3);
+        saved.tabs.as_mut().unwrap()[2].is_hidden = false;
+        saved.ensure_visible_active_tab();
+        assert_eq!(saved.active_tab_index, 2);
+        assert!(!saved.hidden());
+    }
+
+    #[test]
+    fn removed_rules_stay_removed_after_save_and_reload() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.desktop_auto_sort.rules.len(), 10);
+        settings.desktop_auto_sort.rules.clear();
+        let json = serde_json::to_string(&settings).unwrap();
+        let mut reloaded = crate::config::parse(&json).unwrap();
+        reloaded.normalize();
+        assert!(reloaded.desktop_auto_sort.rules.is_empty());
+        for json in ["{}", r#"{"DesktopAutoSort":{}}"#] {
+            let defaults = crate::config::parse(json).unwrap();
+            assert_eq!(defaults.desktop_auto_sort.rules.len(), 10);
+        }
+    }
     #[test]
     fn header_styles_default_and_roundtrip_with_saved_layouts() {
         let legacy = crate::config::parse(r#"{"Windows":[{"PanelTitle":"Old panel"}]}"#).unwrap();

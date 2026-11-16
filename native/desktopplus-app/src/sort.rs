@@ -273,6 +273,19 @@ pub fn run(
     }
     Ok(report)
 }
+/// Resolve a sample name using exactly the same enabled rules as a real sort.
+pub fn matching_rule<'a>(
+    rules: &'a [SortRule],
+    path: &Path,
+    directory: bool,
+) -> Option<&'a SortRule> {
+    resolve(
+        &rules.iter().filter(|rule| rule.enabled).collect::<Vec<_>>(),
+        path,
+        directory,
+    )
+}
+
 fn resolve<'a>(rules: &[&'a SortRule], path: &Path, directory: bool) -> Option<&'a SortRule> {
     if directory {
         return rules.iter().find(|rule| rule.match_folders).copied();
@@ -470,6 +483,52 @@ mod tests {
                 .unwrap()
                 .match_folders
         );
+    }
+    #[test]
+    fn preview_uses_enabled_rules_and_the_same_priority_as_sorting() {
+        let mut rules = crate::model::default_rules();
+        rules.push(SortRule {
+            extensions: vec![".pdf".into()],
+            target_panel_name: "Custom PDFs".into(),
+            ..SortRule::default()
+        });
+        rules.push(SortRule {
+            extensions: vec![".pdf".into()],
+            target_panel_name: "Later PDFs".into(),
+            ..SortRule::default()
+        });
+        assert_eq!(
+            matching_rule(&rules, Path::new("REPORT.PDF"), false)
+                .unwrap()
+                .target_panel_name,
+            "Custom PDFs"
+        );
+        rules[10].enabled = false;
+        assert_eq!(
+            matching_rule(&rules, Path::new("report.pdf"), false)
+                .unwrap()
+                .target_panel_name,
+            "Later PDFs"
+        );
+        rules[11].enabled = false;
+        assert_eq!(
+            matching_rule(&rules, Path::new("report.pdf"), false)
+                .unwrap()
+                .target_panel_name,
+            "Documents"
+        );
+        assert!(
+            matching_rule(&rules, Path::new("report.unknown"), false)
+                .unwrap()
+                .catch_all
+        );
+        rules[0].enabled = false;
+        assert!(matching_rule(&rules, Path::new("folder.pdf"), true).is_none());
+        for rule in &mut rules {
+            rule.enabled = false;
+        }
+        assert!(matching_rule(&rules, Path::new("report.pdf"), false).is_none());
+        assert!(matching_rule(&[], Path::new("report.pdf"), false).is_none());
     }
     #[test]
     fn sort_creates_restore_point_and_never_overwrites_collisions() {

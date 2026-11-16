@@ -1803,6 +1803,10 @@ pub(super) fn custom_list(hwnd: HWND, draw: &mut NMLVCUSTOMDRAW) -> LRESULT {
                 );
             }
             let mut text_area = area;
+            if main && draw.iSubItem == 3 {
+                dashboard::draw_visibility(hwnd, cell_dc, index, area);
+                return;
+            }
             text_area.left += content_scale(hwnd, 8);
             text_area.right -= content_scale(hwnd, 8);
             if draw.iSubItem == 0 {

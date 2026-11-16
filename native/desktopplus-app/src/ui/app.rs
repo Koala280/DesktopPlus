@@ -1,6 +1,8 @@
 use super::*;
 mod behavior;
 mod preferences;
+mod rules;
+mod tabs;
 mod updates;
 use crate::{
     backup,
@@ -540,7 +542,7 @@ impl App {
                 );
             }
         }
-        if !panel.is_hidden {
+        if !panel.hidden() && !self.hidden {
             unsafe {
                 ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                 SetWindowPos(
@@ -562,6 +564,7 @@ impl App {
             return;
         };
         let panel = &self.settings.windows[index];
+        let visible_tabs: Vec<_> = panel.visible_tab_indices().collect();
         let update = content::Update::new(hwnd as _);
         if content::prepare(hwnd as _, panel.active()) {
             self.windows[&hwnd]
@@ -581,7 +584,7 @@ impl App {
                 view.collapsed = panel.is_collapsed
                     && self.windows[&hwnd].hover_restore.is_none()
                     && !motion::resizing(hwnd as _);
-                view.tab_count = panel.tabs.as_ref().unwrap().len();
+                view.tab_count = visible_tabs.len();
                 view.kind = panel.active().panel_type.clone();
                 view.options = panel_options::Options::resolved(panel, &self.settings.appearance);
             }
@@ -589,7 +592,8 @@ impl App {
         unsafe {
             let tabs = control(hwnd as _, TABS);
             let count = SendMessageW(tabs, TCM_GETITEMCOUNT, 0, 0).max(0) as usize;
-            for (index, tab) in panel.tabs.as_ref().unwrap().iter().enumerate() {
+            for (index, model_index) in visible_tabs.iter().enumerate() {
+                let tab = &panel.tabs.as_ref().unwrap()[*model_index];
                 let mut name = wide(&tab.tab_name);
                 if index < count {
                     let mut old = vec![0u16; name.len() + 1];
@@ -620,10 +624,18 @@ impl App {
                     &item as *const _ as isize,
                 );
             }
-            for index in (panel.tabs.as_ref().unwrap().len()..count).rev() {
+            for index in (visible_tabs.len()..count).rev() {
                 SendMessageW(tabs, TCM_DELETEITEM, index, 0);
             }
-            SendMessageW(tabs, TCM_SETCURSEL, panel.active_tab_index, 0);
+            SendMessageW(
+                tabs,
+                TCM_SETCURSEL,
+                visible_tabs
+                    .iter()
+                    .position(|index| *index == panel.active_tab_index)
+                    .unwrap_or(usize::MAX),
+                0,
+            );
             let view = match panel.active().view_mode.as_str() {
                 "icons" => LV_VIEW_ICON,
                 "photos" => LV_VIEW_ICON,
@@ -863,21 +875,31 @@ impl App {
                 } else {
                     panel.active().folder_path.clone()
                 };
-                vec![
-                    panel.panel_title.encode_utf16().collect(),
-                    source.encode_utf16().collect(),
-                    panel
-                        .tabs
-                        .as_ref()
-                        .unwrap()
-                        .len()
-                        .to_string()
+                dashboard::Row {
+                    visible: !self.hidden && !panel.hidden(),
+                    cells: [
+                        panel.panel_title.encode_utf16().collect(),
+                        source.encode_utf16().collect(),
+                        {
+                            let visible = panel.visible_tab_indices().count();
+                            let total = panel.tabs.as_ref().unwrap().len();
+                            if visible == total {
+                                total.to_string()
+                            } else {
+                                format!("{visible}/{total}")
+                            }
+                        }
                         .encode_utf16()
                         .collect(),
-                    crate::locale::text(if panel.is_hidden { "Hidden" } else { "Visible" })
+                        crate::locale::text(if self.hidden || panel.hidden() {
+                            "Hidden"
+                        } else {
+                            "Visible"
+                        })
                         .encode_utf16()
                         .collect(),
-                ]
+                    ],
+                }
             })
             .collect();
         VIEWS.with(|views| {
@@ -894,10 +916,10 @@ impl App {
             );
             InvalidateRect(control(self.main, LIST), null(), 1);
         }
-        self.status(
-            &crate::locale::text("{count} panels · Double-click to open")
-                .replace("{count}", &self.settings.windows.len().to_string()),
-        );
+        dashboard::update_actions(self.main);
+        self.status(&crate::locale::text(
+            "Space: show/hide · Right-click: more actions",
+        ));
         unsafe {
             InvalidateRect(self.main, null(), 0);
         }
@@ -975,7 +997,7 @@ impl App {
                 .windows
                 .iter()
                 .find(|panel| panel.panel_id == window.id)
-                .is_some_and(|panel| panel.is_hidden)
+                .is_some_and(Panel::hidden)
     }
     fn toggle(&mut self) {
         self.set_foreground(false);
@@ -984,6 +1006,67 @@ impl App {
             let hidden = self.panel_hidden(window);
             unsafe {
                 ShowWindow(*hwnd as _, if hidden { SW_HIDE } else { SW_SHOWNOACTIVATE });
+            }
+        }
+        self.update_main();
+    }
+    fn set_panel_visibility(&mut self, indices: &[usize], visible: bool) {
+        if !indices
+            .iter()
+            .any(|index| *index < self.settings.windows.len())
+        {
+            return;
+        }
+        self.set_foreground(false);
+        // Showing one panel after the global shortcut must keep every other
+        // panel hidden. Materialize the temporary mask before clearing it.
+        if visible && self.hidden {
+            for panel in &mut self.settings.windows {
+                panel.is_hidden = true;
+            }
+            self.hidden = false;
+        }
+        for index in indices {
+            if let Some(panel) = self.settings.windows.get_mut(*index) {
+                panel.is_hidden = !visible;
+                if visible && panel.visible_tab_indices().next().is_none() {
+                    panel.active_mut().is_hidden = false;
+                    if let Some((hwnd, _)) = self
+                        .windows
+                        .iter()
+                        .find(|(_, window)| window.id == panel.panel_id)
+                    {
+                        self.tabs(*hwnd);
+                    }
+                }
+            }
+        }
+        self.sync_panel_visibility();
+        self.changed();
+    }
+    fn sync_panel_visibility(&mut self) {
+        for hwnd in self.windows.keys().copied().collect::<Vec<_>>() {
+            let hidden = self.panel_hidden(&self.windows[&hwnd]);
+            if hidden {
+                self.restore_hover(hwnd);
+            }
+            unsafe {
+                SetWindowPos(
+                    hwnd as _,
+                    HWND_BOTTOM,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE
+                        | SWP_NOSIZE
+                        | SWP_NOACTIVATE
+                        | if hidden {
+                            SWP_HIDEWINDOW
+                        } else {
+                            SWP_SHOWWINDOW
+                        },
+                );
             }
         }
     }
@@ -1253,6 +1336,7 @@ impl App {
                 }
                 Output::Sorted(result) => {
                     self.sorting = false;
+                    sort_rules::busy(control(self.main, dashboard::form_id(AUTO_SORT)), false);
                     match result {
                         Ok(report) => {
                             for (name, path) in &report.targets {
@@ -1299,6 +1383,12 @@ impl App {
                                 report.duplicates,
                                 report.errors.len()
                             ));
+                            sort_rules::status(
+                                control(self.main, dashboard::form_id(AUTO_SORT)),
+                                &crate::locale::text("Sorted {count} items · {errors} errors")
+                                    .replace("{count}", &report.moved.to_string())
+                                    .replace("{errors}", &report.errors.len().to_string()),
+                            );
                             if !report.errors.is_empty() {
                                 let _ = crate::config::atomic_write(
                                     &self.store.data.join("last-sort.txt"),
@@ -1307,6 +1397,10 @@ impl App {
                             }
                         }
                         Err(error) => {
+                            sort_rules::status(
+                                control(self.main, dashboard::form_id(AUTO_SORT)),
+                                &error,
+                            );
                             self.status(&error);
                             message(self.main, &error);
                         }
@@ -1353,6 +1447,7 @@ impl App {
     }
     fn event(&mut self, event: Event) -> Result<(), String> {
         match event {
+            Event::SortRules(action) => self.sort_rule_action(action)?,
             Event::PreferenceSaved(command, answer) => self.save_preference(command, answer)?,
             Event::PreferenceCancelled(command) => {
                 unsafe {
@@ -1500,6 +1595,11 @@ impl App {
                 }
             }
             Event::Command(hwnd, command) => self.command(hwnd, command)?,
+            Event::PanelVisibility(index) => {
+                if let Some(panel) = self.settings.windows.get(index) {
+                    self.set_panel_visibility(&[index], self.hidden || panel.hidden());
+                }
+            }
             Event::HeaderDoubleClick(hwnd) => self.header_double_click(hwnd)?,
             Event::Close(hwnd) if hwnd == self.main as usize => {
                 if self.settings.close_behavior.eq_ignore_ascii_case("Exit") {
@@ -1512,11 +1612,7 @@ impl App {
             }
             Event::Close(hwnd) => {
                 if let Some(index) = self.panel_index(hwnd) {
-                    self.settings.windows[index].is_hidden = true;
-                    unsafe {
-                        ShowWindow(hwnd as _, SW_HIDE);
-                    }
-                    self.changed();
+                    self.set_panel_visibility(&[index], false);
                 }
             }
             Event::Geometry(hwnd) => {
@@ -1550,8 +1646,9 @@ impl App {
             Event::Tab(hwnd, tab) => {
                 // Tab selection preserves the panel's temporary hover expansion.
                 if let Some(index) = self.panel_index(hwnd) {
-                    if tab < self.settings.windows[index].tabs.as_ref().unwrap().len()
-                        && tab != self.settings.windows[index].active_tab_index
+                    let model_index = self.settings.windows[index].visible_tab_indices().nth(tab);
+                    if let Some(tab) = model_index
+                        .filter(|tab| *tab != self.settings.windows[index].active_tab_index)
                     {
                         self.settings.windows[index].active_tab_index = tab;
                         self.tabs(hwnd);
@@ -1561,8 +1658,8 @@ impl App {
                 }
             }
             Event::Activate(hwnd, item) if hwnd == self.main as usize => {
-                if let Some(panel) = self.settings.windows.get_mut(item) {
-                    panel.is_hidden = false;
+                self.set_panel_visibility(&[item], true);
+                if let Some(panel) = self.settings.windows.get(item) {
                     let id = panel.panel_id.clone();
                     if let Some((hwnd, _)) = self.windows.iter().find(|(_, window)| window.id == id)
                     {
@@ -1571,7 +1668,6 @@ impl App {
                             SetForegroundWindow(*hwnd as _);
                         }
                     }
-                    self.changed();
                 }
             }
             Event::Activate(hwnd, item) => {
@@ -1715,8 +1811,9 @@ impl App {
         }
         let mut items = if hwnd == self.main as usize {
             vec![
-                (OPEN, "Show panel"),
-                (HIDE_PANEL, "Hide panel"),
+                (SHOW_PANEL, "Show selected"),
+                (HIDE_PANEL, "Hide selected"),
+                (MANAGE_TABS, "Manage tabs"),
                 (PANEL_SETTINGS, "Panel settings"),
                 (COLUMNS, "Details columns…"),
                 (REMOVE_PANEL, "Remove panel"),
@@ -1742,6 +1839,8 @@ impl App {
                 (REFRESH, "Refresh\tF5"),
                 (ADD_TAB, "Add tab"),
                 (RENAME_TAB, "Rename tab"),
+                (HIDE_TAB, "Hide tab"),
+                (MANAGE_TABS, "Manage tabs"),
                 (CLOSE_TAB, "Close tab"),
                 (DETACH_TAB, "Detach tab"),
                 (MERGE_TAB, "Merge into another panel"),
@@ -1807,9 +1906,33 @@ impl App {
     }
     fn command(&mut self, mut hwnd: usize, command: u16) -> Result<(), String> {
         if hwnd == self.main as usize
+            && matches!(command, OPEN | SHOW_PANEL | HIDE_PANEL | TOGGLE_SELECTED)
+        {
+            let selection = selected(self.main);
+            if command != OPEN || !selection.is_empty() {
+                let visible = match command {
+                    HIDE_PANEL => false,
+                    TOGGLE_SELECTED => {
+                        self.hidden
+                            || selection.iter().any(|index| {
+                                self.settings.windows.get(*index).is_some_and(Panel::hidden)
+                            })
+                    }
+                    _ => true,
+                };
+                self.set_panel_visibility(&selection, visible);
+                if command == OPEN {
+                    if let Some(index) = selection.first() {
+                        self.event(Event::Activate(self.main as usize, *index))?;
+                    }
+                }
+                return Ok(());
+            }
+        }
+        if hwnd == self.main as usize
             && matches!(
                 command,
-                OPEN | HIDE_PANEL | REMOVE_PANEL | PANEL_SETTINGS | COLUMNS
+                REMOVE_PANEL | PANEL_SETTINGS | COLUMNS | MANAGE_TABS
             )
         {
             if let Some(index) = selected(self.main).first().copied() {
@@ -2084,6 +2207,7 @@ impl App {
                         panel.tabs.as_mut().unwrap().push(Tab::folder(&path));
                         panel.active_tab_index = panel.tabs.as_ref().unwrap().len() - 1;
                         self.tabs(hwnd);
+                        self.sync_panel_visibility();
                         self.configure();
                         self.refresh(hwnd);
                         self.changed();
@@ -2108,6 +2232,21 @@ impl App {
             }
             CLOSE_TAB | DETACH_TAB | TAB_LEFT | TAB_RIGHT | MERGE_TAB => {
                 self.tab_command(hwnd, command)?
+            }
+            MANAGE_TABS => self.manage_tabs(hwnd),
+            HIDE_TAB => {
+                if let Some(index) = self.panel_index(hwnd) {
+                    let panel = &self.settings.windows[index];
+                    let visibility: Vec<_> = panel
+                        .tabs
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .enumerate()
+                        .map(|(i, tab)| i != panel.active_tab_index && !tab.is_hidden)
+                        .collect();
+                    self.apply_tab_visibility(index, &visibility);
+                }
             }
             VIEW => {
                 if let Some(index) = self.panel_index(hwnd) {
@@ -2155,11 +2294,7 @@ impl App {
             }
             HIDE_PANEL => {
                 if let Some(index) = self.panel_index(hwnd) {
-                    self.settings.windows[index].is_hidden = true;
-                    unsafe {
-                        ShowWindow(hwnd as _, SW_HIDE);
-                    }
-                    self.changed();
+                    self.set_panel_visibility(&[index], false);
                 }
             }
             REMOVE_PANEL => {
@@ -2183,7 +2318,8 @@ impl App {
             COLUMNS => self.columns_dialog(hwnd),
             LAYOUTS => self.layouts()?,
             BACKUPS => self.backups()?,
-            AUTO_SORT | SORT_NOW => self.auto_sort(command == SORT_NOW)?,
+            AUTO_SORT => self.open_preference(AUTO_SORT)?,
+            SORT_NOW => self.sort_desktop()?,
             HELP => {
                 shell::open(
                     self.main,
@@ -2334,18 +2470,29 @@ impl App {
                 panel.active_tab_index = active.min(count - 2);
             } else {
                 let target = if command == TAB_LEFT {
-                    active.saturating_sub(1)
+                    panel
+                        .visible_tab_indices()
+                        .filter(|index| *index < active)
+                        .last()
+                        .unwrap_or(active)
                 } else {
-                    (active + 1).min(count - 1)
+                    panel
+                        .visible_tab_indices()
+                        .find(|index| *index > active)
+                        .unwrap_or(active)
                 };
                 panel.tabs.as_mut().unwrap().swap(active, target);
                 panel.active_tab_index = target;
             }
         }
+        for panel in &mut self.settings.windows {
+            panel.ensure_visible_active_tab();
+        }
         for hwnd in self.windows.keys().copied().collect::<Vec<_>>() {
             self.tabs(hwnd);
             self.refresh(hwnd);
         }
+        self.sync_panel_visibility();
         self.configure();
         self.changed();
         Ok(())
@@ -2397,11 +2544,17 @@ impl App {
         for (id, caption) in [(NEW_FOLDER, "+ Folder panel"), (NEW_LIST, "+ Pinned list")]
             .into_iter()
             .chain(dashboard::NAVIGATION.iter().copied())
+            .chain(dashboard::ACTIONS.iter().copied())
         {
             set_text(control(self.main, id as i32), &crate::locale::text(caption));
         }
         for command in dashboard::PREFERENCES {
-            if *command == THEMES {
+            if *command == AUTO_SORT {
+                sort_rules::refresh(
+                    control(self.main, dashboard::form_id(*command)),
+                    &self.settings.desktop_auto_sort,
+                );
+            } else if *command == THEMES {
                 design::relabel(control(self.main, dashboard::form_id(*command)));
             } else {
                 form::relabel(control(self.main, dashboard::form_id(*command)));
@@ -2481,7 +2634,11 @@ impl App {
             refresh_theme(hwnd as _);
         }
         for command in dashboard::PREFERENCES {
-            form::restyle(control(self.main, dashboard::form_id(*command)));
+            if *command == AUTO_SORT {
+                sort_rules::restyle(control(self.main, dashboard::form_id(*command)));
+            } else {
+                form::restyle(control(self.main, dashboard::form_id(*command)));
+            }
         }
         for hwnd in self.windows.keys() {
             if let Some(index) = self.panel_index(*hwnd) {
@@ -2672,102 +2829,6 @@ impl App {
         }
         Ok(())
     }
-    fn auto_sort(&mut self, run: bool) -> Result<(), String> {
-        if run {
-            return self.sort_desktop();
-        }
-        let choices = [
-            (1, "Sort desktop now".into()),
-            (2, "Edit rules".into()),
-            (
-                3,
-                if self.settings.desktop_auto_sort.auto_sort_enabled {
-                    "Disable automatic sorting"
-                } else {
-                    "Enable automatic sorting"
-                }
-                .into(),
-            ),
-        ];
-        match popup(self.main, None, &choices) {
-            Some(1) => self.sort_desktop()?,
-            Some(2) => {
-                let mut rules: Vec<_> = self
-                    .settings
-                    .desktop_auto_sort
-                    .rules
-                    .iter()
-                    .enumerate()
-                    .map(|(i, rule)| {
-                        (
-                            1000 + i as u16,
-                            format!(
-                                "{} → {}{}",
-                                rule.rule_name,
-                                rule.target_panel_name,
-                                if rule.enabled { "" } else { " (disabled)" }
-                            ),
-                        )
-                    })
-                    .collect();
-                rules.push((1, "Add rule…".into()));
-                if let Some(choice) = popup(self.main, None, &rules) {
-                    let index = if choice == 1 {
-                        self.settings.desktop_auto_sort.rules.len()
-                    } else {
-                        (choice - 1000) as usize
-                    };
-                    let rule = self
-                        .settings
-                        .desktop_auto_sort
-                        .rules
-                        .get(index)
-                        .cloned()
-                        .unwrap_or_default();
-                    if let Some(values) = dialog::edit(
-                        self.main,
-                        "Sort rule",
-                        vec![
-                            Field::Text("Rule name".into(), rule.rule_name.clone()),
-                            Field::Text(
-                                "Extensions (space separated, for example .pdf .docx)".into(),
-                                rule.extensions.join(" "),
-                            ),
-                            Field::Text("Target panel".into(), rule.target_panel_name.clone()),
-                            Field::Check("Enabled".into(), rule.enabled),
-                            Field::Check("Match folders".into(), rule.match_folders),
-                            Field::Check("Catch all other files".into(), rule.catch_all),
-                        ],
-                    ) {
-                        let mut rule = rule;
-                        rule.rule_name = values[0].clone();
-                        rule.extensions = values[1]
-                            .split_whitespace()
-                            .map(|ext| format!(".{}", ext.trim_start_matches('.').to_lowercase()))
-                            .collect();
-                        rule.target_panel_name = values[2].clone();
-                        rule.enabled = values[3] == "1";
-                        rule.match_folders = values[4] == "1";
-                        rule.catch_all = values[5] == "1";
-                        if index < self.settings.desktop_auto_sort.rules.len() {
-                            self.settings.desktop_auto_sort.rules[index] = rule;
-                        } else {
-                            self.settings.desktop_auto_sort.rules.push(rule);
-                        }
-                        self.changed();
-                    }
-                }
-            }
-            Some(3) => {
-                self.settings.desktop_auto_sort.auto_sort_enabled =
-                    !self.settings.desktop_auto_sort.auto_sort_enabled;
-                self.configure();
-                self.changed();
-            }
-            _ => {}
-        }
-        Ok(())
-    }
     fn sort_desktop(&mut self) -> Result<(), String> {
         if self.sorting {
             return Ok(());
@@ -2775,7 +2836,9 @@ impl App {
         self.capture_geometry();
         self.sorting = true;
         self.status("Sorting desktop…");
-        self.worker
+        sort_rules::busy(control(self.main, dashboard::form_id(AUTO_SORT)), true);
+        let result = self
+            .worker
             .sender
             .send(Job::Sort {
                 settings: Box::new(self.settings.clone()),
@@ -2783,7 +2846,12 @@ impl App {
                 storage: crate::config::local_data().join("AutoSortStorage"),
                 backups: self.store.data.join("Backups"),
             })
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string());
+        if result.is_err() {
+            self.sorting = false;
+            sort_rules::busy(control(self.main, dashboard::form_id(AUTO_SORT)), false);
+        }
+        result
     }
 }
 

@@ -56,7 +56,7 @@ foreach ($task in $tasks) {
 }
 $settingsSource = if (Test-Path -LiteralPath $nativeSettings) { $nativeSettings } elseif (Test-Path -LiteralPath $legacySettings) { $legacySettings } else { $null }
 if ($settingsSource) {
-    $settings = Get-Content -LiteralPath $settingsSource -Raw | ConvertFrom-Json
+    $settings = Get-Content -LiteralPath $settingsSource -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($settings -is [Array] -or $null -eq $settings) { throw 'Expected a DesktopPlus settings object.' }
 } else {
     $settings = [pscustomobject]@{}

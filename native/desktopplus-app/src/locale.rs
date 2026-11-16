@@ -539,6 +539,21 @@ pub fn configure(code: &str, directory: &Path) {
                 "Izvēlieties esošu sākuma mapi.",
             ),
             ("Your panels", "Deine Panels", "Tavi paneļi"),
+            ("Show selected", "Einblenden", "Rādīt atlasītos"),
+            ("Manage tabs", "Tabs verwalten", "Pārvaldīt cilnes"),
+            ("Visible tabs", "Sichtbare Tabs", "Redzamās cilnes"),
+            ("Hide tab", "Tab ausblenden", "Paslēpt cilni"),
+            (
+                "Hidden tabs are kept.",
+                "Ausgeblendete Tabs bleiben erhalten.",
+                "Paslēptās cilnes tiek saglabātas.",
+            ),
+            ("Hide selected", "Ausblenden", "Paslēpt atlasītos"),
+            (
+                "Space: show/hide · Right-click: more actions",
+                "Leertaste: ein/aus · Rechtsklick: weitere Aktionen",
+                "Atstarpe: rādīt/slēpt · Labais klikšķis: citas darbības",
+            ),
             ("Parent folder", "Übergeordneter Ordner", "Vecākmape"),
             ("Home folder", "Startordner", "Sākuma mape"),
             ("Add tab", "Tab hinzufügen", "Pievienot cilni"),
@@ -831,11 +846,8 @@ pub fn read(path: &Path) -> Result<(String, String, serde_json::Map<String, Valu
     {
         return Err("Invalid language code.".into());
     }
-    let name = value
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or(&code)
-        .to_owned();
+    let name =
+        crate::text_encoding::repair(value.get("name").and_then(Value::as_str).unwrap_or(&code));
     let source = resources
         .map(|(_, value)| value.get("translation").unwrap_or(value))
         .or_else(|| value.get("translations"))
@@ -843,16 +855,16 @@ pub fn read(path: &Path) -> Result<(String, String, serde_json::Map<String, Valu
     let mut translations = serde_json::Map::new();
     if let Some(source) = source.as_object() {
         for (key, value) in source {
-            if !value.is_string() {
+            let Some(text) = value.as_str() else {
                 continue;
-            }
+            };
             let key = if key.starts_with("Loc.") {
                 key.clone()
             } else {
                 format!("Loc.{key}")
             };
             if bundled()["en"].get(&key).is_some() {
-                translations.insert(key, value.clone());
+                translations.insert(key, Value::String(crate::text_encoding::repair(text)));
             }
         }
     }
@@ -884,4 +896,38 @@ pub fn languages(directory: &Path) -> Vec<(String, String)> {
         }
     }
     languages
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn imported_language_text_recovers_encoding_and_preserves_unicode() {
+        let directory = std::env::temp_dir().join(crate::model::new_id());
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("test.json");
+        let value = serde_json::json!({
+            "code": "test",
+            "name": "FranÃƒÂ§ais 日本語",
+            "translations": {
+                "AutoSortRuleShortcuts": "VerknÃƒÂ¼pfungen",
+                "Loc.AutoSortRuleInstallers": "Büro – Latviešu 😀"
+            }
+        });
+        std::fs::write(&path, format!("\u{feff}{value}")).unwrap();
+        let (code, name, translations) = read(&path).unwrap();
+        assert_eq!(code, "test");
+        assert_eq!(name, "Français 日本語");
+        assert_eq!(translations["Loc.AutoSortRuleShortcuts"], "Verknüpfungen");
+        assert_eq!(
+            translations["Loc.AutoSortRuleInstallers"],
+            "Büro – Latviešu 😀"
+        );
+        configure("test", &directory);
+        assert_eq!(text("Shortcuts"), "Verknüpfungen");
+        assert_eq!(text("Shortcuts\tCtrl+U"), "Verknüpfungen\tCtrl+U");
+        configure("en", &directory);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 }

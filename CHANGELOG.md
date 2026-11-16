@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-16
+
+### Added
+
+- Add a dedicated Sort rules workspace tab with rule creation, editing, activation and deletion, an integrated guide, and a filename test that previews the matching rule without moving files.
+- Add a visual rule editor with file-type categories, selectable extension chips, custom extensions, existing folder-panel and tab targets, and a live rule preview. Preserve selections across categories and rule types until Save; Cancel leaves the saved rule unchanged.
+- Add direct panel visibility controls and selection actions to the overview. Manage individual tabs from the overview, panel settings and tab menus; hidden tabs retain their folders and settings and can be shown again without recreating them.
+
+### Fixed
+
+- Preserve an intentionally empty sorting rule list after saving and restarting instead of silently restoring the built-in rules. Validate rule names, destinations and extensions before saving.
+- Keep active-tab selection, panel visibility, temporary foreground behavior and layout restoration consistent when panels or individual tabs are hidden.
+- Recover incorrectly decoded Unicode labels in saved settings, backups and imported language files. Repair broken file references only when the original path is missing and the corrected path exists; preserve real filenames and backup move records.
+- Read installation settings explicitly as UTF-8 to prevent new encoding damage during native migration.
+
 ## [2.2.0] - 2026-11-16
 
 ### Added

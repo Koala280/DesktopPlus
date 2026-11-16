@@ -113,7 +113,54 @@ pub fn parse(input: &str) -> Result<Settings, String> {
         value = serde_json::json!({"Windows": value});
     }
     normalize_json(&mut value);
+    repair_settings_text(&mut value);
     serde_json::from_value(value).map_err(|error| format!("Invalid settings: {error}"))
+}
+
+pub(crate) fn repair_settings_text(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map {
+                match key.as_str() {
+                    "PanelTitle" | "TabName" | "Name" | "PresetName" | "RuleName"
+                    | "TargetPanelName" | "FontFamily" => {
+                        if let Value::String(text) = value {
+                            *text = crate::text_encoding::repair(text);
+                        }
+                    }
+                    "FolderPath" | "DefaultFolderPath" => repair_path(value),
+                    "PinnedItems" => {
+                        if let Value::Array(items) = value {
+                            for item in items {
+                                repair_path(item);
+                            }
+                        }
+                    }
+                    _ => repair_settings_text(value),
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                repair_settings_text(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn repair_path(value: &mut Value) {
+    if let Value::String(path) = value {
+        let repaired = crate::text_encoding::repair(path);
+        // A real file may intentionally have this spelling. Only repair a broken
+        // reference when the corrected target exists; never rename user files.
+        if repaired != *path
+            && matches!(Path::new(path).try_exists(), Ok(false))
+            && matches!(Path::new(&repaired).try_exists(), Ok(true))
+        {
+            *path = repaired;
+        }
+    }
 }
 
 fn normalize_json(value: &mut Value) {
@@ -263,6 +310,106 @@ fn clean_json(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn repairs_saved_labels_in_panels_layouts_presets_and_rules() {
+        let settings = parse(
+            r#"{
+            "windows": [{
+                "paneltitle": "VerknÃƒÂ¼pfungen",
+                "PresetName": "RosÃƒÂ©",
+                "Tabs": [{"TabName": "BÃ¼ro"}],
+                "PanelId": "literal-Ã¼",
+                "Unknown": "literal-Ã¼"
+            }],
+            "Layouts": [{"Name": "BÃ¼ro", "Panels": [{"PanelTitle": "GrÃ¼ÃŸe"}]}],
+            "Presets": [{"Name": "RosÃƒÂ©", "FontFamily": "SchÃ¶ne Schrift"}],
+            "DesktopAutoSort": {"Rules": [{
+                "RuleName": "Verkn\u00c3\u0192\u00c2\u00bcpfungen",
+                "TargetPanelName": "VerknÃ¼pfungen"
+            }]}
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(settings.windows[0].panel_title, "Verknüpfungen");
+        assert_eq!(settings.windows[0].preset_name, "Rosé");
+        assert_eq!(
+            settings.windows[0].tabs.as_ref().unwrap()[0].tab_name,
+            "Büro"
+        );
+        assert_eq!(settings.windows[0].panel_id, "literal-Ã¼");
+        assert_eq!(settings.windows[0].extra["Unknown"], "literal-Ã¼");
+        assert_eq!(settings.layouts[0].name, "Büro");
+        assert_eq!(settings.layouts[0].panels[0].panel_title, "Grüße");
+        assert_eq!(settings.presets[0]["Name"], "Rosé");
+        assert_eq!(settings.presets[0]["FontFamily"], "Schöne Schrift");
+        assert_eq!(
+            settings.desktop_auto_sort.rules[0].rule_name,
+            "Verknüpfungen"
+        );
+        assert_eq!(
+            settings.desktop_auto_sort.rules[0].target_panel_name,
+            "Verknüpfungen"
+        );
+    }
+
+    #[test]
+    fn repairs_only_missing_paths_with_an_existing_corrected_target() {
+        let directory = std::env::temp_dir().join(crate::model::new_id());
+        fs::create_dir_all(&directory).unwrap();
+        let correct = directory.join("Grüße.txt");
+        let broken = directory.join("GrÃƒÂ¼ÃƒÅ¸e.txt");
+        let absent = directory.join("fehlend-Ã¼.txt");
+        fs::write(&correct, "keep file contents").unwrap();
+        let input = serde_json::json!({"Windows": [{
+            "FolderPath": broken,
+            "DefaultFolderPath": broken,
+            "PinnedItems": [broken, absent],
+            "Tabs": [{"PinnedItems": [broken]}]
+        }]})
+        .to_string();
+        let settings = parse(&input).unwrap();
+        let panel = &settings.windows[0];
+        assert_eq!(Path::new(&panel.folder_path), correct);
+        assert_eq!(Path::new(&panel.default_folder_path), correct);
+        assert_eq!(Path::new(&panel.pinned_items[0]), correct);
+        assert_eq!(Path::new(&panel.pinned_items[1]), absent);
+        assert_eq!(
+            Path::new(&panel.tabs.as_ref().unwrap()[0].pinned_items[0]),
+            correct
+        );
+        assert!(!broken.exists());
+        assert_eq!(fs::read_to_string(&correct).unwrap(), "keep file contents");
+
+        fs::write(&broken, "intentional filename").unwrap();
+        let settings = parse(&input).unwrap();
+        assert_eq!(Path::new(&settings.windows[0].folder_path), broken);
+        assert_eq!(Path::new(&settings.windows[0].pinned_items[0]), broken);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn utf8_settings_survive_save_and_reload_without_further_changes() {
+        let directory = std::env::temp_dir().join(crate::model::new_id());
+        let store = Store::new(Some(directory.join("settings.json")));
+        let input = serde_json::json!({"Windows": [{
+            "PanelTitle": "VerknÃƒÂ¼pfungen – 日本語 😀",
+            "Tabs": [{"TabName": "Büro / Latviešu / Україна"}]
+        }], "Appearance": {"FontFamily": "Schöne Schrift"}});
+        atomic_write(&store.path, input.to_string().as_bytes()).unwrap();
+        let settings = store.load(false).unwrap();
+        assert_eq!(settings.windows[0].panel_title, "Verknüpfungen – 日本語 😀");
+        assert_eq!(
+            settings.windows[0].active().tab_name,
+            "Büro / Latviešu / Україна"
+        );
+        store.save(&settings).unwrap();
+        let saved = fs::read(&store.path).unwrap();
+        let reloaded = store.load(false).unwrap();
+        store.save(&reloaded).unwrap();
+        assert_eq!(fs::read(&store.path).unwrap(), saved);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn imports_case_insensitive_commented_legacy_json() {
         let data = "/* config */ {\"windows\": [{\"FolderPath\":\"C:\\\\files\", \"width\":\"420\",\"Tabs\":null,},], // yes\n \"Language\": \"de\",}";

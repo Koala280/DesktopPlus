@@ -9,6 +9,7 @@ mod model;
 mod shell;
 mod sort;
 mod startup;
+mod text_encoding;
 mod ui;
 mod update;
 mod worker;
