@@ -2,7 +2,10 @@
 use super::*;
 
 mod back_buffer;
+mod details;
 mod shapes;
+
+pub(super) use details::{paint_details, set_sort};
 
 #[cfg(test)]
 mod header_preview;
@@ -190,15 +193,10 @@ fn rect(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) -> RECT {
         bottom: scale(hwnd, y + h),
     }
 }
-/// Present the background and foreground together, including owner-drawn
-/// controls whose DC is not buffered by Windows. Keep item/window coordinates.
-pub(super) fn buffered(dc: HDC, bounds: RECT, draw: impl FnOnce(HDC)) {
-    back_buffer::paint(
-        dc,
-        bounds,
-        glass::for_window(unsafe { WindowFromDC(dc) }),
-        draw,
-    );
+/// Print DCs have no associated HWND. Use the actual control for its material,
+/// including nonclient scrollbar tracks and the corner where they intersect.
+pub(super) fn buffered_for(hwnd: HWND, dc: HDC, bounds: RECT, draw: impl FnOnce(HDC)) {
+    back_buffer::paint(dc, bounds, glass::for_window(hwnd), draw);
 }
 pub(super) fn draw_item(item: &DRAWITEMSTRUCT, draw: impl FnOnce(&DRAWITEMSTRUCT)) {
     back_buffer::paint(
@@ -1461,6 +1459,11 @@ unsafe extern "system" fn header_proc(
     _: usize,
     parent: usize,
 ) -> LRESULT {
+    if panel(parent as _) {
+        if let Some(result) = details::header_message(hwnd, parent as _, message, w, l) {
+            return result;
+        }
+    }
     if matches!(message, WM_RBUTTONUP | WM_CONTEXTMENU) && panel(parent as _) {
         emit(Event::Command(parent, COLUMNS));
         return 0;
@@ -1686,11 +1689,11 @@ fn draw_icon_grid(hwnd: HWND, dc: HDC) {
 pub(super) fn custom_list(hwnd: HWND, draw: &mut NMLVCUSTOMDRAW) -> LRESULT {
     let list = control(hwnd, LIST);
     let details = unsafe { SendMessageW(list, LVM_GETVIEW, 0, 0) == LV_VIEW_DETAILS as isize };
-    // Icon panels own WM_PAINT and present one complete buffered grid. The
+    // Panels own WM_PAINT and present one complete buffered content surface. The
     // native control also custom-draws synchronously while arranging items,
     // including during WM_SETREDRAW updates. Painting that path would overlay
     // new rows on the previous tab before the final spacing/scrollbars exist.
-    if content::updating(list) || (panel(hwnd) && !details) {
+    if content::updating(list) || panel(hwnd) {
         return CDRF_SKIPDEFAULT as isize;
     }
     if draw.nmcd.dwDrawStage == CDDS_PREPAINT {
@@ -1840,7 +1843,10 @@ fn empty(list: HWND, parent: HWND, dc: HDC) {
     // so no second, unbuffered pass erases icons after Windows presents a frame.
     unsafe {
         let count = SendMessageW(list, LVM_GETITEMCOUNT, 0, 0);
-        if count > 0 && SendMessageW(list, LVM_GETVIEW, 0, 0) == LV_VIEW_DETAILS as isize {
+        if count > 0
+            && !panel(parent)
+            && SendMessageW(list, LVM_GETVIEW, 0, 0) == LV_VIEW_DETAILS as isize
+        {
             let mut last = RECT {
                 left: LVIR_BOUNDS as i32,
                 ..RECT::default()
@@ -1927,7 +1933,11 @@ fn empty(list: HWND, parent: HWND, dc: HDC) {
         with_palette(parent, |p| {
             let mut content = RECT {
                 top: if SendMessageW(list, LVM_GETVIEW, 0, 0) == LV_VIEW_DETAILS as isize {
-                    scale(parent, 36)
+                    if panel(parent) {
+                        content_scale(parent, 38)
+                    } else {
+                        scale(parent, 36)
+                    }
                 } else {
                     0
                 },

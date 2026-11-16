@@ -427,6 +427,91 @@ fn marquee_is_in_the_buffered_frame_and_leaves_no_trails() {
 }
 
 #[test]
+fn wheel_pace_and_precision_input_match_in_icon_and_details_views() {
+    for view in [LV_VIEW_ICON, LV_VIEW_DETAILS] {
+        let coarse = Grid::new();
+        let fine = Grid::new();
+        unsafe {
+            SendMessageW(coarse.list, LVM_SETVIEW, view as usize, 0);
+            SendMessageW(fine.list, LVM_SETVIEW, view as usize, 0);
+        }
+        let start = coarse.item(0).top;
+        let unit = if view == LV_VIEW_DETAILS {
+            coarse.item(0).bottom - start
+        } else {
+            1
+        };
+        let step = chrome::scale(coarse.list, 48).max(unit);
+        let wheel = |list, delta: i16| unsafe {
+            SendMessageW(list, WM_MOUSEWHEEL, (delta as u16 as usize) << 16, 0);
+        };
+        wheel(coarse.list, -120);
+        assert_eq!(start - coarse.item(0).top, step / unit * unit);
+        for _ in 0..120 {
+            wheel(fine.list, -1);
+        }
+        assert_eq!(fine.item(0).top, coarse.item(0).top);
+        wheel(coarse.list, -360);
+        for _ in 0..360 {
+            wheel(fine.list, -1);
+        }
+        assert_eq!(start - coarse.item(0).top, 4 * step / unit * unit);
+        assert_eq!(fine.item(0).top, coarse.item(0).top);
+        // Whole-row rounding must not delay a reversed wheel notch.
+        let before_reverse = fine.item(0).top;
+        wheel(fine.list, 120);
+        assert_eq!(fine.item(0).top - before_reverse, step / unit * unit);
+        wheel(fine.list, i16::MAX);
+        assert_eq!(fine.item(0).top, start);
+        wheel(fine.list, -120);
+        assert_eq!(start - fine.item(0).top, step / unit * unit);
+    }
+}
+
+#[test]
+fn horizontal_wheel_uses_the_same_pace_and_ctrl_wheel_keeps_zoom() {
+    let grid = Grid::new();
+    unsafe {
+        SendMessageW(grid.list, LVM_SETVIEW, LV_VIEW_DETAILS as usize, 0);
+        let column = LVCOLUMNW {
+            mask: LVCF_WIDTH,
+            cx: 2000,
+            ..std::mem::zeroed()
+        };
+        SendMessageW(
+            grid.list,
+            LVM_INSERTCOLUMNW,
+            0,
+            &column as *const _ as isize,
+        );
+        let step = chrome::scale(grid.list, 48);
+        for _ in 0..120 {
+            SendMessageW(grid.list, WM_MOUSEHWHEEL, 1 << 16, 0);
+        }
+        assert_eq!(GetScrollPos(grid.list, SB_HORZ), step);
+        SendMessageW(
+            grid.list,
+            WM_MOUSEHWHEEL,
+            (120u16.wrapping_neg() as usize) << 16,
+            0,
+        );
+        assert_eq!(GetScrollPos(grid.list, SB_HORZ), 0);
+        let before = grid.item(0).top;
+        SendMessageW(
+            grid.list,
+            WM_MOUSEWHEEL,
+            (120 << 16) | MK_CONTROL as usize,
+            0,
+        );
+        assert_eq!(grid.item(0).top, before);
+        assert!(EVENTS.with(|events| matches!(
+            events.borrow_mut().pop_back(),
+            Some(Event::Zoom(parent, 120)) if parent == grid.parent as usize
+        )));
+    }
+}
+
+#[test]
 fn scrolling_commits_the_native_viewport_and_preserves_redraw_state() {
     let grid = Grid::new();
     let before = grid.item(0).top;

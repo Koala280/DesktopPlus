@@ -11,25 +11,6 @@ mod tests;
 
 fn validate(command: u16, values: &[String]) -> Result<(), String> {
     match command {
-        THEMES => {
-            for value in &values[..4] {
-                if value.len() != 7
-                    || !value.starts_with('#')
-                    || u32::from_str_radix(&value[1..], 16).is_err()
-                {
-                    return Err("Colors must use #RRGGBB format.".into());
-                }
-            }
-            if values[4].trim().is_empty() {
-                return Err("Enter a font family.".into());
-            }
-            if !values[5]
-                .parse::<f64>()
-                .is_ok_and(|size| size.is_finite() && (9.0..=24.0).contains(&size))
-            {
-                return Err("Text size must be between 9 and 24.".into());
-            }
-        }
         SHORTCUTS if values.iter().any(|value| hotkey(value).is_none()) => {
             return Err("Use a shortcut such as Ctrl + Alt + H.".into());
         }
@@ -40,114 +21,51 @@ fn validate(command: u16, values: &[String]) -> Result<(), String> {
 
 impl App {
     pub(super) fn panel_layout_builder(&mut self, hwnd: usize) -> Result<(), String> {
-        let Some(index) = self.panel_index(hwnd) else {
-            return Ok(());
-        };
-        let mut editor =
-            layout_builder::Editor::new(&self.settings, Some(&self.settings.windows[index]));
-        let pages = std::mem::take(&mut editor.pages);
-        if let Some(answer) = form::show(
-            hwnd as _,
-            "Panel appearance",
-            &crate::locale::text(
-                "Inherit from theme, or customize this panel. Blank fields follow the theme.",
-            ),
-            pages,
-            &|values| editor.validate(values),
-        ) {
-            editor.apply_panel(&mut self.settings.windows[index], &answer.values);
-            self.apply_theme();
-            self.refresh(hwnd);
-            self.changed();
+        if let Some(index) = self.panel_index(hwnd) {
+            if let Some(draft) = design::show(hwnd as _, &self.settings, Some(index)) {
+                self.save_design(draft);
+            }
         }
         Ok(())
     }
     pub(super) fn layout_builder(&mut self) -> Result<(), String> {
-        let mut draft = self.settings.clone();
-        loop {
-            let mut editor = layout_builder::Editor::new(&draft, None);
-            editor.pages.push(form::Page {
-                name: "Panels",
-                fields: draft
-                    .windows
-                    .iter()
-                    .enumerate()
-                    .map(|(i, panel)| {
-                        Input::Action(
-                            format!(
-                                "{} — {}",
-                                panel.panel_title,
-                                crate::locale::text("Customize…")
-                            ),
-                            4000 + i as u16,
-                        )
-                    })
-                    .collect(),
-            });
-            let pages = std::mem::take(&mut editor.pages);
-            let Some(answer) = form::show(
-                self.main,
-                "Layout builder",
-                &crate::locale::text(
-                    "Theme defaults and individual panels. Changes apply when you save.",
-                ),
-                pages,
-                &|values| editor.validate(values),
-            ) else {
-                return Ok(());
-            };
-            editor.apply_theme(&mut draft, &answer.values);
-            if let Some(action) = answer.action {
-                let index = usize::from(action.saturating_sub(4000));
-                if let Some(panel) = draft.windows.get(index) {
-                    let title = format!(
-                        "{} — {}",
-                        crate::locale::text("Layout builder"),
-                        panel.panel_title
-                    );
-                    let mut panel_editor = layout_builder::Editor::new(&draft, Some(panel));
-                    let pages = std::mem::take(&mut panel_editor.pages);
-                    if let Some(answer) = form::show(
-                        self.main,
-                        &title,
-                        &crate::locale::text(
-                            "Inherit from theme, or customize this panel. Blank fields follow the theme.",
-                        ),
-                        pages,
-                        &|values| panel_editor.validate(values),
-                    ) {
-                        panel_editor.apply_panel(&mut draft.windows[index], &answer.values);
-                    }
-                }
-                continue;
-            }
-            self.settings.appearance = draft.appearance;
-            for panel in &mut self.settings.windows {
-                if let Some(updated) = draft.windows.iter().find(|p| p.panel_id == panel.panel_id) {
-                    panel.header_style = updated.header_style;
-                    panel.appearance_overrides = updated.appearance_overrides.clone();
-                    panel.preset_name = updated.preset_name.clone();
-                    layout_builder::copy_legacy(panel, updated);
-                }
-            }
-            self.apply_theme();
-            for hwnd in self.windows.keys().copied().collect::<Vec<_>>() {
-                self.refresh(hwnd);
-            }
-            // Refresh only the appearance editor; other preference drafts stay intact.
-            let form = control(self.main, dashboard::form_id(THEMES));
-            if !form.is_null() {
+        if let Some(draft) = design::show(self.main, &self.settings, None) {
+            self.save_design(draft);
+            let editor = control(self.main, dashboard::form_id(THEMES));
+            if !editor.is_null() {
                 unsafe {
-                    DestroyWindow(form);
+                    DestroyWindow(editor);
                 }
                 self.open_preference(THEMES)?;
             }
-            self.changed();
-            return Ok(());
         }
+        Ok(())
+    }
+    fn save_design(&mut self, draft: Settings) {
+        self.settings.appearance = draft.appearance;
+        for panel in &mut self.settings.windows {
+            if let Some(updated) = draft.windows.iter().find(|p| p.panel_id == panel.panel_id) {
+                panel.header_style = updated.header_style;
+                panel.appearance_overrides = updated.appearance_overrides.clone();
+                panel.preset_name = updated.preset_name.clone();
+                layout_builder::copy_legacy(panel, updated);
+            }
+        }
+        self.apply_theme();
+        for hwnd in self.windows.keys().copied().collect::<Vec<_>>() {
+            self.refresh(hwnd);
+        }
+        self.changed();
     }
 
     pub(super) fn open_preference(&mut self, command: u16) -> Result<(), String> {
+        if command == THEMES {
+            if control(self.main, dashboard::form_id(THEMES)).is_null() {
+                design::embed(self.main, &self.settings)?;
+            }
+            dashboard::select(self.main, THEMES);
+            return Ok(());
+        }
         if control(self.main, dashboard::form_id(command)).is_null() {
             let (title, fields) = match command {
                 GENERAL => {
@@ -187,40 +105,6 @@ impl App {
                             Input::Action("Open settings folder".into(), OPEN_SETTINGS_FOLDER),
                             Input::Action("Project / help".into(), HELP),
                             Input::Action("Exit DesktopPlus".into(), EXIT),
-                        ],
-                    )
-                }
-                THEMES => {
-                    let theme = &self.settings.appearance;
-                    (
-                        "Appearance",
-                        vec![
-                            Input::Text(
-                                "Background (#RRGGBB)".into(),
-                                theme.background_color.clone(),
-                            ),
-                            Input::Text(
-                                "Header and buttons (#RRGGBB)".into(),
-                                theme.header_color.clone(),
-                            ),
-                            Input::Text("Text (#RRGGBB)".into(), theme.text_color.clone()),
-                            Input::Text("Accent (#RRGGBB)".into(), theme.accent_color.clone()),
-                            Input::Text("Font family".into(), theme.font_family.clone()),
-                            Input::Text(
-                                "Text size (9–24)".into(),
-                                theme.item_font_size.to_string(),
-                            ),
-                            Input::Choice(
-                                "Panel bar style (theme)".into(),
-                                HeaderStyle::captions(),
-                                theme.header_style.index(),
-                            ),
-                            Input::Choice(
-                                "Title and tab alignment".into(),
-                                crate::model::HeaderAlignment::captions(),
-                                theme.header_alignment.index(),
-                            ),
-                            Input::Action("Layout builder…".into(), LAYOUT_BUILDER),
                         ],
                     )
                 }
@@ -266,6 +150,11 @@ impl App {
         if let Some(action) = answer.action {
             return self.preference_action(action);
         }
+        if command == THEMES {
+            let draft = design::saved(control(self.main, dashboard::form_id(THEMES)))?;
+            self.save_design(draft);
+            return Ok(());
+        }
         let values = answer.values;
         validate(command, &values)?;
         match command {
@@ -289,25 +178,6 @@ impl App {
                     self.configure_updates();
                 }
                 self.relabel();
-            }
-            THEMES => {
-                let theme = &mut self.settings.appearance;
-                theme.background_color = values[0].clone();
-                theme.header_color = values[1].clone();
-                theme.text_color = values[2].clone();
-                theme.accent_color = values[3].clone();
-                theme.font_family = values[4].clone();
-                theme.item_font_size = values[5].parse().unwrap_or(14.0);
-                theme.header_style = HeaderStyle::from_index(
-                    values
-                        .get(6)
-                        .and_then(|value| value.parse().ok())
-                        .unwrap_or(0),
-                );
-                theme.header_alignment = crate::model::HeaderAlignment::from_index(
-                    values.get(7).and_then(|v| v.parse().ok()).unwrap_or(1),
-                );
-                self.apply_theme();
             }
             SHORTCUTS => {
                 self.settings.global_shortcuts.hide_panels_hotkey = values[0].clone();

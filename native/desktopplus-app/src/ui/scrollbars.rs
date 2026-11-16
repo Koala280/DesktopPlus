@@ -24,8 +24,12 @@ impl Bar {
                 cbSize: std::mem::size_of::<SCROLLBARINFO>() as u32,
                 ..std::mem::zeroed()
             };
-            if GetScrollBarInfo(hwnd, if vertical { -5 } else { -6 }, &mut bar) == 0
-                || bar.rgstate[0] & 0x18000 != 0
+            // Visibility of an ancestor must not suppress WM_PRINT output.
+            // The native window style tells us which gutters are allocated.
+            if GetWindowLongPtrW(hwnd, GWL_STYLE) as u32
+                & if vertical { WS_VSCROLL } else { WS_HSCROLL }
+                == 0
+                || GetScrollBarInfo(hwnd, if vertical { -5 } else { -6 }, &mut bar) == 0
             {
                 return None;
             }
@@ -203,22 +207,24 @@ fn paint_to(hwnd: HWND, print: Option<HDC>) {
                         blend(p.background, p.muted, 52)
                     },
                 );
-                chrome::buffered(dc, bar.area, |buffer| {
+                chrome::buffered_for(hwnd, dc, bar.area, |buffer| {
                     chrome::fill(buffer, &bar.area, p.background);
                     chrome::rounded(buffer, &bar.thumb, chrome::scale(hwnd, 6), color, color);
                 });
             }
             if let (Some(v), Some(h)) = (&vertical, &horizontal) {
-                chrome::fill(
-                    dc,
-                    &RECT {
-                        left: v.area.left,
-                        top: h.area.top,
-                        right: v.area.right,
-                        bottom: h.area.bottom,
-                    },
-                    p.background,
-                );
+                let corner = RECT {
+                    left: v.area.left,
+                    top: h.area.top,
+                    right: v.area.right,
+                    bottom: h.area.bottom,
+                };
+                // A raw GDI fill clears alpha and exposes a square of desktop
+                // through glass panels. Paint the corner with the same material
+                // and buffering as both adjacent tracks.
+                chrome::buffered_for(hwnd, dc, corner, |buffer| {
+                    chrome::fill(buffer, &corner, p.background);
+                });
             }
         });
         if print.is_none() {
@@ -337,6 +343,7 @@ unsafe extern "system" fn proc(
             | WM_PAINT
             | WM_SIZE
             | WM_MOUSEWHEEL
+            | WM_MOUSEHWHEEL
             | WM_HSCROLL
             | WM_VSCROLL
             | LVM_SCROLL

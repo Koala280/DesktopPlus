@@ -720,6 +720,9 @@ impl App {
                 order.as_ptr() as isize,
             );
         }
+        if let Some(window) = self.windows.get(&hwnd) {
+            chrome::set_sort(hwnd as _, window.sort, window.descending);
+        }
     }
     fn capture_columns(&mut self, hwnd: usize) {
         let Some(index) = self.panel_index(hwnd) else {
@@ -1584,6 +1587,7 @@ impl App {
                 if let Some(window) = self.windows.get_mut(&hwnd) {
                     window.descending = window.sort == column && !window.descending;
                     window.sort = column;
+                    chrome::set_sort(hwnd as _, column, window.descending);
                     self.refresh(hwnd);
                 }
             }
@@ -2397,7 +2401,11 @@ impl App {
             set_text(control(self.main, id as i32), &crate::locale::text(caption));
         }
         for command in dashboard::PREFERENCES {
-            form::relabel(control(self.main, dashboard::form_id(*command)));
+            if *command == THEMES {
+                design::relabel(control(self.main, dashboard::form_id(*command)));
+            } else {
+                form::relabel(control(self.main, dashboard::form_id(*command)));
+            }
         }
         for hwnd in self.windows.keys() {
             for (id, caption) in [

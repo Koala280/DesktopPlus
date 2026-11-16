@@ -26,6 +26,24 @@ pub struct Editor {
     presets: Vec<String>,
 }
 impl Editor {
+    pub fn key(&self, index: usize) -> &str {
+        self.keys
+            .iter()
+            .find(|(_, value)| **value == index)
+            .map_or("", |(key, _)| key)
+    }
+    pub fn values(&self) -> Vec<String> {
+        self.pages
+            .iter()
+            .flat_map(|page| &page.fields)
+            .map(|field| match field {
+                Input::Text(_, value) | Input::Folder(_, value) => value.clone(),
+                Input::Check(_, value) => usize::from(*value).to_string(),
+                Input::Choice(_, _, value) => value.to_string(),
+                Input::Action(..) => String::new(),
+            })
+            .collect()
+    }
     pub fn new(settings: &Settings, panel: Option<&Panel>) -> Self {
         let theme = &settings.appearance;
         let empty = AppearanceOverrides::default();

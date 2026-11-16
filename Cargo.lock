@@ -89,7 +89,7 @@ dependencies = [
 
 [[package]]
 name = "desktopplus"
-version = "2.1.1"
+version = "2.2.0"
 dependencies = [
  "desktopplus-core",
  "embed-resource",
@@ -106,7 +106,7 @@ dependencies = [
 
 [[package]]
 name = "desktopplus-core"
-version = "2.1.1"
+version = "2.2.0"
 
 [[package]]
 name = "digest"

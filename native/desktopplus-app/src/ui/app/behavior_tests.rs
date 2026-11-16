@@ -131,6 +131,45 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn details_column_widths_roundtrip_without_special_handling_for_the_name_column() {
+    let mut fixture = Fixture::new(false, "button");
+    unsafe {
+        InitCommonControlsEx(&INITCOMMONCONTROLSEX {
+            dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
+            dwICC: ICC_LISTVIEW_CLASSES,
+        });
+    }
+    let columns: Vec<_> = crate::metadata::COLUMNS
+        .iter()
+        .map(|(_, caption, width)| (*caption, *width))
+        .collect();
+    let list = create_list(fixture.hwnd as _, &columns);
+    for name_width in [160, 540, 840] {
+        let expected = [name_width, 96, 120, 148];
+        for (column, width) in expected.iter().enumerate() {
+            set_column_width(list, column, *width, true);
+        }
+        fixture.app.capture_columns(fixture.hwnd);
+        let saved = fixture.app.settings.windows[0].active().extra["MetadataWidths"].clone();
+        for width in [360, 1020] {
+            unsafe { MoveWindow(list, 0, 0, width, 400, 0) };
+            fixture.app.apply_columns(fixture.hwnd);
+            for (column, expected) in expected.iter().enumerate() {
+                assert_eq!(
+                    unsafe { SendMessageW(list, LVM_GETCOLUMNWIDTH, column, 0) },
+                    *expected as isize
+                );
+            }
+            fixture.app.capture_columns(fixture.hwnd);
+            assert_eq!(
+                fixture.app.settings.windows[0].active().extra["MetadataWidths"],
+                saved
+            );
+        }
+    }
+}
+
+#[test]
 fn panel_theme_switch_replaces_colors_in_nested_controls_without_tinting_main() {
     let mut fixture = Fixture::new(false, "both");
     fixture.app.settings.appearance.glass_mode = crate::model::GlassMode::Solid;

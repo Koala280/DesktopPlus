@@ -148,6 +148,531 @@ impl Drop for Panel {
     }
 }
 
+impl Panel {
+    fn details_columns(&self) {
+        self.mode("details");
+        VIEWS.with(|views| {
+            views
+                .borrow_mut()
+                .get_mut(&(self.hwnd as usize))
+                .unwrap()
+                .columns = [
+                true, false, true, true, true, false, false, false, false, false,
+            ];
+        });
+        for i in 0..10 {
+            set_column_width(
+                self.list,
+                i,
+                if i == 0 { 240 } else { 116 },
+                matches!(i, 0 | 2 | 3 | 4),
+            );
+        }
+        chrome::set_sort(self.hwnd, 0, false);
+    }
+}
+
+#[test]
+fn details_columns_resize_independently_and_keep_their_width_when_the_panel_resizes() {
+    let panel = Panel::new();
+    panel.details_columns();
+    panel.populate(&Tab {
+        view_mode: "details".into(),
+        ..Tab::default()
+    });
+    unsafe {
+        let widths = || {
+            (0..10)
+                .map(|i| SendMessageW(panel.list, LVM_GETCOLUMNWIDTH, i, 0))
+                .collect::<Vec<_>>()
+        };
+        for changed in [0, 2, 3, 4] {
+            for desired in [96, 420, 860, 116] {
+                let mut expected = widths();
+                expected[changed] = desired;
+                SendMessageW(panel.list, LVM_SETCOLUMNWIDTH, changed, desired);
+                assert_eq!(widths(), expected, "only the dragged column may change");
+                for width in [960, 420, 740, 960] {
+                    MoveWindow(panel.list, 0, 0, width, 400, 0);
+                    assert_eq!(widths(), expected, "panel resize must preserve every width");
+                    assert_eq!(selected(panel.hwnd), vec![3]);
+                }
+            }
+        }
+        let header = SendMessageW(panel.list, LVM_GETHEADER, 0, 0) as HWND;
+        for column in [0, 2, 3, 4] {
+            let before = widths();
+            let notification = NMHEADERW {
+                hdr: NMHDR {
+                    hwndFrom: header,
+                    idFrom: 0,
+                    code: HDN_DIVIDERDBLCLICKW,
+                },
+                iItem: column as i32,
+                ..std::mem::zeroed()
+            };
+            SendMessageW(panel.list, WM_NOTIFY, 0, &notification as *const _ as isize);
+            let after = widths();
+            assert!(after[column] > 0);
+            for i in 0..10 {
+                if i != column {
+                    assert_eq!(after[i], before[i]);
+                }
+            }
+            MoveWindow(panel.list, 0, 0, 420, 400, 0);
+            assert_eq!(widths(), after, "explicit autosizing must remain stable");
+        }
+        chrome::set_sort(panel.hwnd, 3, true);
+        for column in 0..10 {
+            let mut item = HDITEMW {
+                mask: HDI_FORMAT,
+                ..std::mem::zeroed()
+            };
+            SendMessageW(header, HDM_GETITEMW, column, &mut item as *mut _ as isize);
+            assert_eq!(
+                item.fmt & (HDF_SORTUP | HDF_SORTDOWN),
+                if column == 3 { HDF_SORTDOWN } else { 0 }
+            );
+        }
+    }
+}
+
+#[test]
+fn details_buffer_clears_trailing_space_and_preserves_native_row_geometry() {
+    let panel = Panel::new();
+    panel.details_columns();
+    let tab = Tab {
+        view_mode: "details".into(),
+        ..Tab::default()
+    };
+    panel.populate(&tab);
+    VIEWS.with(|views| {
+        let mut views = views.borrow_mut();
+        let view = views.get_mut(&(panel.hwnd as usize)).unwrap();
+        let rows = Arc::make_mut(&mut view.rows);
+        rows.truncate(7);
+        for (index, (row, name)) in rows
+            .iter_mut()
+            .zip([
+                "Comedy-Shorts-Analyse-2026",
+                "Instrument-Referenz",
+                "MediaHuman",
+                "Tails-7.16",
+                "THE LIFE",
+                "1031 (7) (1).mp4",
+                "Projektunterlagen November.pdf",
+            ])
+            .enumerate()
+        {
+            row.name = name.encode_utf16().collect();
+            row.directory = index < 5;
+            row.size = 351_902_720;
+            row.created = 134_300_000_000_000_000;
+            row.modified = row.created;
+            row.path = PathBuf::from(if row.directory {
+                "C:\\Windows"
+            } else {
+                "C:\\Windows\\explorer.exe"
+            });
+        }
+    });
+    unsafe {
+        SendMessageW(panel.list, LVM_SETITEMCOUNT, 7, 0);
+        SendMessageW(panel.list, LVM_ENSUREVISIBLE, 0, 0);
+        assert_eq!(
+            SendMessageW(panel.list, LVM_GETTOPINDEX, 0, 0),
+            0,
+            "short results must reset the old scroll offset"
+        );
+        let initialized = windows_sys::Win32::System::Com::CoInitializeEx(
+            null(),
+            windows_sys::Win32::System::Com::COINIT_APARTMENTTHREADED as u32,
+        ) >= 0;
+        let rows = VIEWS.with(|views| views.borrow()[&(panel.hwnd as usize)].rows.clone());
+        for row in rows.iter() {
+            let spec = images::spec(panel.hwnd);
+            images::insert(
+                spec,
+                row.path.clone(),
+                row.modified,
+                shell::image(&row.path, spec),
+                true,
+            );
+        }
+        if initialized {
+            windows_sys::Win32::System::Com::CoUninitialize();
+        }
+        let dc = CreateCompatibleDC(null_mut());
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: 40,
+                biWidth: 720,
+                biHeight: -400,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut data = null_mut();
+        let bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut data, null_mut(), 0);
+        assert!(!bitmap.is_null());
+        let old = SelectObject(dc, bitmap);
+        let pixels = std::slice::from_raw_parts_mut(data as *mut u32, 720 * 400);
+        let mut row = RECT {
+            left: LVIR_BOUNDS as i32,
+            ..Default::default()
+        };
+        SendMessageW(panel.list, LVM_GETITEMRECT, 0, &mut row as *mut _ as isize);
+        assert_eq!(row.top, chrome::content_scale(panel.hwnd, 38));
+        assert!(row.bottom - row.top >= chrome::content_scale(panel.hwnd, 36));
+        for glass_mode in [
+            crate::model::GlassMode::Solid,
+            crate::model::GlassMode::Clear,
+        ] {
+            glass::apply(
+                panel.hwnd,
+                &Theme {
+                    glass_mode,
+                    glass_opacity: 72,
+                    ..Theme::default()
+                },
+            );
+            pixels.fill(0xffff00ff);
+            SendMessageW(panel.list, WM_PRINTCLIENT, dc as usize, PRF_CLIENT as isize);
+            GdiFlush();
+            let mut client = RECT::default();
+            GetClientRect(panel.list, &mut client);
+            let x = client.right as usize - 1;
+            let y = ((row.top + row.bottom) / 2) as usize;
+            assert_ne!(
+                pixels[y * 720 + x],
+                0xffff00ff,
+                "right edge must be painted"
+            );
+            assert_eq!(
+                pixels[y * 720 + x],
+                pixels[370 * 720 + x],
+                "rows and trailing space must have identical surface opacity"
+            );
+            assert_eq!(
+                pixels[370 * 720 + x],
+                pixels[370 * 720 + 4],
+                "no native separator may remain below the rows"
+            );
+        }
+        glass::release(panel.hwnd);
+        chrome::fill(
+            dc,
+            &RECT {
+                right: 720,
+                bottom: 400,
+                ..Default::default()
+            },
+            with_palette(panel.hwnd, |p| p.background),
+        );
+        SendMessageW(panel.list, WM_PRINTCLIENT, dc as usize, PRF_CLIENT as isize);
+        let header = SendMessageW(panel.list, LVM_GETHEADER, 0, 0) as HWND;
+        SendMessageW(header, WM_PRINTCLIENT, dc as usize, PRF_CLIENT as isize);
+        GdiFlush();
+        if let Some(path) = std::env::var_os("DESKTOPPLUS_DETAILS_CAPTURE") {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(b"BM");
+            bytes.extend_from_slice(&(54u32 + 720 * 400 * 4).to_le_bytes());
+            bytes.extend_from_slice(&0u32.to_le_bytes());
+            bytes.extend_from_slice(&54u32.to_le_bytes());
+            bytes.extend_from_slice(std::slice::from_raw_parts(
+                (&info.bmiHeader as *const BITMAPINFOHEADER).cast::<u8>(),
+                40,
+            ));
+            bytes.extend_from_slice(std::slice::from_raw_parts(data as *const u8, 720 * 400 * 4));
+            std::fs::write(path, bytes).unwrap();
+        }
+        // Column reordering and horizontal scrolling must retain the native
+        // hit target even though the entire row is now painted together.
+        let order = [0, 4, 3, 2, 1, 5, 6, 7, 8, 9];
+        SendMessageW(
+            panel.list,
+            LVM_SETCOLUMNORDERARRAY,
+            order.len(),
+            order.as_ptr() as isize,
+        );
+        SendMessageW(panel.list, LVM_SCROLL, 120, 0);
+        let mut hit = LVHITTESTINFO {
+            pt: POINT {
+                x: 40,
+                y: (row.top + row.bottom) / 2,
+            },
+            ..std::mem::zeroed()
+        };
+        assert_eq!(
+            SendMessageW(panel.list, LVM_HITTEST, 0, &mut hit as *mut _ as isize),
+            0
+        );
+        SendMessageW(panel.list, WM_KEYDOWN, VK_END as usize, 0);
+        assert_eq!(
+            SendMessageW(
+                panel.list,
+                LVM_GETNEXTITEM,
+                usize::MAX,
+                LVNI_FOCUSED as isize
+            ),
+            6
+        );
+        SelectObject(dc, old);
+        DeleteObject(bitmap);
+        DeleteDC(dc);
+    }
+}
+
+#[test]
+fn details_scrollbars_and_corner_share_the_panel_material_and_stay_inside_the_control() {
+    let panel = Panel::new();
+    panel.details_columns();
+    panel.populate(&Tab {
+        view_mode: "details".into(),
+        ..Tab::default()
+    });
+    unsafe {
+        SendMessageW(panel.list, LVM_SETCOLUMNWIDTH, 0, 560);
+        let dc = CreateCompatibleDC(null_mut());
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: 40,
+                biWidth: 760,
+                biHeight: -440,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut data = null_mut();
+        let bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut data, null_mut(), 0);
+        assert!(!bitmap.is_null());
+        let old = SelectObject(dc, bitmap);
+        let pixels = std::slice::from_raw_parts_mut(data as *mut u32, 760 * 440);
+        for mode in [
+            crate::model::GlassMode::Solid,
+            crate::model::GlassMode::Clear,
+        ] {
+            glass::apply(
+                panel.hwnd,
+                &Theme {
+                    glass_mode: mode,
+                    glass_opacity: 72,
+                    ..Theme::default()
+                },
+            );
+            for offset in [0, 120, 2000, -2000] {
+                let top = SendMessageW(panel.list, LVM_GETTOPINDEX, 0, 0);
+                SendMessageW(panel.list, LVM_SCROLL, offset as usize, 0);
+                assert_eq!(
+                    SendMessageW(panel.list, LVM_GETTOPINDEX, 0, 0),
+                    top,
+                    "horizontal scrolling must not move rows vertically"
+                );
+                let mut scroll = SCROLLINFO {
+                    cbSize: std::mem::size_of::<SCROLLINFO>() as u32,
+                    fMask: SIF_ALL,
+                    ..std::mem::zeroed()
+                };
+                GetScrollInfo(panel.list, SB_HORZ, &mut scroll);
+                if offset == 120 {
+                    assert!(scroll.nPos > 0);
+                }
+                if offset == 2000 {
+                    assert_eq!(scroll.nPos, scroll.nMax + 1 - scroll.nPage as i32);
+                }
+                if offset == -2000 {
+                    assert_eq!(scroll.nPos, 0);
+                }
+                let header = SendMessageW(panel.list, LVM_GETHEADER, 0, 0) as HWND;
+                let mut column = RECT::default();
+                SendMessageW(header, HDM_GETITEMRECT, 0, &mut column as *mut _ as isize);
+                MapWindowPoints(header, panel.list, (&mut column as *mut RECT).cast(), 2);
+                assert_eq!(
+                    column.left, -scroll.nPos,
+                    "header and rows must share the native scroll offset"
+                );
+                let widths: Vec<_> = (0..10)
+                    .map(|i| SendMessageW(panel.list, LVM_GETCOLUMNWIDTH, i, 0))
+                    .collect();
+                assert_eq!(widths[0], 560);
+                assert_eq!(widths[2..5], [116; 3]);
+                pixels.fill(0xffff00ff);
+                SendMessageW(
+                    panel.list,
+                    WM_PRINT,
+                    dc as usize,
+                    (PRF_CLIENT | PRF_NONCLIENT | PRF_CHILDREN) as isize,
+                );
+                GdiFlush();
+                let mut client = RECT::default();
+                GetClientRect(panel.list, &mut client);
+                let mut window = RECT::default();
+                GetWindowRect(panel.list, &mut window);
+                let width = (window.right - window.left) as usize;
+                let height = (window.bottom - window.top) as usize;
+                assert!(
+                    client.right < width as i32 && client.bottom < height as i32,
+                    "both scrollbars must be present"
+                );
+                let background = with_palette(panel.hwnd, |p| p.background);
+                let rgb =
+                    ((background & 255) << 16) | (background & 0xff00) | ((background >> 16) & 255);
+                let expected = glass::for_window(panel.list).map_or(rgb, |g| g.pixel(rgb));
+                for (x, y) in [
+                    (width - 1, height - 1),
+                    (client.right as usize + 2, height - 1),
+                    (2, height - 1),
+                    (width - 1, 2),
+                ] {
+                    let pixel = pixels[y * 760 + x];
+                    if mode == crate::model::GlassMode::Solid {
+                        assert_eq!(
+                            pixel & 0xffffff,
+                            expected & 0xffffff,
+                            "track background at {x},{y}"
+                        );
+                    } else {
+                        assert_eq!(
+                            pixel, expected,
+                            "corner and tracks must retain the same glass alpha: {x},{y}"
+                        );
+                    }
+                }
+                for y in 0..height {
+                    assert!(
+                        pixels[y * 760 + width..(y + 1) * 760]
+                            .iter()
+                            .all(|p| *p == 0xffff00ff),
+                        "headers, rows and scrollbars must stay inside the panel at y={y}"
+                    );
+                }
+                assert!(
+                    pixels[height * 760..].iter().all(|p| *p == 0xffff00ff),
+                    "nothing may paint below the list"
+                );
+                if mode == crate::model::GlassMode::Solid && offset == 120 {
+                    if let Some(path) = std::env::var_os("DESKTOPPLUS_SCROLLBAR_CAPTURE") {
+                        let mut bytes = Vec::new();
+                        bytes.extend_from_slice(b"BM");
+                        bytes.extend_from_slice(&(54u32 + 760 * 440 * 4).to_le_bytes());
+                        bytes.extend_from_slice(&0u32.to_le_bytes());
+                        bytes.extend_from_slice(&54u32.to_le_bytes());
+                        bytes.extend_from_slice(std::slice::from_raw_parts(
+                            (&info.bmiHeader as *const BITMAPINFOHEADER).cast::<u8>(),
+                            40,
+                        ));
+                        bytes.extend_from_slice(std::slice::from_raw_parts(
+                            data as *const u8,
+                            760 * 440 * 4,
+                        ));
+                        std::fs::write(path, bytes).unwrap();
+                    }
+                }
+            }
+        }
+        glass::release(panel.hwnd);
+        SelectObject(dc, old);
+        DeleteObject(bitmap);
+        DeleteDC(dc);
+    }
+}
+
+#[test]
+fn details_row_hover_and_reveal_repaints_do_not_erase_column_headers() {
+    let panel = Panel::new();
+    panel.details_columns();
+    panel.populate(&Tab {
+        view_mode: "details".into(),
+        ..Tab::default()
+    });
+    unsafe {
+        SendMessageW(panel.list, LVM_ENSUREVISIBLE, 0, 0);
+        let header = SendMessageW(panel.list, LVM_GETHEADER, 0, 0) as HWND;
+        let dc = CreateCompatibleDC(null_mut());
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: 40,
+                biWidth: 720,
+                biHeight: -400,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut data = null_mut();
+        let bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut data, null_mut(), 0);
+        assert!(!bitmap.is_null());
+        let old = SelectObject(dc, bitmap);
+        let pixels = std::slice::from_raw_parts_mut(data as *mut u32, 720 * 400);
+        let height = chrome::content_scale(panel.hwnd, 38) as usize;
+        // Exercise individual intermediate paints, not just a completed
+        // WM_PRINT tree: the latter repaints the header last and hides flicker.
+        for (index, point) in [(60 << 16) | 50, (140 << 16) | 50, (220 << 16) | 300]
+            .into_iter()
+            .enumerate()
+        {
+            MoveWindow(panel.list, 0, 0, 720, 160 + index as i32 * 120, 0);
+            pixels.fill(0xffff00ff);
+            SendMessageW(
+                header,
+                WM_MOUSEMOVE,
+                0,
+                (18 << 16) | (50 + index as isize * 240),
+            );
+            SendMessageW(header, WM_PRINTCLIENT, dc as usize, PRF_CLIENT as isize);
+            GdiFlush();
+            let before = pixels[..height * 720].to_vec();
+            assert!(
+                before.iter().any(|p| *p != 0xffff00ff),
+                "fixture must paint its header"
+            );
+            SendMessageW(panel.list, WM_MOUSEMOVE, 0, point);
+            SendMessageW(panel.list, WM_PRINTCLIENT, dc as usize, PRF_CLIENT as isize);
+            GdiFlush();
+            assert!(
+                pixels[..height * 720] == before,
+                "a list repaint erased the separately painted column header"
+            );
+            assert_ne!(
+                pixels[80 * 720 + 12],
+                0xffff00ff,
+                "rows must still repaint below the header"
+            );
+            SendMessageW(panel.list, WM_MOUSELEAVE, 0, 0);
+            SendMessageW(panel.list, WM_PRINTCLIENT, dc as usize, PRF_CLIENT as isize);
+            GdiFlush();
+            assert!(
+                pixels[..height * 720] == before,
+                "hover exit must also leave captions intact"
+            );
+        }
+        // A redraw transaction may update sort/column state synchronously.
+        // Its header must preserve the last complete frame along with the rows.
+        let update = Update::new(panel.hwnd);
+        chrome::set_sort(panel.hwnd, 3, true);
+        pixels.fill(0xff123456);
+        SendMessageW(header, WM_PRINTCLIENT, dc as usize, PRF_CLIENT as isize);
+        SendMessageW(panel.list, WM_PRINTCLIENT, dc as usize, PRF_CLIENT as isize);
+        GdiFlush();
+        assert!(pixels.iter().all(|p| *p == 0xff123456));
+        drop(update);
+        SendMessageW(header, WM_PRINTCLIENT, dc as usize, PRF_CLIENT as isize);
+        GdiFlush();
+        assert!(pixels[..height * 720].iter().any(|p| *p != 0xff123456));
+        SelectObject(dc, old);
+        DeleteObject(bitmap);
+        DeleteDC(dc);
+    }
+}
+
 #[test]
 fn empty_panel_status_stays_hidden_after_layout_and_messages_respect_collapse() {
     let panel = Panel::new();

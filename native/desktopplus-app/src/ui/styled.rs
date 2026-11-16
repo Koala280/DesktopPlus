@@ -80,7 +80,7 @@ pub fn choice(parent: HWND, caption: &str, id: i32, values: &[String], selected:
             ..std::mem::zeroed()
         };
         if GetComboBoxInfo(hwnd, &mut info) != 0 && !info.hwndList.is_null() {
-            SetWindowSubclass(info.hwndList, Some(choice_wheel_proc), 14, 0);
+            SetWindowSubclass(info.hwndList, Some(choice_wheel_proc), 14, 1);
         }
         for value in values {
             SendMessageW(
@@ -113,10 +113,14 @@ unsafe extern "system" fn choice_wheel_proc(
     w: WPARAM,
     l: LPARAM,
     id: usize,
-    _: usize,
+    popup: usize,
 ) -> LRESULT {
-    // Never let wheel input scroll the choices or change the selected value.
+    // A closed choice scrolls the surrounding form, without changing its value.
+    // Keep wheel input inside an open popup from moving the form underneath it.
     if matches!(message, WM_MOUSEWHEEL | WM_MOUSEHWHEEL) {
+        if popup == 0 && unsafe { SendMessageW(hwnd, CB_GETDROPPEDSTATE, 0, 0) } == 0 {
+            return unsafe { SendMessageW(GetParent(hwnd), message, w, l) };
+        }
         return 0;
     }
     if message == WM_NCDESTROY {

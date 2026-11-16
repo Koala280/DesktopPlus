@@ -74,7 +74,7 @@ pub fn spec(hwnd: HWND) -> ImageSpec {
     ImageSpec {
         edge,
         height: if details {
-            chrome::content_scale(hwnd, 30)
+            chrome::content_scale(hwnd, 36)
         } else {
             edge
         },

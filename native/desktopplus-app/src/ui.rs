@@ -2,6 +2,7 @@ mod app;
 mod chrome;
 mod content;
 mod dashboard;
+mod design;
 mod dialog;
 mod drag_drop;
 mod empty_panel;
@@ -16,6 +17,7 @@ mod menus;
 mod motion;
 mod panel_options;
 mod scrollbars;
+mod scrolling;
 mod styled;
 mod text_render;
 mod titlebar;
@@ -672,6 +674,7 @@ fn create_list(parent: HWND, columns: &[(&str, i32)]) -> HWND {
         "",
         LIST,
         WS_TABSTOP
+            | WS_CLIPCHILDREN
             | LVS_REPORT
             | LVS_AUTOARRANGE
             | LVS_OWNERDATA
@@ -932,15 +935,14 @@ unsafe extern "system" fn list_proc(
         }
         return 1;
     }
-    if matches!(message, WM_PAINT | WM_PRINTCLIENT | WM_ERASEBKGND)
-        && chrome::panel(parent as _)
-        && unsafe { SendMessageW(hwnd, LVM_GETVIEW, 0, 0) } == LV_VIEW_ICON as isize
-    {
+    if matches!(message, WM_PAINT | WM_PRINTCLIENT | WM_ERASEBKGND) && chrome::panel(parent as _) {
         if message != WM_ERASEBKGND {
-            chrome::paint_icon_list(
-                parent as _,
-                (message == WM_PRINTCLIENT).then_some(wparam as HDC),
-            );
+            let print = (message == WM_PRINTCLIENT).then_some(wparam as HDC);
+            if unsafe { SendMessageW(hwnd, LVM_GETVIEW, 0, 0) } == LV_VIEW_DETAILS as isize {
+                chrome::paint_details(parent as _, print);
+            } else {
+                chrome::paint_icon_list(parent as _, print);
+            }
         }
         return 1;
     }
@@ -948,12 +950,23 @@ unsafe extern "system" fn list_proc(
         emit(Event::Zoom(parent, ((wparam >> 16) as u16) as i16 as i32));
         return 0;
     }
+    if matches!(message, WM_MOUSEWHEEL | WM_MOUSEHWHEEL) {
+        scrolling::list(hwnd, message, wparam);
+        return 0;
+    }
+    if matches!(
+        message,
+        WM_NCDESTROY | LVM_SETVIEW | LVM_SETITEMCOUNT | WM_VSCROLL | WM_HSCROLL | WM_KEYDOWN
+    ) {
+        scrolling::forget(hwnd);
+    }
     let scrolled = matches!(
         message,
         LVM_SCROLL | LVM_ENSUREVISIBLE | WM_VSCROLL | WM_HSCROLL | WM_MOUSEWHEEL | WM_KEYDOWN
     );
     if scrolled || matches!(message, LVM_SETVIEW | LVM_SETITEMCOUNT) {
         motion::reset_colors(hwnd);
+        unsafe { RemovePropW(hwnd, wide("DPRowHot").as_ptr()) };
     }
     if message == WM_MOUSEMOVE {
         let mut hit = LVHITTESTINFO {
@@ -1026,6 +1039,9 @@ unsafe extern "system" fn list_proc(
         if matches!(header.code, HDN_ENDTRACKW | HDN_ENDDRAG) {
             emit(Event::Columns(parent));
         }
+        if matches!(header.code, HDN_ITEMCHANGEDW | HDN_ENDDRAG) {
+            unsafe { InvalidateRect(hwnd, null(), 0) };
+        }
     }
     if message == WM_KEYDOWN {
         let ctrl = unsafe { GetKeyState(VK_CONTROL as i32) } < 0;
@@ -1064,19 +1080,48 @@ unsafe extern "system" fn list_proc(
         }
     }
     // The native smooth-scroll path moves pixels and paints intermediate item
-    // positions synchronously. Our grid owns its complete buffered frame: move
+    // positions synchronously. Panels own their complete buffered frame: move
     // the native viewport atomically, then repaint it once at the final offset.
-    let scroll_update = (scrolled
-        && chrome::panel(parent as _)
-        && unsafe { SendMessageW(hwnd, LVM_GETVIEW, 0, 0) } == LV_VIEW_ICON as isize)
-        .then(|| content::Update::new(parent as _));
+    let scroll_update =
+        (scrolled && chrome::panel(parent as _)).then(|| content::Update::new(parent as _));
+    if message == LVM_SETITEMCOUNT && chrome::panel(parent as _) {
+        unsafe {
+            // Shrinking a scrolled report below a page can leave Windows with
+            // a negative top index. Reset while the old scroll range still
+            // exists; ENSUREVISIBLE after the shrink cannot remove the gap.
+            if SendMessageW(hwnd, LVM_GETVIEW, 0, 0) == LV_VIEW_DETAILS as isize
+                && SendMessageW(hwnd, LVM_GETTOPINDEX, 0, 0) > 0
+                && wparam <= SendMessageW(hwnd, LVM_GETCOUNTPERPAGE, 0, 0).max(0) as usize
+            {
+                SendMessageW(hwnd, LVM_ENSUREVISIBLE, 0, 0);
+            }
+        }
+    }
     let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
+    if message == WM_NOTIFY && chrome::panel(parent as _) {
+        let header = unsafe { &*(lparam as *const NMHDR) };
+        if matches!(header.code, HDN_DIVIDERDBLCLICKW | HDN_DIVIDERDBLCLICKA) {
+            // Persist the native autosize result after Windows has applied it.
+            emit(Event::Columns(parent));
+        }
+    }
     drop(scroll_update);
     if scrolled {
         marquee::refresh(hwnd, parent as _);
+        unsafe { InvalidateRect(hwnd, null(), 0) };
     }
     if matches!(message, WM_SIZE | LVM_SETITEMCOUNT | LVM_SETVIEW) {
         icon_grid::relayout(parent as _);
+    }
+    if matches!(
+        message,
+        LVM_SETCOLUMNWIDTH
+            | LVM_SETCOLUMNORDERARRAY
+            | LVM_SETITEMSTATE
+            | WM_SETFOCUS
+            | WM_KILLFOCUS
+    ) {
+        unsafe { InvalidateRect(hwnd, null(), 0) };
     }
     result
 }

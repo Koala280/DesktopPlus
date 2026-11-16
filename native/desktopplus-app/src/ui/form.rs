@@ -25,7 +25,7 @@ struct State<'a> {
     pages: Vec<(&'static str, Range<usize>)>,
     page: usize,
     offset: i32,
-    wheel_remainder: i32,
+    wheel: scrolling::Wheel,
     extent: i32,
     result: Option<Answer>,
     done: bool,
@@ -51,7 +51,7 @@ pub fn embed(
         pages: vec![(title, 0..count)],
         page: 0,
         offset: 0,
-        wheel_remainder: 0,
+        wheel: scrolling::Wheel::default(),
         extent: 0,
         result: None,
         done: false,
@@ -185,7 +185,7 @@ pub fn show(
             pages: groups,
             page: 0,
             offset: 0,
-            wheel_remainder: 0,
+            wheel: scrolling::Wheel::default(),
             extent: 0,
             result: None,
             done: false,
@@ -542,6 +542,9 @@ fn scroll(hwnd: HWND, delta: i32, absolute: bool) {
     let page = rect.bottom * 96 / unsafe { GetDpiForWindow(hwnd) }.max(96) as i32;
     let offset =
         (if absolute { delta } else { data.offset + delta }).clamp(0, (data.extent - page).max(0));
+    if absolute || offset == 0 || offset == (data.extent - page).max(0) {
+        data.wheel = scrolling::Wheel::default();
+    }
     if offset != data.offset {
         data.offset = offset;
         layout_fields(hwnd);
@@ -653,11 +656,12 @@ unsafe extern "system" fn body_proc(hwnd: HWND, message: u32, w: WPARAM, l: LPAR
         let pointer = state(parent);
         if !pointer.is_null() {
             let data = unsafe { &mut *pointer };
-            // Keep subpixel remainders and scale before dividing: precision
-            // wheels/touchpads routinely send deltas smaller than one notch.
-            let movement = data.wheel_remainder - ((w >> 16) as i16 as i32) * 96;
-            data.wheel_remainder = movement % WHEEL_DELTA as i32;
-            scroll(parent, movement / WHEEL_DELTA as i32, false);
+            let movement =
+                data.wheel
+                    .movement(-((w >> 16) as i16 as i32), scrolling::WHEEL_STEP, 1);
+            if movement != 0 {
+                scroll(parent, movement, false);
+            }
         }
         return 0;
     }
@@ -822,7 +826,7 @@ unsafe extern "system" fn proc(hwnd: HWND, message: u32, w: WPARAM, l: LPARAM) -
         if (700..700 + data.pages.len() as i32).contains(&id) {
             data.page = (id - 700) as usize;
             data.offset = 0;
-            data.wheel_remainder = 0;
+            data.wheel = scrolling::Wheel::default();
             let page_count = data.pages.len();
             layout_form(hwnd);
             // The form clips child windows. Repainting its background cannot

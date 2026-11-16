@@ -69,7 +69,10 @@ impl Workspace {
         control(self.0.main, dashboard::form_id(command))
     }
     fn field(&self, command: u16, index: i32) -> HWND {
-        control(control(self.page(command), 801), 1000 + index)
+        control(
+            control(self.page(command), 801),
+            1000 + if command == THEMES { index + 6 } else { index },
+        )
     }
     fn click(&mut self, command: u16, id: i32) {
         unsafe {
@@ -145,19 +148,18 @@ fn tabs_keep_drafts_and_save_or_cancel_only_their_own_values() {
 
 #[test]
 fn appearance_rejects_invalid_font_and_shortcuts_reject_invalid_keys() {
-    let valid: Vec<String> = ["#123456", "#112233", "#ffffff", "#abcdef", "Segoe UI", "14"]
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-    assert!(validate(THEMES, &valid).is_ok());
+    let editor = layout_builder::Editor::new(&Settings::default(), None);
+    let valid = editor.values();
+    let index = |key| (0..valid.len()).find(|i| editor.key(*i) == key).unwrap();
+    assert!(editor.validate(&valid).is_ok());
     for size in ["NaN", "inf", "8", "25", "text"] {
         let mut values = valid.clone();
-        values[5] = size.into();
-        assert!(validate(THEMES, &values).is_err());
+        values[index("item_size")] = size.into();
+        assert!(editor.validate(&values).is_err());
     }
-    let mut values = valid;
-    values[4] = " ".into();
-    assert!(validate(THEMES, &values).is_err());
+    let mut values = valid.clone();
+    values[index("font")] = " ".into();
+    assert!(editor.validate(&values).is_err());
     assert!(validate(SHORTCUTS, &["Ctrl + Alt + H".into(), "F4".into()]).is_ok());
     assert!(validate(SHORTCUTS, &["Ctrl + invalid".into(), "F4".into()]).is_err());
 }
@@ -205,6 +207,25 @@ fn scroll_info(body: HWND) -> SCROLLINFO {
 }
 
 #[test]
+fn wheel_over_a_closed_choice_scrolls_the_form_without_changing_its_value() {
+    let mut workspace = Workspace::new();
+    workspace.0.open_preference(GENERAL).unwrap();
+    let body = control(workspace.page(GENERAL), 801);
+    let choice = workspace.field(GENERAL, 0);
+    unsafe {
+        let selected = SendMessageW(choice, CB_GETCURSEL, 0, 0);
+        SendMessageW(
+            choice,
+            WM_MOUSEWHEEL,
+            (120u16.wrapping_neg() as usize) << 16,
+            0,
+        );
+        assert_eq!(scroll_info(body).nPos, 48);
+        assert_eq!(SendMessageW(choice, CB_GETCURSEL, 0, 0), selected);
+    }
+}
+
+#[test]
 fn workspace_scroll_preserves_small_wheel_movements_and_drafts() {
     let mut workspace = Workspace::new();
     workspace.0.open_preference(THEMES).unwrap();
@@ -213,17 +234,17 @@ fn workspace_scroll_preserves_small_wheel_movements_and_drafts() {
     let wheel = |delta: i16| unsafe {
         SendMessageW(body, WM_MOUSEWHEEL, (delta as u16 as usize) << 16, 0);
     };
-    // Five tiny touchpad deltas must add up to four logical pixels.
+    // Five tiny touchpad deltas must add up to two logical pixels.
     for _ in 0..5 {
         wheel(-1);
     }
-    assert_eq!(scroll_info(body).nPos, 4);
+    assert_eq!(scroll_info(body).nPos, 2);
     wheel(5);
     assert_eq!(scroll_info(body).nPos, 0);
     wheel(-30);
-    assert_eq!(scroll_info(body).nPos, 24);
+    assert_eq!(scroll_info(body).nPos, 12);
     wheel(-90);
-    assert_eq!(scroll_info(body).nPos, 96);
+    assert_eq!(scroll_info(body).nPos, 48);
     unsafe {
         SendMessageW(body, form::SCROLL_TO, 10_000, 0);
     }
@@ -232,7 +253,7 @@ fn workspace_scroll_preserves_small_wheel_movements_and_drafts() {
     wheel(-120);
     assert_eq!(scroll_info(body).nPos, info.nPos);
     wheel(120);
-    assert_eq!(scroll_info(body).nPos, (info.nPos - 96).max(0));
+    assert_eq!(scroll_info(body).nPos, (info.nPos - 48).max(0));
     unsafe {
         SendMessageW(body, form::SCROLL_TO, 0, 0);
     }

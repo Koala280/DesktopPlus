@@ -286,7 +286,8 @@ fn cached_icons_paint_in_the_partial_buffer_exposed_by_scrolling() {
     unsafe {
         IntersectClipRect(surface.dc, 0, 96, 48, 144);
     }
-    chrome::buffered(
+    chrome::buffered_for(
+        null_mut(),
         surface.dc,
         RECT {
             left: 0,

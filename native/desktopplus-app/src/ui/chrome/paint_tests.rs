@@ -262,7 +262,8 @@ fn buffered_presentation_respects_destination_clip_and_preserves_dc_origin() {
     unsafe {
         IntersectClipRect(surface.dc, 16, 20, 24, 28);
     }
-    buffered(
+    buffered_for(
+        null_mut(),
         surface.dc,
         RECT {
             left: 8,
@@ -327,7 +328,7 @@ fn reused_buffers_reset_clipping_and_do_not_leave_stale_pixels() {
             0x00ff00,
         ),
     ] {
-        buffered(surface.dc, rect, |dc| fill(dc, &rect, color));
+        buffered_for(null_mut(), surface.dc, rect, |dc| fill(dc, &rect, color));
         assert_eq!(surface.pixel(rect.left, rect.top), color);
         assert_eq!(surface.pixel(rect.right - 1, rect.bottom - 1), color);
     }
@@ -388,7 +389,8 @@ fn rounded_controls_keep_owner_draw_coordinates_and_clip() {
     unsafe {
         IntersectClipRect(surface.dc, 16, 20, 32, 36);
     }
-    buffered(
+    buffered_for(
+        null_mut(),
         surface.dc,
         RECT {
             left: 8,

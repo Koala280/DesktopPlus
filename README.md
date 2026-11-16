@@ -22,6 +22,7 @@ An existing settings file is optional. `--settings` also isolates the native cac
 
 ## Native interface
 
+- Design Studio under Appearance combines colors, typography, glass, header layouts and button visibility. Use color swatches to open the native color picker, enter HEX values directly, choose installed fonts, or adjust opacity and text-size sliders. Five palette templates provide starting points. The scope selector switches between the global design and individual panels; empty panel fields inherit, and the return arrow restores inheritance. Changes remain drafts until **Save design**. The live sample uses the actual panel renderer in list, icon, tabbed and collapsed views; **Preview on desktop** opens a movable sample with the real Windows glass effect.
 - Workspace overview with a persistent navigation sidebar, folder and pinned-list action cards, and a roomier panel list. All actions remain reachable at the minimum window width.
 - General, Appearance and Keyboard shortcuts are available directly from the workspace sidebar. Each tab saves or cancels its own changes and retains drafts when switching tabs. Language import, the settings folder, help and exit are under General. Forms share consistent typography, rounded controls, animated switches, themed menus and scrollbars; keyboard focus scrolls fields into view.
 - Floating folder, pinned-list and Recycle Bin panels.
@@ -88,7 +89,7 @@ cargo build --locked --release
 Package a release when needed:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version 2.1.1
+powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version 2.2.0
 ```
 
 Visual checks are only needed when the visible interface changes and must stay limited to the affected area. Full GUI suites are not routine verification or packaging steps; run them only when explicitly requested.

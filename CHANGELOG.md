@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-16
+
+### Added
+
+- Replace the appearance form and separate layout builder with a shared Design Studio for global and per-panel styling. Add native color and font pickers, palette templates, opacity and text-size sliders, inheritance resets, and a live preview using the actual panel renderer. A movable desktop preview shows the Windows glass effect without changing saved panels; Save and Cancel keep design drafts isolated from other preferences.
+
+### Changed
+
+- Rework panel details lists with roomier rows, full-width rounded selection, aligned file sizes and sortable headers. Keep every column's chosen width independent, preserve it across panel resizing, and use horizontal scrolling for overflow, following Windows list-view behavior.
+- Use a controlled wheel pace of 48 logical pixels per notch across settings, the workspace list and panel views, with DPI scaling and accumulated precision input for touchpads and high-resolution wheels. Details lists retain whole-row scrolling and Ctrl+wheel retains panel zoom.
+
+### Fixed
+
+- Prevent column headers from blinking during hover and panel expansion by keeping row repaints out of the header's drawing area. Defer header painting during content updates until rows and columns are ready together.
+- Paint complete list frames and scrollbar corners consistently on glass backgrounds, removing the discolored block between horizontal and vertical scrollbars.
+- Remove blank leading rows when a scrolled result set shrinks below one page.
+
 ## [2.1.1] - 2026-11-15
 
 ### Fixed
